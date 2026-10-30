@@ -6,10 +6,10 @@
 
          usesPermissionFlags="neverForLocation" jest tu KLUCZOWE.
          Bez tej flagi Android 12+ wymaga przyznanego ACCESS_FINE_LOCATION, żeby
-         w ogóle dostarczyć wyniki skanowania — a my ograniczyliśmy tę permisję
+         w ogóle dostarczyć wyniki skanowania - a my ograniczyliśmy tę permisję
          do maxSdkVersion=30. Efekt: skanowanie uruchamiało się poprawnie,
          nie zgłaszało żadnego błędu i nie zwracało ani jednego wyniku.
-         Deklarujemy wprost, że nie wyciągamy z BLE lokalizacji — bo nie wyciągamy. -->
+         Deklarujemy wprost, że nie wyciągamy z BLE lokalizacji - bo nie wyciągamy. -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"

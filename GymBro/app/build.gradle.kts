@@ -28,7 +28,7 @@ android {
             // Podpis z konfiguracji debug, żeby wariant release dało się uruchomić
             // lokalnie bez zakładania własnego keystore'a.
             //
-            // To nie jest wersja do publikacji — służy do mierzenia wydajności.
+            // To nie jest wersja do publikacji - służy do mierzenia wydajności.
             // Compose w buildzie debug działa kilkukrotnie wolniej: kompilator
             // pracuje w trybie diagnostycznym, a ART nie optymalizuje kodu
             // oznaczonego jako debuggable. Płynność trzeba oceniać na release.
@@ -57,6 +57,6 @@ dependencies {
     implementation(libs.androidx.health.connect.client)
     debugImplementation(libs.androidx.ui.tooling)
 
-    // Testy czystej logiki — uruchamiane na JVM, bez telefonu i emulatora.
+    // Testy czystej logiki - uruchamiane na JVM, bez telefonu i emulatora.
     testImplementation(libs.junit)
 }

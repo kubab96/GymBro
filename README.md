@@ -11,7 +11,7 @@ faktycznie poszło, i z tego, co da się złożyć z posiadanych talerzy.
 
 | Katalog | Co to | Czym budować |
 |---|---|---|
-| [`GymBro/`](GymBro) | aplikacja na Androida: Kotlin, Jetpack Compose, SQLite bez ORM | Android Studio albo `gradlew :app:assembleDebug` |
+| [`GymBro/`](GymBro) | aplikacja na Androida: Kotlin, Jetpack Compose, SQLite bez ORM | Android Studio albo `GymBro/tools/gr.sh :app:assembleDebug` |
 | [`gymbro-watch/`](gymbro-watch) | mini-aplikacja na Zepp OS 3.0 dla Amazfit Balance | `zeus build` / `zeus preview` |
 
 Obie strony rozmawiają po lokalnym HTTP przez Side Service Zepp OS. Protokół
@@ -22,12 +22,15 @@ projekty leżą w jednym repozytorium.
 ## Testy
 
 ```
-cd GymBro && gradlew :app:testDebugUnitTest
+GymBro/tools/gr.sh :app:testDebugUnitTest
 cd gymbro-watch && node tools/check.js
 ```
 
 Ten drugi ładuje prawdziwy ekran zegarka z atrapami `@zos/*` i atrapą telefonu,
 więc sprawdza zachowanie, nie tylko składnię.
+
+W repozytorium nie ma wrappera Gradle'a - `GymBro/tools/gr.sh` podstawia za
+niego JDK 21 i dystrybucję Gradle 8.9 z cache Android Studio.
 
 ## Dokumentacja
 
@@ -36,4 +39,8 @@ propozycje progresji: źródła z literatury, próg 3%, reguła dwóch ruchów p
 doborze talerzy, i wyraźnie oznaczone miejsca, gdzie liczba jest moją
 konwencją, a nie wynikiem badania.
 
-`GymBro/README.md` opisuje jeszcze Fazę 0 i jest nieaktualny.
+[`GymBro/README.md`](GymBro/README.md) - aplikacja na Androida z bliska:
+budowanie, układ pakietów, baza i migracje, waga po BLE, Health Connect.
+
+[`CLAUDE.md`](CLAUDE.md) - to samo pod kątem pracy nad kodem: polecenia wraz
+z pułapkami, architektura obu stron, konwencje i rzeczy, które łatwo zepsuć.

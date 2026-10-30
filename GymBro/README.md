@@ -1,116 +1,128 @@
-# GymBro — Faza 0 (spike ryzyka)
+# GymBro - aplikacja na Androida
 
-To nie jest aplikacja. To **dwa testy**, które mają odpowiedzieć na pytania, od których
-zależy cały projekt — zanim zainwestujemy w niego tygodnie pracy.
+Dziennik treningu siłowego. Prowadzi trening, zapisuje serie, liczy propozycje
+progresji i obsługuje pilota na zegarku. Opis całości i drugiej połowy projektu
+jest w [README w korzeniu](../README.md).
 
-| Test | Pytanie | Gdzie |
-|---|---|---|
-| 1 | Czy da się czytać wagę po BLE bez aplikacji producenta? | zakładka **Waga (BLE)** |
-| 2 | Co dokładnie Amazfit Balance wystawia przez Health Connect? | zakładka **Zegarek (HC)** |
+Kotlin, Jetpack Compose (Material3), SQLite bez ORM. `minSdk` 29, `compileSdk` 35.
 
-Jeśli oba wyjdą na tak — reszta planu to już zwykłe programowanie.
-Jeśli któryś wyjdzie na nie — zmieniamy podejście, a nie przepisujemy gotową aplikację.
+## Budowanie i testy
 
----
+W repozytorium **nie ma wrappera Gradle'a**. Zamiast `gradlew` jest
+[`tools/gr.sh`](tools/gr.sh), który ustawia JDK 21 i woła dystrybucję Gradle 8.9
+z cache Android Studio:
 
-## Czego potrzebujesz
+```sh
+tools/gr.sh :app:testDebugUnitTest        # wszystkie testy jednostkowe
+tools/gr.sh :app:assembleDebug            # APK
+tools/gr.sh --stop                        # zatrzymuje demona
+```
 
-Na tym komputerze nie ma w tej chwili JDK ani Android SDK. Wystarczy jedna instalacja:
+Pojedyncza klasa albo pojedynczy test:
 
-**[Android Studio](https://developer.android.com/studio)** — zawiera JDK 17, Android SDK i emulator.
-Przy pierwszym uruchomieniu zgódź się na pobranie SDK (ok. 1,5 GB łącznie).
+```sh
+tools/gr.sh :app:testDebugUnitTest --tests "pl.gymbro.gym.ProgressionAdvisorTest"
+tools/gr.sh :app:testDebugUnitTest --tests "*duze przekroczenie zakresu*"
+```
 
-Do tego **fizyczny telefon z Androidem**. Emulator nie ma radia Bluetooth ani Twoich danych
-z Zepp, więc Faza 0 musi działać na prawdziwym urządzeniu.
+Android Studio radzi sobie samo: **Open** → wskaż folder `GymBro`, a przy
+zgłoszeniu braku wrappera zgódź się na jego wygenerowanie.
 
-## Uruchomienie
+Testy chodzą na JVM, bez telefonu i emulatora - cała logika progresji, doboru
+talerzy i analiz jest od Androida niezależna i tak jest celowo.
 
-1. Android Studio → **Open** → wskaż folder `GymBro`.
-2. Poczekaj na Gradle sync. Studio samo pobierze Gradle wskazany w `gradle/wrapper/gradle-wrapper.properties`.
-   Gdyby zgłosił brak wrappera — zgódź się na jego wygenerowanie.
-3. Gdyby zgłosił nieaktualne wersje bibliotek: przyjmij podpowiedzi Studia.
-   Wersje w `gradle/libs.versions.toml` mogą już być starsze, niż to, co jest dostępne.
-4. W telefonie: **Ustawienia → Informacje → Numer kompilacji** (7×) → wróć → **Opcje programisty → Debugowanie USB**.
-5. Podłącz telefon kablem, wybierz go w pasku Studia, naciśnij **Run ▶**.
+### Płynność mierz na wariancie release
 
----
+```sh
+tools/gr.sh :app:assembleRelease
+```
 
-## Test 1 — waga
+Wariant release jest podpisany kluczem debugowym, żeby dało się go uruchomić
+lokalnie bez własnego keystore'a. To nie jest wersja do publikacji - służy do
+pomiarów. Compose w buildzie debug działa kilkukrotnie wolniej, bo kompilator
+pracuje w trybie diagnostycznym, a ART nie optymalizuje kodu oznaczonego jako
+debuggable; wrażenia z debuga nic nie mówią o rzeczywistości.
 
-**Rozpoznana: OKOK International = układ Chipsea.** To dobra wiadomość, bo te wagi
-nadają pomiar w **rozgłoszeniu BLE** (manufacturer data), a nie przez połączenie GATT.
-Konsekwencje:
+[`tools/bench.sh`](tools/bench.sh) mierzy przełączanie zakładek przez
+`dumpsys gfxinfo` na podłączonym telefonie. Ma zaszyte pięć pozycji zakładek,
+a aplikacja ma ich cztery - przed użyciem trzeba poprawić `XS`.
 
-- nie trzeba się z wagą łączyć ani jej parować,
-- nie walczymy z aplikacją OKOK o wyłączny dostęp — obie mogą słuchać naraz,
-- odczyt jest natychmiastowy i tani bateryjnie.
-
-Parser jest już napisany: [`OkOkParser.kt`](app/src/main/java/pl/gymbro/ble/OkOkParser.kt).
-
-1. Zakładka **Waga** → przyznaj uprawnienia Bluetooth.
-2. **Skanuj**.
-3. **Stań na wadze** i poczekaj na ustabilizowanie. Masa powinna pojawić się
-   dużą czcionką na górze ekranu, razem z impedancją.
-4. Powtórz 2–3 razy, **znając swoją masę**.
-5. **Kopiuj log** i wklej mi go.
-
-Gdyby duża liczba się nie pojawiła, log i tak zawiera surowe bajty plus brute force
-z `ScaleProtocol`, który pokaże, na którym offsecie faktycznie siedzi masa.
-Przycisk połączenia zostaje na wypadek, gdyby ten egzemplarz wymagał jednak GATT.
-
-### Dlaczego to zadziała nawet dla nieznanej wagi
-
-W `ScaleProtocol.kt` jest `findWeightCandidates()` — brute force, który przegląda każdą
-pozycję w ramce jako liczbę 16-bitową (little i big endian, dzielone przez 10 i 100)
-i zgłasza te, które wyglądają jak masa ciała. Przy kilku pomiarach o znanej masie
-od razu widać, który offset jest tym właściwym. To samo robi `findImpedanceCandidates()`
-dla bioimpedancji (realny zakres 150–1500 Ω).
-
-Dlatego nie musimy z góry wiedzieć, jaką masz wagę.
-
----
-
-## Test 2 — zegarek
-
-1. W aplikacji **Zepp**: Profil → Konta zewnętrzne → **Health Connect** → zezwól na wszystko.
-2. Zsynchronizuj zegarek z Zepp (przeciągnij w dół na ekranie głównym).
-3. W naszej aplikacji: zakładka **Zegarek (HC)** → **Przyznaj dostęp** → **Wczytaj dane**.
-4. **Kopiuj** i wklej mi wynik.
-
-### Na co patrzeć
-
-Przy każdej pozycji wypisujemy **pakiet źródłowy**. To jest sedno testu: pokazuje,
-co naprawdę przyszło z Zepp, a co z Google Fit albo z ręcznego wpisu.
-
-Szukamy odpowiedzi na:
-- Czy treningi siłowe w ogóle się pojawiają i z jaką szczegółowością?
-- Czy jest **HRV (RMSSD)** i tętno spoczynkowe? To paliwo dla modułu gotowości.
-- Czy sen ma rozbite fazy, czy tylko czas łączny?
-- Czy biegi mają dystans, czy trzeba je dociągać ze Stravy?
-
----
-
-## Co z tego wyjdzie
-
-| Wynik | Co robimy dalej |
-|---|---|
-| Waga gada, HC ma komplet | Faza 1 pełną parą, integracje zamknięte w tydzień |
-| Waga milczy | Plan B: Fitdays → Health Connect → my. Działa, ale dochodzi chmura producenta |
-| HC ubogie w dane biegowe | Dokładamy Stravę (OAuth) jako drugie źródło — i tak było w planie |
-| HC bez HRV | Moduł gotowości jedzie na tętnie spoczynkowym i śnie, trochę słabszy |
-
----
-
-## Struktura
+## Układ pakietów
 
 ```
 app/src/main/java/pl/gymbro/
-├── MainActivity.kt           ekran z dwiema zakładkami
-├── ble/
-│   ├── ScaleScanner.kt       skan BLE, połączenie GATT, nasłuch wszystkich notify
-│   └── ScaleProtocol.kt      dekodery znanych wag + brute force dla nieznanych
-└── health/
-    └── HealthReader.kt       odczyt Health Connect + raport źródeł danych
+├── MainActivity.kt    cztery zakładki: Trening, Waga, Plan, Profil
+├── data/              SQLite bez ORM: schemat, migracje, repozytoria, modele
+├── gym/               logika treningu: progresja, talerze, analizy, stan sesji
+├── net/               serwer na pętli zwrotnej dla zegarka i usługa go trzymająca
+├── health/            Health Connect: import treningów i metryk dziennych
+├── ble/               odczyt wagi łazienkowej z rozgłoszeń BLE
+└── ui/                ekrany Compose i wspólne elementy
 ```
 
-Nic tu nie trafia do sieci. Cały log zostaje na telefonie, dopóki sam go nie skopiujesz.
+Testy jednostkowe leżą równolegle w `app/src/test/java/pl/gymbro/`.
+
+## Baza
+
+`data/Schema.kt`, `SQLiteOpenHelper`, obecnie wersja 15, trzynaście tabel.
+Świadomie bez Room: Room wymaga procesora adnotacji KSP, czyli kolejnej wtyczki
+Gradle z własną macierzą zgodności wersji.
+
+Każda zmiana schematu podbija `VERSION`, dopisuje listę `Vn_STATEMENTS`
+i gałąź w `onUpgrade`. **Tabel z danymi użytkownika nie kasujemy przy
+aktualizacji** - plik `gymbro.db` na telefonie to jedyna kopia historii
+treningów, nie ma eksportu.
+
+Ciężary przepuszczaj przez `data/Kg.kt`. Arytmetyka zmiennoprzecinkowa
+wpisywała do bazy wartości w rodzaju `81.39999999999999`.
+
+## Progresja
+
+Metoda to podwójna progresja: przy stałym ciężarze dokładasz powtórzeń, aż
+dojdziesz do góry zakresu we wszystkich seriach roboczych, i dopiero wtedy
+ciężar idzie w górę.
+
+| Plik | Rola |
+|---|---|
+| `gym/ProgressionEngine.kt` | ciężar na dzisiejszą sesję |
+| `gym/ProgressionAdvisor.kt` | propozycje zmian w planie po treningu, czysta funkcja |
+| `gym/ProgressionReview.kt` | ładowanie z bazy i zapis propozycji |
+| `gym/PlateCalculator.kt` | co da się złożyć z posiadanych talerzy |
+
+Doradca nie dotyka bazy, dzięki czemu reguły testuje się na wymyślonych danych.
+Skąd się biorą liczby - źródła z literatury i wyraźnie oznaczone miejsca, gdzie
+liczba jest konwencją, a nie wynikiem badania - opisuje
+[`docs/progresja.md`](docs/progresja.md). Zmieniając regułę, zmień i ten dokument.
+
+## Waga łazienkowa po BLE
+
+Obsługiwana waga to **OKOK International, układ Chipsea**. Te wagi nadają pomiar
+w rozgłoszeniu BLE (manufacturer data), nie przez GATT, więc nie trzeba się
+z wagą łączyć ani jej parować, nie walczymy z aplikacją producenta o wyłączny
+dostęp, a odczyt jest natychmiastowy i tani bateryjnie.
+
+Dla nieznanego egzemplarza `ble/ScaleProtocol.kt` ma `findWeightCandidates()`:
+brute force, który czyta każdą pozycję w ramce jako liczbę 16-bitową (little
+i big endian, dzielone przez 10 i 100) i zgłasza te wyglądające jak masa ciała.
+Przy kilku pomiarach o znanej masie od razu widać właściwy offset. To samo robi
+`findImpedanceCandidates()` dla bioimpedancji, w zakresie 150-1500 Ω.
+
+## Health Connect
+
+`health/HealthReader.kt` czyta dane, które zegarek wystawia przez aplikację
+Zepp. Przy każdej pozycji raportujemy **pakiet źródłowy**, bo inaczej nie
+odróżnisz tego, co przyszło z Zepp, od tego, co wstawił Google Fit albo ręczny
+wpis.
+
+Żeby cokolwiek przyszło: w aplikacji Zepp **Profil → Konta zewnętrzne →
+Health Connect** → zezwól, potem zsynchronizuj zegarek.
+
+`gym/WatchMatch.kt` łączy trening zapisany w aplikacji z tym, co w tym samym
+czasie nagrał zegarek. Dopasowanie idzie po czasie, bo nic innego nie ma:
+zegarek nie wie o planie, a aplikacja nie dostaje identyfikatora sesji.
+
+## Sieć
+
+Jedyne gniazdo w tej aplikacji nasłuchuje na **pętli zwrotnej telefonu**
+(`127.0.0.1:48627`) i obsługuje wyłącznie zegarek - szczegóły w
+[README w korzeniu](../README.md). Poza tym nic stąd nie wychodzi do internetu.
