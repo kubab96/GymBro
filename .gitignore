@@ -1,0 +1,36 @@
+# Wyniki budowania
+build/
+.gradle/
+.kotlin/
+dist/
+
+# Sciezka do SDK na tej maszynie - u kazdego inna
+local.properties
+
+# Kopie bazy sciagniete z telefonu.
+#
+# To nie sa pliki projektu, tylko cala historia treningow, serie i pomiary
+# ciala. Nie ida do repozytorium, ale maja zostac na dysku: poza telefonem
+# to jedyne kopie tych danych.
+kopie/
+
+# IDE
+.idea/
+*.iml
+*.log
+
+# System
+.DS_Store
+Thumbs.db
+
+# Token pilota - sparowanie tego zegarka z tym telefonem.
+#
+# Zegarek i telefon musza miec ten sam ciag; GymBro pokazuje go w
+# Profil > Pilot na zegarku. Jest haslem do uslugi nasluchujacej na
+# 127.0.0.1:48627, wiec nie ma go w repozytorium.
+# Wzor do skopiowania: gymbro-watch/utils/config/link.example.js
+gymbro-watch/utils/config/link.js
+
+# Paczki .zab/.zpk zbudowane przez zeus
+*.zab
+*.zpk

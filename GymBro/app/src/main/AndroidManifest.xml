@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ===== BLE: skanowanie i połączenie z wagą =====
+
+         usesPermissionFlags="neverForLocation" jest tu KLUCZOWE.
+         Bez tej flagi Android 12+ wymaga przyznanego ACCESS_FINE_LOCATION, żeby
+         w ogóle dostarczyć wyniki skanowania — a my ograniczyliśmy tę permisję
+         do maxSdkVersion=30. Efekt: skanowanie uruchamiało się poprawnie,
+         nie zgłaszało żadnego błędu i nie zwracało ani jednego wyniku.
+         Deklarujemy wprost, że nie wyciągamy z BLE lokalizacji — bo nie wyciągamy. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- ===== Pilot na zegarku =====
+
+         Serwer na petli zwrotnej musi przezyc wygaszony ekran i telefon
+         w kieszeni, wiec chodzi jako usluga pierwszoplanowa. Typ
+         connectedDevice, bo obsluguje urzadzenie zewnetrzne - zegarek. -->
+    <!-- Gniazdo nasluchujace wymaga INTERNET nawet na 127.0.0.1 - bez tego
+         socket() konczy sie EPERM. Serwer wiaze sie wylacznie z petla zwrotna,
+         wiec aplikacja nadal niczego nie wysyla na zewnatrz. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Wibracja na koniec przerwy miedzy seriami -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Android 10/11 wymaga lokalizacji do skanowania BLE -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
+    <!-- ===== Health Connect: dane z Amazfit Balance przez Zepp ===== -->
+    <uses-permission android:name="android.permission.health.READ_EXERCISE" />
+    <uses-permission android:name="android.permission.health.READ_EXERCISE_ROUTE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE_VARIABILITY" />
+    <uses-permission android:name="android.permission.health.READ_RESTING_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.READ_SLEEP" />
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <uses-permission android:name="android.permission.health.READ_WEIGHT" />
+    <uses-permission android:name="android.permission.health.READ_BODY_FAT" />
+    <uses-permission android:name="android.permission.health.READ_TOTAL_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.READ_DISTANCE" />
+    <uses-permission android:name="android.permission.health.READ_VO2_MAX" />
+
+    <queries>
+        <package android:name="com.google.android.apps.healthdata" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="GymBro"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.GymBro">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="GymBro"
+            android:theme="@style/Theme.GymBro">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Ekran uzasadnienia uprawnień Health Connect (Android 13 i starsze) -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Ekran uzasadnienia uprawnień Health Connect (Android 14+) -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <service
+            android:name=".net.WatchLinkService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
+        <!--
+            Pilot ma stać także po restarcie telefonu: trening zaczyna się na
+            zegarku, więc pierwsze żądanie przychodzi, zanim ktokolwiek dotknie
+            telefonu. Exported, bo nadawcą jest system.
+        -->
+        <receiver
+            android:name=".net.BootReceiver"
+            android:exported="true"
+            android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>
