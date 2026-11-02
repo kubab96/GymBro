@@ -41,6 +41,8 @@ import pl.gymbro.data.FoodLogEntry
 import pl.gymbro.data.Meal
 import pl.gymbro.data.TdeeMethod
 import pl.gymbro.data.todayEpochDay
+import pl.gymbro.net.Barcodes
+import pl.gymbro.net.OpenFoodFacts
 import pl.gymbro.nutrition.NutritionRepos
 import pl.gymbro.nutrition.NutritionReview
 import pl.gymbro.nutrition.Portions
@@ -79,13 +81,84 @@ fun FoodScreen() {
     var picking by remember { mutableStateOf<Pair<Food, Meal>?>(null) }
     var pickingLastGrams by remember { mutableStateOf<Double?>(null) }
     var editing by remember { mutableStateOf<FoodLogEntry?>(null) }
+    var newProduct by remember { mutableStateOf<NewProduct?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         today = withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
     }
 
+    /** Otwiera wybór porcji dla produktu, dociągając porcje i ostatnią gramaturę. */
+    suspend fun openPortion(food: Food, meal: Meal) {
+        val full = withContext(Dispatchers.IO) { repos.foods.byId(food.id) } ?: food
+        pickingLastGrams = withContext(Dispatchers.IO) { repos.foods.lastGrams(food.id) }
+        picking = full to meal
+    }
+
+    /**
+     * Co zrobić z odczytanym kodem.
+     *
+     * Kolejność jest tu całą rzeczą i jest **offline najpierw**: katalog
+     * lokalny, dopiero potem sieć. Drugi skan tego samego jogurtu nie rusza
+     * już Open Food Facts, więc w sklepie bez zasięgu produkty, które już
+     * raz skanowałeś, działają normalnie.
+     */
+    suspend fun handleCode(code: String, meal: Meal) {
+        val local = withContext(Dispatchers.IO) { repos.foods.byBarcode(code) }
+        if (local != null) {
+            status = null
+            openPortion(local, meal)
+            return
+        }
+
+        status = "Szukam w Open Food Facts…"
+        when (val lookup = withContext(Dispatchers.IO) { OpenFoodFacts.fetch(code) }) {
+            is OpenFoodFacts.Lookup.Found -> {
+                val id = withContext(Dispatchers.IO) { repos.foods.upsertFromSource(lookup.food) }
+                val saved = withContext(Dispatchers.IO) { repos.foods.byId(id) }
+                status = null
+                if (saved != null) openPortion(saved, meal)
+                else status = "Nie udało się zapisać produktu."
+            }
+
+            OpenFoodFacts.Lookup.NotFound -> {
+                status = null
+                newProduct = NewProduct(code, null, null, meal)
+            }
+
+            // Produkt jest w bazie, ale bez danych, które mają znaczenie.
+            // Nazwa i marka idą do formularza, żeby nie przepisywać ich
+            // z opakowania - to i tak najwięcej pisania w całej ścieżce.
+            is OpenFoodFacts.Lookup.Incomplete -> {
+                status = "W Open Food Facts brakuje danych: ${lookup.reason}."
+                newProduct = NewProduct(code, lookup.name, lookup.brand, meal)
+            }
+
+            // Brak zasięgu w sklepie to nie powód, żeby nie dało się
+            // zapisać posiłku - formularz otwiera się mimo wszystko.
+            is OpenFoodFacts.Lookup.Failed -> {
+                status = "${lookup.reason}. Możesz wpisać produkt ręcznie."
+                newProduct = NewProduct(code, null, null, meal)
+            }
+        }
+    }
+
+    fun scan(meal: Meal) {
+        scope.launch {
+            when (val wynik = Barcodes.scan(context)) {
+                is Barcodes.Scan.Code -> Busy.track { handleCode(wynik.value, meal) }
+                // Zamknięcie skanera to decyzja, nie usterka - bez komunikatu.
+                Barcodes.Scan.Cancelled -> Unit
+                is Barcodes.Scan.Failed -> status = wynik.reason
+            }
+        }
+    }
+
     LaunchedEffect(day, Refresh.version) { Busy.track { reload() } }
+
+    // Moduł skanera dociąga się przy pierwszym użyciu, a to trafia dokładnie
+    // w moment, w którym stoisz przed półką. Prosimy o niego wcześniej.
+    LaunchedEffect(Unit) { Barcodes.warmUp(context) }
 
     // Naciśnięcie otwartej zakładki wraca do dzisiejszego dnia i zwija
     // szukanie - tak jak każda inna zakładka zwija się do widoku głównego.
@@ -100,18 +173,11 @@ fun FoodScreen() {
         FoodSearchView(
             meal = meal,
             repos = repos,
-            onPick = { food ->
-                scope.launch {
-                    // Porcje i ostatnia gramatura dociągane dopiero tutaj:
-                    // przy liście wyników byłoby to kilkadziesiąt zapytań
-                    // na każde wpisane słowo.
-                    val full = withContext(Dispatchers.IO) { repos.foods.byId(food.id) } ?: food
-                    pickingLastGrams = withContext(Dispatchers.IO) {
-                        repos.foods.lastGrams(food.id)
-                    }
-                    picking = full to meal
-                }
-            },
+            // Porcje i ostatnia gramatura dociągane dopiero przy wyborze:
+            // przy liście wyników byłoby to kilkadziesiąt zapytań na każde
+            // wpisane słowo.
+            onPick = { food -> scope.launch { openPortion(food, meal) } },
+            onScan = { scan(meal) },
             onQuickAdd = { quickAddTo = meal },
             onBack = { searchFor = null }
         )
@@ -121,6 +187,7 @@ fun FoodScreen() {
             day = day,
             status = status,
             onDay = { day = it; status = null },
+            onScan = { m -> status = null; scan(m) },
             onAdd = { m -> status = null; searchFor = m },
             onQuickAdd = { m -> status = null; quickAddTo = m },
             onEntry = { editing = it }
@@ -189,7 +256,43 @@ fun FoodScreen() {
             }
         )
     }
+
+    newProduct?.let { nowy ->
+        OwnProductDialog(
+            barcode = nowy.barcode,
+            initialName = nowy.name,
+            initialBrand = nowy.brand,
+            onDismiss = { newProduct = null },
+            onSave = { food ->
+                scope.launch {
+                    // Zapisany produkt od razu prowadzi do wyboru porcji -
+                    // wpisywanie go po to, żeby wrócić do pustego ekranu
+                    // i szukać od nowa, byłoby karą za to, że czegoś nie ma
+                    // w bazie.
+                    val id = withContext(Dispatchers.IO) { repos.foods.insert(food) }
+                    val saved = withContext(Dispatchers.IO) { repos.foods.byId(id) }
+                    newProduct = null
+                    status = null
+                    if (saved != null) openPortion(saved, nowy.meal)
+                }
+            }
+        )
+    }
 }
+
+/**
+ * Produkt do wpisania ręcznie, razem z tym, co już o nim wiadomo.
+ *
+ * Powstaje po skanie, którego nie udało się rozwiązać: kodu nie ma w Open
+ * Food Facts, brakuje mu danych albo nie było zasięgu. [name] i [brand] bywają
+ * znane nawet wtedy, gdy wartości odżywczych nie ma.
+ */
+private data class NewProduct(
+    val barcode: String?,
+    val name: String?,
+    val brand: String?,
+    val meal: Meal
+)
 
 // ---- Widok dnia ----------------------------------------------------------
 
@@ -199,6 +302,7 @@ private fun DayView(
     day: Long,
     status: String?,
     onDay: (Long) -> Unit,
+    onScan: (Meal) -> Unit,
     onAdd: (Meal) -> Unit,
     onQuickAdd: (Meal) -> Unit,
     onEntry: (FoodLogEntry) -> Unit
@@ -231,17 +335,24 @@ private fun DayView(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            // Skanowanie pierwsze i wypełnione: w sklepie to jedyna droga,
+            // która nie wymaga wiedzy, jak producent nazwał produkt.
+            //
             // Posiłek podstawiany z godziny, nie stały. O ósmej rano chodzi
             // o śniadanie i wybieranie go z listy przy każdym wpisie byłoby
             // dokładnie tym dodatkowym dotknięciem, którego tu unikamy.
             Button(
+                onClick = { onScan(defaultMeal()) },
+                modifier = Modifier.weight(1f)
+            ) { Text("Skanuj") }
+            OutlinedButton(
                 onClick = { onAdd(defaultMeal()) },
                 modifier = Modifier.weight(1f)
-            ) { Text("Szukaj produktu") }
+            ) { Text("Szukaj") }
             OutlinedButton(
                 onClick = { onQuickAdd(defaultMeal()) },
                 modifier = Modifier.weight(1f)
-            ) { Text("Szybki wpis") }
+            ) { Text("Wpisz") }
         }
 
         status?.let {

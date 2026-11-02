@@ -553,6 +553,23 @@ fun ProfileScreen() {
             ) { Text("Wyczyść historię treningów") }
         }
 
+        Spacer(Modifier.height(20.dp))
+
+        // Uznanie autorstwa danych o produktach.
+        //
+        // Nie uprzejmość, tylko warunek licencji: Open Food Facts jest na
+        // Open Database License, która wymaga wskazania źródła wszędzie tam,
+        // gdzie korzysta się z bazy. Skanowanie kodów kreskowych sięga
+        // właśnie tam, więc ta linijka musi gdzieś być - a Profil jest
+        // jedynym miejscem, gdzie nie przeszkadza przy codziennym użyciu.
+        Text(
+            "Dane o produktach pochodzą z Open Food Facts i są udostępniane " +
+                "na licencji Open Database License (ODbL). Produkty podstawowe " +
+                "i wpisane ręcznie są własne.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         Spacer(Modifier.height(28.dp))
     }
 

@@ -64,6 +64,7 @@ internal fun FoodSearchView(
     meal: Meal,
     repos: NutritionRepos,
     onPick: (Food) -> Unit,
+    onScan: () -> Unit,
     onQuickAdd: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -147,13 +148,19 @@ internal fun FoodSearchView(
             }
         }
 
-        // Wyjście awaryjne, zawsze widoczne. Produkt, którego nie ma
-        // w katalogu, jest najczęstszym powodem porzucenia dziennika -
-        // i dlatego ten przycisk nie chowa się za brakiem wyników.
-        OutlinedButton(
-            onClick = onQuickAdd,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-        ) { Text("Nie ma tego produktu - wpisz same kalorie") }
+        // Dwa wyjścia, zawsze widoczne. Produkt, którego nie ma w katalogu,
+        // jest najczęstszym powodem porzucenia dziennika - i dlatego te
+        // przyciski nie chowają się za brakiem wyników.
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = onScan, modifier = Modifier.weight(1f)) { Text("Skanuj") }
+            OutlinedButton(
+                onClick = onQuickAdd,
+                modifier = Modifier.weight(1f)
+            ) { Text("Same kalorie") }
+        }
     }
 }
 
@@ -492,6 +499,123 @@ internal fun EntryEditDialog(
                 TextButton(onClick = onDismiss) { Text("Anuluj") }
             }
         }
+    )
+}
+
+// ---- Własny produkt ------------------------------------------------------
+
+/**
+ * Wpisanie produktu, którego nie ma w żadnej bazie.
+ *
+ * Otwiera się po skanie, który się nie rozwiązał: kodu nie ma w Open Food
+ * Facts, brakuje mu danych albo nie było zasięgu. Kod kreskowy zostaje
+ * zapisany razem z produktem, więc **drugi skan tego samego opakowania
+ * znajdzie go już lokalnie** - to jest cały sens wpisywania go tutaj,
+ * zamiast szybkim wpisem samych kalorii.
+ *
+ * Nazwa i marka bywają znane z Open Food Facts nawet wtedy, gdy wartości
+ * odżywczych tam nie ma - wtedy przychodzą wypełnione, bo przepisywanie
+ * nazwy z opakowania to najwięcej pisania w całej tej ścieżce.
+ */
+@Composable
+internal fun OwnProductDialog(
+    barcode: String?,
+    initialName: String?,
+    initialBrand: String?,
+    onSave: (Food) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name by remember { mutableStateOf(initialName.orEmpty()) }
+    var brand by remember { mutableStateOf(initialBrand.orEmpty()) }
+    var kcal by remember { mutableStateOf("") }
+    var protein by remember { mutableStateOf("") }
+    var carbs by remember { mutableStateOf("") }
+    var fat by remember { mutableStateOf("") }
+
+    fun liczba(s: String): Double? = s.replace(',', '.').toDoubleOrNull()
+
+    val kcalValue = liczba(kcal)
+    val ok = name.isNotBlank() && kcalValue != null && kcalValue > 0.0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nowy produkt") },
+        text = {
+            Column {
+                if (barcode != null) {
+                    Text(
+                        "kod $barcode - zapamiętamy go, więc następnym razem " +
+                            "wystarczy zeskanować",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nazwa") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = brand,
+                    onValueChange = { brand = it },
+                    label = { Text("Marka (opcjonalnie)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                )
+
+                Text(
+                    "Wartości z etykiety, na 100 g. Węglowodany bez błonnika, " +
+                        "tak jak podaje je polska etykieta.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                )
+
+                OutlinedTextField(
+                    value = kcal,
+                    onValueChange = { kcal = it },
+                    label = { Text("kcal / 100 g") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    MacroField("B", protein, Modifier.weight(1f)) { protein = it }
+                    MacroField("W", carbs, Modifier.weight(1f)) { carbs = it }
+                    MacroField("T", fat, Modifier.weight(1f)) { fat = it }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = ok,
+                onClick = {
+                    onSave(
+                        Food(
+                            barcode = barcode?.takeIf { it.isNotBlank() },
+                            name = name.trim(),
+                            brand = brand.trim().takeIf { it.isNotBlank() },
+                            per100 = Nutrients(
+                                kcal = kcalValue ?: 0.0,
+                                proteinG = liczba(protein) ?: 0.0,
+                                carbsG = liczba(carbs) ?: 0.0,
+                                fatG = liczba(fat) ?: 0.0
+                            ),
+                            source = FoodSource.OWN,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            ) { Text("Zapisz i dodaj") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
     )
 }
 

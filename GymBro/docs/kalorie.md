@@ -346,8 +346,10 @@ nie jest zaleceniem medycznym.
 | `data/Nutrition.kt` | model: produkt, porcja, wpis, cel, numer dnia |
 | `data/FoodRepos.kt` | jedyna droga do tabel jedzenia |
 | `data/FoodSeed.kt` | zestaw produktów podstawowych |
+| `net/OpenFoodFacts.kt` | odczyt produktu po kodzie kreskowym |
+| `net/Barcodes.kt` | skaner Google Play Services |
 | `ui/FoodScreen.kt` | zakładka: widok dnia i podsumowanie |
-| `ui/FoodPicker.kt` | szukanie produktu, porcje, szybki wpis |
+| `ui/FoodPicker.kt` | szukanie, porcje, szybki wpis, własny produkt |
 
 Wszystko w `nutrition/` poza `NutritionReview.kt` to **czyste funkcje** - zero
 bazy, zero Androida. Dzięki temu reguły z tego dokumentu testuje się na
@@ -369,6 +371,29 @@ energia ze składu to 4/4/9 **plus 2 kcal za gram błonnika**.
 poranek na dzień poprzedni. Ważenie o 6:30 i śniadanie o 7:00 muszą wylądować
 w tym samym dniu.
 
+### Zasady korzystania z Open Food Facts
+
+**Offline najpierw.** Po skanie najpierw sprawdzamy katalog lokalny, dopiero
+potem sieć. Każdy odczyt z sieci zostaje zapisany, więc drugi skan tego samego
+produktu nie rusza już serwera - w sklepie bez zasięgu działa wszystko, co już
+raz skanowałeś.
+
+**Jedno wywołanie odpowiada jednemu prawdziwemu skanowi** - o to prosi sam
+projekt. Masowego pobierania tędy nie robimy; od tego są nocne zrzuty, i to
+jest droga na etap 4.
+
+**Wyszukiwanie tekstowe nie idzie przez sieć.** Przy sprawdzaniu endpoint
+`search` co drugie zapytanie zwracał „Page temporarily unavailable", a odczyt
+po kodzie działał za każdym razem. Stąd podział: szukamy lokalnie, przez sieć
+pytamy wyłącznie o konkretny kod.
+
+**Nagłówek przedstawia aplikację i zostawia kontakt** - adres repozytorium,
+nie adres użytkownika.
+
+**Licencja ODbL wymaga wskazania źródła**, stąd linijka o Open Food Facts
+w Profilu. Trzymanie kopii u siebie jest w porządku; obowiązek dzielenia się
+zmianami dotyczy publikowania zmodyfikowanej bazy, czego nie robimy.
+
 **Zmieniając którąkolwiek liczbę z tego dokumentu, zmień i jego.**
 
 ---
@@ -386,8 +411,10 @@ w tym samym dniu.
 | zestaw produktów podstawowych | zrobione, ~150 pozycji, przetestowane |
 | ładowanie i zapis (`NutritionReview`) | działa na telefonie |
 | zakładka, widok dnia, szukanie, wpisy | sprawdzone na telefonie 31.10.2026 |
+| skaner kodów kreskowych | sprawdzony na telefonie 02.11.2026 |
+| Open Food Facts po kodzie | sprawdzone na telefonie, obie ścieżki |
+| własny produkt z kodem kreskowym | sprawdzone na telefonie |
 | przepisy w interfejsie | nie ma |
-| skaner kodów kreskowych | nie ma |
-| Open Food Facts | nie ma |
+| paczka offline z Open Food Facts | nie ma, etap 4 |
 | wykresy i krzywa wydatku | nie ma |
 | tempo diety do ustawienia w Profilu | nie ma, na razie domyślne dla fazy |

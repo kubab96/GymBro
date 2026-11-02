@@ -55,8 +55,21 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.health.connect.client)
+
+    // Skaner kodów kreskowych Google. Nie wymaga uprawnienia do kamery:
+    // skanuje Google Play Services we własnym oknie i oddaje tylko wynik,
+    // a moduł dociąga się przy pierwszym użyciu. To jedna zależność zamiast
+    // CameraX plus ML Kit plus własny ekran podglądu.
+    implementation(libs.play.services.code.scanner)
+
     debugImplementation(libs.androidx.ui.tooling)
 
     // Testy czystej logiki - uruchamiane na JVM, bez telefonu i emulatora.
     testImplementation(libs.junit)
+
+    // org.json jest częścią Androida, ale nie JVM-a - bez tego każde
+    // odwołanie do JSONObject w teście zwracało null zamiast działać.
+    // Potrzebne, żeby mapowanie odpowiedzi Open Food Facts dało się
+    // sprawdzić na prawdziwych odpowiedziach serwera.
+    testImplementation(libs.org.json)
 }
