@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.MonitorWeight
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.Arrangement
@@ -88,6 +89,7 @@ import pl.gymbro.health.AutoSync
 import pl.gymbro.health.HealthReader
 import kotlinx.coroutines.delay
 import pl.gymbro.ui.Busy
+import pl.gymbro.ui.FoodScreen
 import pl.gymbro.ui.PlanEditorScreen
 import pl.gymbro.ui.ProfileScreen
 import pl.gymbro.ui.Refresh
@@ -119,8 +121,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** Ktora zakladka jest Planem - stad plakietka z propozycjami. */
-private const val PLAN_TAB = 2
+/**
+ * Ktora zakladka jest Planem - stad plakietka z propozycjami.
+ *
+ * Numer, nie nazwa, bo pasek rysuje sie z listy po indeksie. Dopisanie
+ * zakladki przed Planem musi przesunac te stala - inaczej plakietka
+ * z propozycjami progresji ladowala na Wadze.
+ */
+private const val PLAN_TAB = 3
 
 /** Jedna zakładka nawigacji. */
 private data class NavTab(
@@ -131,8 +139,12 @@ private data class NavTab(
 // Zakładki opisują to, co robisz, nie urządzenia, z których pochodzą dane.
 // Zegarek miał tu kiedyś własne miejsce - teraz jego treningi i biegi trafiają
 // do Postępu, a samo połączenie jest ustawieniem w Profilu.
+// Jedzenie stoi na drugim miejscu, bo wchodzi sie tam kilka razy dziennie -
+// czesciej niz w Plan i Profil, ktore zaglada sie raz na kilka dni. Przy
+// pasku na dole blizej lewej krawedzi znaczy blizej kciuka.
 private val navTabs = listOf(
     NavTab("Trening", Icons.Filled.FitnessCenter),
+    NavTab("Jedzenie", Icons.Filled.Restaurant),
     NavTab("Waga", Icons.Filled.MonitorWeight),
     NavTab("Plan", Icons.AutoMirrored.Filled.ListAlt),
     NavTab("Profil", Icons.Filled.Person)
@@ -301,9 +313,10 @@ fun SpikeApp() {
                     ) {
                         when (index) {
                             0 -> WorkoutScreen()
-                            1 -> WeightScreen()
-                            2 -> PlanEditorScreen()
-                            3 -> ProfileScreen()
+                            1 -> FoodScreen()
+                            2 -> WeightScreen()
+                            3 -> PlanEditorScreen()
+                            4 -> ProfileScreen()
                         }
                     }
                 }

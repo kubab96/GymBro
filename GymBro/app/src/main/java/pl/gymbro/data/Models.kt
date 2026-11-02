@@ -336,7 +336,24 @@ data class UserProfile(
     /** Domyslny cel treningowy; pozycja planu moze go nadpisac. */
     val trainingGoal: TrainingGoal = TrainingGoal.MIXED,
 
-    val phase: Phase = Phase.MAINTAIN
+    val phase: Phase = Phase.MAINTAIN,
+
+    /**
+     * Tempo zmiany masy ciała w procentach na tydzień.
+     *
+     * Procent, nie kilogramy: ten sam ubytek 0.5 kg na tydzień jest
+     * umiarkowany przy 100 kg i agresywny przy 55 kg. null oznacza wartość
+     * domyślną dla fazy - patrz `docs/kalorie.md`.
+     */
+    val dietRatePct: Double? = null,
+
+    /**
+     * Dzień, od którego liczymy oszacowanie wydatku od nowa.
+     *
+     * Pierwszy tydzień deficytu to ubytek wody, nie tłuszczu, i bez
+     * odcięcia zawyżałby nachylenie trendu na osiem tygodni w przód.
+     */
+    val tdeeResetDay: Long? = null
 ) {
     val age: Int?
         get() = birthYear?.let { java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) - it }

@@ -32,8 +32,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 13 - propozycja progresji zapisana przy pozycji planu
          * 14 - znacznik sesji zalozonej na zegarku, bez lacznosci
          * 15 - znacznik sesji, dla ktorej policzono juz propozycje
+         * 16 - jedzenie: katalog produktow, dziennik, cele i oszacowanie wydatku
          */
-        const val VERSION = 15
+        const val VERSION = 16
 
         /**
          * Bez tego indeksu zapytanie o ostatnie ukończenie jednostki skanowało
@@ -109,6 +110,147 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          */
         private val V15_STATEMENTS = listOf(
             "ALTER TABLE session ADD COLUMN advised INTEGER NOT NULL DEFAULT 0"
+        )
+
+        /**
+         * Jedzenie: katalog, dziennik, cele i oszacowanie wydatku.
+         *
+         * Projekt i uzasadnienie liczb: `docs/kalorie.md`.
+         *
+         * Cztery wartosci sa wymagane (kalorie, bialko, wegle, tluszcz), cztery
+         * opcjonalne (blonnik, cukry, nasycone, sol) - bo Open Food Facts
+         * wypelnia je nierowno, a zero znaczy "produkt tego nie ma", nie
+         * "nie wiadomo". Roznica jest widoczna w sumie dnia, wiec musi
+         * przetrwac w bazie jako NULL.
+         *
+         * `name_key` to nazwa bez ogonkow i malymi literami, wylacznie pod
+         * wyszukiwanie. Bez niej szukanie "jogurt" nie znajdowalo "Jogurt",
+         * a "zurek" nie znajdowal "zurek" wpisanego z ogonkami.
+         */
+        private val V16_STATEMENTS = listOf(
+            """
+            CREATE TABLE food (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                barcode       TEXT,
+                name          TEXT    NOT NULL,
+                name_key      TEXT    NOT NULL,
+                brand         TEXT,
+                kcal_100      REAL    NOT NULL,
+                protein_100   REAL    NOT NULL,
+                carbs_100     REAL    NOT NULL,
+                fat_100       REAL    NOT NULL,
+                fiber_100     REAL,
+                sugars_100    REAL,
+                saturated_100 REAL,
+                salt_100      REAL,
+                serving_g     REAL,
+                package_g     REAL,
+                source        TEXT    NOT NULL,
+                updated_at    INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            // Indeks czesciowy, bo produkty wlasne i przepisy kodu nie maja,
+            // a NULL-e nie moga sie gryzc o unikalnosc. Tak samo jak przy
+            // session.local_id.
+            "CREATE UNIQUE INDEX idx_food_barcode ON food(barcode) WHERE barcode IS NOT NULL",
+            "CREATE INDEX idx_food_name ON food(name_key)",
+            """
+            CREATE TABLE food_portion (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                food_id  INTEGER NOT NULL REFERENCES food(id) ON DELETE CASCADE,
+                label    TEXT    NOT NULL,
+                grams    REAL    NOT NULL,
+                position INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            "CREATE INDEX idx_portion_food ON food_portion(food_id, position)",
+            // Makro jest przepisane, nie liczone z katalogu przy odczycie:
+            // produkt w Open Food Facts zmieni sie, gdy ktos poprawi etykiete,
+            // a wtorek z marca ma zostac wtorkiem z marca. Ta sama decyzja,
+            // co przy StoredAdvice.
+            //
+            // food_id moze byc puste - szybki wpis samych kalorii nie ma
+            // produktu, a restauracja nie ma kodu kreskowego.
+            """
+            CREATE TABLE food_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                day         INTEGER NOT NULL,
+                meal        TEXT    NOT NULL,
+                food_id     INTEGER REFERENCES food(id) ON DELETE SET NULL,
+                name        TEXT    NOT NULL,
+                grams       REAL,
+                kcal        REAL    NOT NULL,
+                protein_g   REAL    NOT NULL,
+                carbs_g     REAL    NOT NULL,
+                fat_g       REAL    NOT NULL,
+                fiber_g     REAL,
+                sugars_g    REAL,
+                saturated_g REAL,
+                salt_g      REAL,
+                at          INTEGER NOT NULL
+            )
+            """.trimIndent(),
+            "CREATE INDEX idx_food_log_day ON food_log(day DESC, meal)",
+            // Pod dwa pytania naraz: "co jadlem ostatnio" na liscie wyboru
+            // i "ile tego wtedy wzialem" - porcja z ostatniego razu jest
+            // najlepsza domyslna porcja, jaka mozna podstawic.
+            "CREATE INDEX idx_food_log_food ON food_log(food_id, at DESC)",
+            // Przepis ma swoj wiersz w `food` (source = RECIPE), przeliczany
+            // przy kazdym zapisie. Dzieki temu wpisanie przepisu do dziennika
+            // jest tym samym, co wpisanie produktu - jedna sciezka zamiast
+            // dwoch. `cooked_g` to waga po ugotowaniu: bez niej ryz i makaron
+            // klamia o polowe.
+            """
+            CREATE TABLE recipe (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                name     TEXT    NOT NULL,
+                cooked_g REAL,
+                note     TEXT,
+                food_id  INTEGER REFERENCES food(id) ON DELETE SET NULL
+            )
+            """.trimIndent(),
+            """
+            CREATE TABLE recipe_item (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                recipe_id INTEGER NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
+                food_id   INTEGER NOT NULL REFERENCES food(id),
+                grams     REAL    NOT NULL,
+                position  INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            "CREATE INDEX idx_recipe_item ON recipe_item(recipe_id, position)",
+            // Historia celow, nie jeden wiersz: patrzac na marzec chcesz
+            // wiedziec, do jakiej liczby wtedy celowales, a nie do jakiej
+            // celujesz dzisiaj. Dzien zmiany jest kluczem, wiec druga zmiana
+            // tego samego dnia nadpisuje pierwsza.
+            """
+            CREATE TABLE nutrition_target (
+                from_day  INTEGER PRIMARY KEY,
+                kcal      REAL    NOT NULL,
+                protein_g REAL    NOT NULL,
+                carbs_g   REAL    NOT NULL,
+                fat_g     REAL    NOT NULL,
+                manual    INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            // Oszacowanie wydatku zapisywane co dzien, zeby dalo sie
+            // narysowac krzywa. Bez tego widac tylko dzisiejsza liczbe
+            // i nie wiadomo, czy ona rosnie, czy maleje.
+            """
+            CREATE TABLE tdee_estimate (
+                day           INTEGER PRIMARY KEY,
+                kcal          REAL    NOT NULL,
+                method        TEXT    NOT NULL,
+                sd_kcal       REAL    NOT NULL,
+                trend_kg_week REAL
+            )
+            """.trimIndent(),
+            // Tempo zmiany masy w procentach na tydzien; NULL = domyslne dla
+            // fazy. `tdee_reset_day` zeruje oszacowanie przy zmianie fazy:
+            // pierwszy tydzien deficytu to ubytek wody, nie tluszczu, i bez
+            // tego zawyza nachylenie na osiem tygodni w przod.
+            "ALTER TABLE user_profile ADD COLUMN diet_rate_pct REAL",
+            "ALTER TABLE user_profile ADD COLUMN tdee_reset_day INTEGER"
         )
 
         private val V8_STATEMENTS = listOf(
@@ -444,8 +586,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V6_COLUMNS.forEach { db.execSQL(it) }
         V7_STATEMENTS.forEach { db.execSQL(it) }
         V8_STATEMENTS.forEach { db.execSQL(it) }
+        V16_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
+        FoodSeed.populate(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -513,6 +657,13 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
 
         if (oldVersion < 15) {
             V15_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        if (oldVersion < 16) {
+            V16_STATEMENTS.forEach { db.execSQL(it) }
+            // Zestaw produktow podstawowych - idempotentny, wiec kazda
+            // kolejna wersja moze go rozszerzyc tym samym wywolaniem.
+            FoodSeed.populate(db)
         }
     }
 }

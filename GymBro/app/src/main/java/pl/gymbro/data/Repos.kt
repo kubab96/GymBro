@@ -14,32 +14,35 @@ import pl.gymbro.gym.StaleSession
  */
 
 // ---- Pomocnicze odczyty z kursora ---------------------------------------
+//
+// `internal`, nie `private`: tych samych pomocnikow potrzebuje FoodRepos.kt,
+// a zduplikowane w drugim pliku z czasem przestaja byc takie same.
 
-private fun Cursor.str(col: String): String = getString(getColumnIndexOrThrow(col))
-private fun Cursor.strOrNull(col: String): String? {
+internal fun Cursor.str(col: String): String = getString(getColumnIndexOrThrow(col))
+internal fun Cursor.strOrNull(col: String): String? {
     val i = getColumnIndexOrThrow(col)
     return if (isNull(i)) null else getString(i)
 }
 
-private fun Cursor.long(col: String): Long = getLong(getColumnIndexOrThrow(col))
-private fun Cursor.longOrNull(col: String): Long? {
+internal fun Cursor.long(col: String): Long = getLong(getColumnIndexOrThrow(col))
+internal fun Cursor.longOrNull(col: String): Long? {
     val i = getColumnIndexOrThrow(col)
     return if (isNull(i)) null else getLong(i)
 }
 
-private fun Cursor.int(col: String): Int = getInt(getColumnIndexOrThrow(col))
-private fun Cursor.intOrNull(col: String): Int? {
+internal fun Cursor.int(col: String): Int = getInt(getColumnIndexOrThrow(col))
+internal fun Cursor.intOrNull(col: String): Int? {
     val i = getColumnIndexOrThrow(col)
     return if (isNull(i)) null else getInt(i)
 }
 
-private fun Cursor.dbl(col: String): Double = getDouble(getColumnIndexOrThrow(col))
-private fun Cursor.dblOrNull(col: String): Double? {
+internal fun Cursor.dbl(col: String): Double = getDouble(getColumnIndexOrThrow(col))
+internal fun Cursor.dblOrNull(col: String): Double? {
     val i = getColumnIndexOrThrow(col)
     return if (isNull(i)) null else getDouble(i)
 }
 
-private fun Cursor.bool(col: String): Boolean = getInt(getColumnIndexOrThrow(col)) != 0
+internal fun Cursor.bool(col: String): Boolean = getInt(getColumnIndexOrThrow(col)) != 0
 
 /**
  * Dostęp do zapisu, który przy okazji unieważnia pamięć podręczną odczytów.
@@ -48,18 +51,18 @@ private fun Cursor.bool(col: String): Boolean = getInt(getColumnIndexOrThrow(col
  * metod zapisujących - przeoczenie choć jednej dawałoby nieaktualne dane na ekranie,
  * a taki błąd jest trudny do powiązania z przyczyną.
  */
-private val Db.writable: android.database.sqlite.SQLiteDatabase
+internal val Db.writable: android.database.sqlite.SQLiteDatabase
     get() {
         Cache.clear()
         return writableDatabase
     }
 
 /** Wpisuje wartość albo NULL - przy polach opcjonalnych to najczęstsza operacja. */
-private fun ContentValues.putOrNull(key: String, value: Double?) {
+internal fun ContentValues.putOrNull(key: String, value: Double?) {
     if (value != null) put(key, value) else putNull(key)
 }
 
-private inline fun <T> Cursor.mapAll(map: (Cursor) -> T): List<T> = use { c ->
+internal inline fun <T> Cursor.mapAll(map: (Cursor) -> T): List<T> = use { c ->
     val out = ArrayList<T>()
     while (c.moveToNext()) out += map(c)
     out
@@ -1293,7 +1296,9 @@ class ProfileRepository(context: Context) {
                         ?.mapNotNull { name -> runCatching { Equipment.valueOf(name) }.getOrNull() }
                         ?.toSet()
                         ?.takeIf { set -> set.isNotEmpty() },
-                    limitedWeights = it.intOrNull("limited_weights") == 1
+                    limitedWeights = it.intOrNull("limited_weights") == 1,
+                    dietRatePct = it.dblOrNull("diet_rate_pct"),
+                    tdeeResetDay = it.longOrNull("tdee_reset_day")
                 )
             }
             .firstOrNull() ?: UserProfile()
@@ -1311,6 +1316,9 @@ class ProfileRepository(context: Context) {
                 if (owned.isNullOrEmpty()) putNull("owned_equipment")
                 else put("owned_equipment", owned.joinToString(",") { e -> e.name })
                 put("limited_weights", if (p.limitedWeights) 1 else 0)
+                putOrNull("diet_rate_pct", p.dietRatePct)
+                if (p.tdeeResetDay != null) put("tdee_reset_day", p.tdeeResetDay)
+                else putNull("tdee_reset_day")
             },
             "id = ?",
             arrayOf("1")
