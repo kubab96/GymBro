@@ -362,6 +362,276 @@ object FoodSeed {
         Item(
             "Wódka 40%", 230.0, 0.0, 0.0, 0.0, alcohol = true,
             portions = listOf(p("kieliszek", 50.0))
+        ),
+
+        // ====================================================================
+        // POTRAWY PO OBRÓBCE
+        //
+        // Powyżej są surowce, tutaj to, co faktycznie leży na talerzu.
+        // Rozdział jest konieczny, bo 100 g suchego ryżu to około 250 g
+        // ugotowanego - „ryż" bez dopisku znaczy więc dwie rzeczy różniące
+        // się dwuipółkrotnie, a waży się to, co się nakłada.
+        //
+        // Dwie konwencje dla tłuszczu, bo nie da się ich zmierzyć z zewnątrz:
+        // smażenie dokłada około 5-7 g tłuszczu na 100 g gotowego dania,
+        // panierowanie 10-13 g. To są wartości typowe, nie pomiary - zależą
+        // od patelni, ilości oleju i tego, czy odsączasz. Danie, które jesz
+        // co tydzień, lepiej złożyć z przepisu ze składników.
+        // ====================================================================
+
+        // ---- Ziemniaki i dodatki skrobiowe ---------------------------------
+        Item(
+            "Ziemniaki gotowane", 80.0, 2.0, 17.0, 0.1, fiberG = 1.5,
+            portions = listOf(p("sztuka", 80.0), p("porcja", 200.0))
+        ),
+        Item(
+            "Ziemniaki smażone", 150.0, 2.2, 18.0, 7.5, fiberG = 1.6,
+            portions = listOf(p("porcja", 200.0))
+        ),
+        Item("Frytki", 290.0, 3.5, 36.0, 14.0, fiberG = 3.0, portions = listOf(p("porcja", 150.0))),
+        Item(
+            "Puree ziemniaczane", 110.0, 2.0, 15.0, 4.5, fiberG = 1.3,
+            portions = listOf(p("porcja", 200.0))
+        ),
+        Item(
+            "Placki ziemniaczane", 220.0, 3.5, 25.0, 11.0, fiberG = 2.0,
+            portions = listOf(p("sztuka", 50.0))
+        ),
+        Item("Kopytka", 160.0, 4.0, 30.0, 2.5, fiberG = 1.5, portions = listOf(p("porcja", 200.0))),
+        Item(
+            "Kluski śląskie", 160.0, 3.5, 33.0, 1.0, fiberG = 1.2,
+            portions = listOf(p("sztuka", 30.0), p("porcja", 180.0))
+        ),
+        Item(
+            "Ryż biały, ugotowany", 130.0, 2.6, 28.0, 0.3, fiberG = 0.5,
+            portions = listOf(p("porcja", 150.0))
+        ),
+        Item(
+            "Ryż brązowy, ugotowany", 120.0, 2.7, 24.0, 0.9, fiberG = 1.5,
+            portions = listOf(p("porcja", 150.0))
+        ),
+        Item(
+            "Makaron, ugotowany", 150.0, 5.0, 29.0, 0.9, fiberG = 1.5,
+            portions = listOf(p("porcja", 200.0))
+        ),
+        Item(
+            "Makaron pełnoziarnisty, ugotowany", 135.0, 5.5, 25.0, 1.0, fiberG = 3.5,
+            portions = listOf(p("porcja", 200.0))
+        ),
+        Item(
+            "Kasza gryczana, ugotowana", 110.0, 4.0, 20.0, 1.0, fiberG = 2.0,
+            portions = listOf(p("porcja", 150.0))
+        ),
+        Item(
+            "Kasza jaglana, ugotowana", 115.0, 3.5, 23.0, 1.0, fiberG = 1.0,
+            portions = listOf(p("porcja", 150.0))
+        ),
+        Item("Soczewica, ugotowana", 115.0, 9.0, 15.0, 0.4, fiberG = 4.0),
+        Item("Ciecierzyca, ugotowana", 140.0, 8.0, 18.0, 2.5, fiberG = 6.0),
+
+        // ---- Mięso i ryby po obróbce ---------------------------------------
+        Item(
+            "Kotlet schabowy panierowany", 290.0, 20.0, 12.0, 18.0, fiberG = 0.7,
+            portions = listOf(p("sztuka", 120.0))
+        ),
+        Item("Schab pieczony", 190.0, 28.0, 0.0, 8.5, portions = listOf(p("plaster", 50.0))),
+        Item(
+            "Kotlet mielony", 250.0, 17.0, 8.0, 16.0, fiberG = 0.5,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item(
+            "Pierś z kurczaka grillowana", 165.0, 31.0, 0.0, 3.6,
+            portions = listOf(p("sztuka", 150.0))
+        ),
+        Item("Pierś z kurczaka panierowana", 250.0, 22.0, 12.0, 13.0, fiberG = 0.5),
+        Item("Udko z kurczaka pieczone", 215.0, 26.0, 0.0, 12.0, portions = listOf(p("sztuka", 120.0))),
+        Item("Karkówka z grilla", 280.0, 25.0, 0.0, 20.0, portions = listOf(p("sztuka", 150.0))),
+        Item("Gulasz wołowy", 180.0, 16.0, 4.0, 11.0, fiberG = 0.5, portions = listOf(p("porcja", 200.0))),
+        Item("Wątróbka smażona", 190.0, 23.0, 4.0, 9.0),
+        Item("Ryba smażona panierowana", 200.0, 17.0, 10.0, 10.0, fiberG = 0.4),
+        Item("Łosoś pieczony", 230.0, 25.0, 0.0, 14.0, portions = listOf(p("porcja", 150.0))),
+
+        // ---- Jajka po obróbce ----------------------------------------------
+        Item("Jajko gotowane", 145.0, 13.0, 0.7, 10.0, portions = listOf(p("sztuka", 50.0))),
+        Item("Jajko sadzone", 195.0, 12.0, 0.8, 16.0, portions = listOf(p("sztuka", 55.0))),
+        Item("Jajecznica na maśle", 200.0, 12.0, 1.0, 17.0, portions = listOf(p("porcja", 150.0))),
+        Item("Omlet", 180.0, 11.0, 2.0, 14.0, portions = listOf(p("sztuka", 150.0))),
+
+        // ---- Dania mączne ---------------------------------------------------
+        Item(
+            "Pierogi ruskie", 200.0, 6.0, 30.0, 6.0, fiberG = 1.5,
+            portions = listOf(p("sztuka", 35.0), p("porcja", 250.0))
+        ),
+        Item(
+            "Pierogi z mięsem", 220.0, 9.0, 28.0, 8.0, fiberG = 1.3,
+            portions = listOf(p("sztuka", 35.0))
+        ),
+        Item("Naleśniki", 185.0, 6.0, 26.0, 6.0, fiberG = 0.8, portions = listOf(p("sztuka", 80.0))),
+        Item(
+            "Naleśniki z serem", 210.0, 8.0, 28.0, 7.0, fiberG = 1.0,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item(
+            "Makaron z sosem bolońskim", 150.0, 7.0, 17.0, 5.5, fiberG = 1.5,
+            portions = listOf(p("porcja", 350.0))
+        ),
+        Item("Lasagne", 170.0, 9.0, 15.0, 8.0, fiberG = 1.2, portions = listOf(p("porcja", 300.0))),
+        Item("Pizza", 260.0, 11.0, 30.0, 10.0, fiberG = 2.0, portions = listOf(p("kawałek", 100.0))),
+
+        // ---- Zupy ------------------------------------------------------------
+        Item("Rosół", 35.0, 2.0, 2.5, 1.8, fiberG = 0.3, portions = listOf(p("talerz", 250.0))),
+        Item(
+            "Zupa pomidorowa z ryżem", 65.0, 1.8, 9.0, 2.3, fiberG = 0.7,
+            portions = listOf(p("talerz", 250.0))
+        ),
+        Item("Żurek", 70.0, 2.5, 7.0, 3.5, fiberG = 0.6, portions = listOf(p("talerz", 250.0))),
+        Item("Zupa ogórkowa", 50.0, 1.5, 6.0, 2.0, fiberG = 0.8, portions = listOf(p("talerz", 250.0))),
+        Item("Barszcz czerwony", 35.0, 1.0, 6.0, 0.6, fiberG = 0.8, portions = listOf(p("talerz", 250.0))),
+        Item("Krem z dyni", 60.0, 1.5, 7.0, 2.8, fiberG = 1.2, portions = listOf(p("talerz", 250.0))),
+        Item("Grochówka", 90.0, 5.0, 11.0, 2.5, fiberG = 2.5, portions = listOf(p("talerz", 250.0))),
+
+        // ---- Dania jednogarnkowe ---------------------------------------------
+        Item("Bigos", 110.0, 6.0, 5.0, 7.0, fiberG = 2.5, portions = listOf(p("porcja", 250.0))),
+        Item(
+            "Gołąbki", 120.0, 7.0, 11.0, 4.5, fiberG = 1.5,
+            portions = listOf(p("sztuka", 150.0))
+        ),
+        Item("Leczo", 80.0, 4.0, 6.0, 4.0, fiberG = 1.5, portions = listOf(p("porcja", 250.0))),
+        Item(
+            "Fasolka po bretońsku", 110.0, 6.0, 12.0, 3.5, fiberG = 3.5,
+            portions = listOf(p("porcja", 250.0))
+        ),
+        Item("Risotto", 150.0, 4.0, 22.0, 4.5, fiberG = 0.8, portions = listOf(p("porcja", 300.0))),
+        Item("Chili con carne", 130.0, 9.0, 10.0, 5.5, fiberG = 3.0, portions = listOf(p("porcja", 300.0))),
+
+        // ---- Surówki i dodatki warzywne ---------------------------------------
+        Item("Mizeria", 45.0, 1.0, 3.0, 3.0, fiberG = 0.6, portions = listOf(p("porcja", 100.0))),
+        Item("Surówka z marchewki", 70.0, 0.8, 9.0, 3.0, fiberG = 2.5, portions = listOf(p("porcja", 100.0))),
+        Item("Surówka z kapusty kiszonej", 60.0, 1.0, 4.0, 4.0, fiberG = 2.2, portions = listOf(p("porcja", 100.0))),
+        Item("Sałatka jarzynowa", 180.0, 2.5, 9.0, 14.0, fiberG = 2.0, portions = listOf(p("porcja", 150.0))),
+        Item("Buraczki zasmażane", 85.0, 1.5, 11.0, 3.5, fiberG = 2.5, portions = listOf(p("porcja", 100.0))),
+        Item("Kapusta zasmażana", 90.0, 2.0, 6.0, 6.0, fiberG = 2.5, portions = listOf(p("porcja", 150.0))),
+        Item("Warzywa gotowane na parze", 40.0, 2.5, 5.0, 0.4, fiberG = 2.5, portions = listOf(p("porcja", 200.0))),
+        Item("Warzywa z patelni", 75.0, 2.5, 6.0, 4.5, fiberG = 2.5, portions = listOf(p("porcja", 200.0))),
+
+        // ---- Śniadaniowe i kanapkowe -------------------------------------------
+        Item("Owsianka na mleku", 95.0, 4.0, 14.0, 2.5, fiberG = 1.8, portions = listOf(p("porcja", 300.0))),
+        Item("Owsianka na wodzie", 70.0, 2.5, 12.0, 1.4, fiberG = 1.7, portions = listOf(p("porcja", 300.0))),
+        Item(
+            "Kanapka z szynką i serem", 250.0, 13.0, 25.0, 10.0, fiberG = 1.8,
+            portions = listOf(p("sztuka", 90.0))
+        ),
+        Item("Tost z serem", 280.0, 12.0, 28.0, 13.0, fiberG = 1.5, portions = listOf(p("sztuka", 70.0))),
+
+        // ====================================================================
+        // SIECI RESTAURACJI
+        //
+        // Jedyny dzial, w ktorym liczby nie sa konwencja, tylko konkretna
+        // wartoscia opublikowana przez producenta. Dlatego pochodza wylacznie
+        // z oficjalnych tabel wartosci odzywczych, a nie z baz
+        // spolecznosciowych - te podawaly dla tego samego Twistera raz 579
+        // kcal za porcje, raz 239 kcal za 100 g, co roznilo sie o 15 %.
+        //
+        // Zrodla:
+        // - McDonald's Polska, tabela wartosci odzywczych z 8.11.2023,
+        //   mcdonalds.pl/tabela-wartosci-odzywczych
+        // - KFC Polska, tabela z 29.09.2026, kfc.pl/kcal-wartosci-odzywcze
+        //
+        // DWIE RZECZY, KTORE TRZEBA WIEDZIEC:
+        //
+        // 1. Tabela McDonald's ma ponad dwa lata. Receptury i gramatury sie
+        //    zmieniaja, wiec przy produkcie jedzonym czesto warto raz
+        //    sprawdzic liczbe w aplikacji sieci i poprawic wlasnym produktem.
+        //
+        // 2. Bialko jest WYLICZONE z bilansu energii, nie przepisane.
+        //    Kolumna bialka w obu PDF-ach jest przy ekstrakcji przesunieta
+        //    wzgledem reszty tabeli i nie da sie jej przypisac do wiersza
+        //    bez zgadywania. Pozostale kolumny - gramatura porcji, kalorie,
+        //    tluszcz, weglowodany, blonnik - sa odczytane wprost.
+        //    Sprawdzenie metody: dla Big Maca wychodzi 27 g, czyli dokladnie
+        //    tyle, ile podaja zrodla niezalezne.
+        //
+        //    Konsekwencja dla testu: sprawdzian zgodnosci kalorii ze skladem
+        //    jest dla tych wierszy spelniony z definicji i nic nie dowodzi.
+        //    Weryfikuja je gramatura porcji i pozostale kolumny.
+        // ====================================================================
+
+        // ---- McDonald's ------------------------------------------------------
+        Item(
+            "Hamburger, McDonald's", 243.0, 12.7, 27.0, 8.9, fiberG = 2.1,
+            portions = listOf(p("sztuka", 106.0))
+        ),
+        Item(
+            "Cheeseburger, McDonald's", 254.0, 12.8, 25.0, 11.0, fiberG = 1.9,
+            portions = listOf(p("sztuka", 120.0))
+        ),
+        Item(
+            "Big Mac, McDonald's", 231.0, 11.9, 18.0, 12.0, fiberG = 1.7,
+            portions = listOf(p("sztuka", 235.0))
+        ),
+        Item(
+            "McRoyal, McDonald's", 256.0, 16.1, 18.0, 13.0, fiberG = 1.4,
+            portions = listOf(p("sztuka", 214.0))
+        ),
+        Item(
+            "WieśMac, McDonald's", 261.0, 13.7, 15.0, 16.0, fiberG = 1.2,
+            portions = listOf(p("sztuka", 233.0))
+        ),
+        Item(
+            "McChicken, McDonald's", 229.0, 11.3, 25.0, 9.0, fiberG = 1.4,
+            portions = listOf(p("sztuka", 189.0))
+        ),
+        Item(
+            "McDouble, McDonald's", 252.0, 14.1, 19.0, 13.0, fiberG = 1.4,
+            portions = listOf(p("sztuka", 162.0))
+        ),
+        Item(
+            "McNuggets, McDonald's", 241.0, 16.1, 19.0, 11.0, fiberG = 0.9,
+            portions = listOf(p("6 sztuk", 109.0), p("9 sztuk", 163.0), p("4 sztuki", 73.0))
+        ),
+        Item(
+            "Frytki małe, McDonald's", 287.0, 2.5, 36.0, 14.0, fiberG = 3.6,
+            portions = listOf(p("porcja", 80.0))
+        ),
+        Item(
+            "Frytki średnie, McDonald's", 287.0, 2.5, 36.0, 14.0, fiberG = 3.6,
+            portions = listOf(p("porcja", 114.0))
+        ),
+        Item(
+            "Frytki duże, McDonald's", 287.0, 2.5, 36.0, 14.0, fiberG = 3.6,
+            portions = listOf(p("porcja", 150.0))
+        ),
+
+        // ---- KFC ---------------------------------------------------------------
+        // Tabela KFC nie ma kolumny blonnika, stad brak danych zamiast zera.
+        Item(
+            "Hot Wings, KFC", 320.0, 18.8, 14.0, 21.0,
+            portions = listOf(p("sztuka", 36.0), p("5 sztuk", 180.0))
+        ),
+        Item(
+            "Hot & Spicy Strips, KFC", 288.0, 19.4, 9.9, 19.0,
+            portions = listOf(p("sztuka", 32.0), p("3 sztuki", 96.0))
+        ),
+        Item(
+            "Zinger Burger, KFC", 262.0, 15.3, 21.0, 13.0,
+            portions = listOf(p("sztuka", 170.0))
+        ),
+        Item("Zinger Max, KFC", 246.0, 17.5, 17.0, 12.0, portions = listOf(p("sztuka", 240.0))),
+        Item(
+            "Zinger Ser i Bekon, KFC", 262.0, 16.3, 20.0, 13.0,
+            portions = listOf(p("sztuka", 200.0))
+        ),
+        Item("Grander Burger, KFC", 252.0, 13.8, 20.0, 13.0, portions = listOf(p("sztuka", 300.0))),
+        Item(
+            "Grander Kentucky Gold, KFC", 263.0, 10.3, 24.0, 14.0,
+            portions = listOf(p("sztuka", 320.0))
+        ),
+        Item("Longer, KFC", 244.0, 12.6, 34.0, 6.4, portions = listOf(p("sztuka", 127.0))),
+        Item("Cheeseburger, KFC", 247.0, 11.8, 32.0, 8.0, portions = listOf(p("sztuka", 125.0))),
+        Item("Twister, KFC", 256.0, 9.8, 25.0, 13.0, portions = listOf(p("sztuka", 226.0))),
+        Item(
+            "Ryż i Strips Sweet Chilli, KFC", 268.0, 7.5, 46.0, 6.0,
+            portions = listOf(p("standard", 260.0), p("grande", 330.0))
         )
     )
 

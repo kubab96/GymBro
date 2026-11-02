@@ -169,6 +169,49 @@ class FoodSeedTest {
     }
 
     @Test
+    fun `surowiec i potrawa to dwie rozne pozycje`() {
+        // Najwazniejszy podzial w calym zestawie. 100 g suchego ryzu to okolo
+        // 250 g ugotowanego, wiec "ryz" bez dopisku znaczy dwie rzeczy
+        // rozniace sie dwuipolkrotnie - a wazy sie to, co sie naklada.
+        val klucze = FoodSeed.ITEMS.map { searchKey(it.name) }
+        listOf(
+            "ziemniaki" to "ziemniaki gotowane",
+            "ryz bialy suchy" to "ryz bialy ugotowany",
+            "makaron pszenny suchy" to "makaron ugotowany"
+        ).forEach { (surowiec, potrawa) ->
+            assertTrue(surowiec, klucze.contains(surowiec))
+            assertTrue(potrawa, klucze.contains(potrawa))
+        }
+
+        // I najwazniejsze: potrawa musi miec MNIEJ kalorii na 100 g niz
+        // surowiec, bo woda z gotowania wazy, a nie dokłada energii.
+        // Odwrotny wynik znaczylby, ze ktos wpisal wartosci surowca.
+        val suchy = FoodSeed.ITEMS.first { searchKey(it.name) == "ryz bialy suchy" }
+        val ugotowany = FoodSeed.ITEMS.first { searchKey(it.name) == "ryz bialy ugotowany" }
+        assertTrue(
+            "${suchy.kcal} vs ${ugotowany.kcal}",
+            ugotowany.kcal < suchy.kcal / 2
+        )
+    }
+
+    @Test
+    fun `smazenie i panierka dokladaja tluszczu`() {
+        // Konwencja z naglowka zestawu: smazenie okolo 5-7 g tluszczu
+        // na 100 g, panierowanie 10-13 g. Test pilnuje kierunku, nie
+        // dokladnej liczby - te sa i tak umowne.
+        val gotowane = FoodSeed.ITEMS.first { searchKey(it.name) == "ziemniaki gotowane" }
+        val smazone = FoodSeed.ITEMS.first { searchKey(it.name) == "ziemniaki smazone" }
+        assertTrue(smazone.fatG > gotowane.fatG + 5.0)
+
+        val grillowana = FoodSeed.ITEMS.first { searchKey(it.name) == "piers z kurczaka grillowana" }
+        val panierowana = FoodSeed.ITEMS.first { searchKey(it.name) == "piers z kurczaka panierowana" }
+        assertTrue(panierowana.fatG > grillowana.fatG + 5.0)
+        // Panierka to tez wegle, ktorych w samym miesie nie ma.
+        assertTrue(panierowana.carbsG > 5.0)
+        assertEquals(0.0, grillowana.carbsG, 0.0)
+    }
+
+    @Test
     fun `produkty jedzone na wage maja porcje`() {
         // Kromka, lyzka, sztuka - bez nich kazdy wpis wymaga wagi kuchennej.
         // Lista jest wyborem: to produkty, ktorych nikt nie wazy.

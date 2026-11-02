@@ -33,8 +33,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 14 - znacznik sesji zalozonej na zegarku, bez lacznosci
          * 15 - znacznik sesji, dla ktorej policzono juz propozycje
          * 16 - jedzenie: katalog produktow, dziennik, cele i oszacowanie wydatku
+         * 17 - zestaw rozszerzony o potrawy po obrobce
+         * 18 - zestaw rozszerzony o sieci restauracji
          */
-        const val VERSION = 16
+        const val VERSION = 18
 
         /**
          * Bez tego indeksu zapytanie o ostatnie ukończenie jednostki skanowało
@@ -663,6 +665,23 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
             V16_STATEMENTS.forEach { db.execSQL(it) }
             // Zestaw produktow podstawowych - idempotentny, wiec kazda
             // kolejna wersja moze go rozszerzyc tym samym wywolaniem.
+            FoodSeed.populate(db)
+        }
+
+        // Zestaw rozszerzony o potrawy po obrobce: ziemniaki gotowane obok
+        // surowych, ryz ugotowany obok suchego, schabowy, zupy, pierogi.
+        //
+        // Nie ma tu zadnego DDL - caly ten krok to ponowne wywolanie wstawki,
+        // ktora sama pomija pozycje juz obecne. Dolozenie kolejnych produktow
+        // w przyszlosci bedzie wygladac dokladnie tak samo: podbita wersja
+        // i jedna linijka.
+        if (oldVersion < 17) {
+            FoodSeed.populate(db)
+        }
+
+        // Zestaw rozszerzony o sieci restauracji: McDonald's i KFC
+        // z oficjalnych tabel wartosci odzywczych. Ta sama wstawka.
+        if (oldVersion < 18) {
             FoodSeed.populate(db)
         }
     }
