@@ -318,6 +318,23 @@ data class Recipe(
 )
 
 /**
+ * Zapytanie rozbite na słowa do wyszukiwania.
+ *
+ * Każde słowo szuka się osobno, bo nazwa produktu rzadko wygląda tak, jak
+ * się ją wpisuje. „Skrzydełka panierowane" marki Yemmy mają klucz
+ * `skrzydelka panierowane yemmy` - wpisanie „yemmy skrzydelka" nie trafia
+ * w żaden ciągły fragment, mimo że oba słowa tam są. Przy szukaniu jednym
+ * kawałkiem trzeba było zgadnąć kolejność i nie pominąć ani jednego słowa
+ * ze środka.
+ *
+ * Ograniczenie liczby słów nie jest oszczędnością, tylko zabezpieczeniem:
+ * każde słowo dokłada warunek do zapytania, a wklejone zdanie zrobiłoby
+ * z tego SQL bez końca i tak bez żadnego wyniku.
+ */
+fun searchWords(query: String, max: Int = 5): List<String> =
+    searchKey(query).split(' ').filter { it.isNotBlank() }.take(max)
+
+/**
  * Numer dnia od epoki dla podanej chwili, w strefie czasowej urządzenia.
  *
  * Ta sama droga, którą liczy dzień import z Health Connect - i to jest tu

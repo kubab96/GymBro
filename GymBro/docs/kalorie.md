@@ -346,6 +346,7 @@ nie jest zaleceniem medycznym.
 | `data/Nutrition.kt` | model: produkt, porcja, wpis, cel, numer dnia |
 | `data/FoodRepos.kt` | jedyna droga do tabel jedzenia |
 | `data/FoodSeed.kt` | zestaw produktów podstawowych |
+| `data/FoodPack.kt` | wczytanie paczki polskich produktów |
 | `net/OpenFoodFacts.kt` | odczyt produktu po kodzie kreskowym |
 | `net/Barcodes.kt` | skaner Google Play Services |
 | `ui/FoodScreen.kt` | zakładka: widok dnia i podsumowanie |
@@ -393,6 +394,132 @@ nie adres użytkownika.
 **Licencja ODbL wymaga wskazania źródła**, stąd linijka o Open Food Facts
 w Profilu. Trzymanie kopii u siebie jest w porządku; obowiązek dzielenia się
 zmianami dotyczy publikowania zmodyfikowanej bazy, czego nie robimy.
+
+### Jak odtworzyć paczkę polskich produktów
+
+Paczka w `app/src/main/assets/off-polska.tsv` powstaje z nocnego zrzutu
+CSV, **nie przez API** - Open Food Facts prosi, żeby jedno wywołanie API
+odpowiadało jednemu prawdziwemu skanowi, a do pobierania hurtem służą zrzuty.
+
+Zrzut ma 1,5 GB po spakowaniu i około 9 GB po rozpakowaniu, więc filtruje się
+go strumieniowo, bez zapisywania całości na dysk:
+
+```sh
+curl -sL "https://static.openfoodfacts.org/data/en.openfoodfacts.org.products.csv.gz" \
+  | gzip -dc | awk -f tools/filtr-off.awk > polska.tsv
+mv polska.tsv app/src/main/assets/off-polska.tsv
+```
+
+Filtr zostawia produkty polskie, które mają komplet: kalorie, białko,
+węglowodany i tłuszcz. Produkt bez makro nie trafia do katalogu z tego samego
+powodu co przy odczycie po kodzie - wpuszczony jako „0 g białka" kłamałby
+przy każdym użyciu.
+
+**Polskość rozpoznajemy po dwóch rzeczach, a znacznik kraju się nie liczy.**
+
+Prefiks `590` w kodzie kreskowym jest najmocniejszy: przypisała go Polsce
+GS1, więc firma, która zarejestrowała kod, jest polska. Drugi trop to polskie
+litery w nazwie - produkt obcej firmy, ale z polską etykietą, czyli taki,
+który faktycznie leży na polskiej półce.
+
+Znacznik kraju z Open Food Facts **odrzuciliśmy**, choć początkowo był
+jedynym kryterium. Oznacza „sprzedawane również w Polsce" i wpuszczał
+szwedzkie klopsiki, niemieckie lody, tajską pastę curry i „Salt water taffy
+autumn mix" - 5 620 produktów, których nikt nie wyszuka po polsku.
+
+Szukanie polskich liter robi się przez `index()`, nie wyrażeniem regularnym.
+awk porównuje bajty, a znaki spoza ASCII zajmują dwa - klasa znaków
+dopasowywała wtedy pojedyncze bajty i przepuszczała szwedzkie „SÅS",
+niemieckie „Haselnüsse" i czeskie „Rajčatový".
+
+### Ile tam w ogóle jest
+
+Zmierzone na zrzucie z listopada 2026, dla produktów ze znacznikiem Polski:
+
+| | produktów |
+|---|---|
+| oznaczonych jako sprzedawane w Polsce | 39 565 |
+| **bez jakichkolwiek wartości odżywczych** | **13 638 (34 %)** |
+| z kaloriami | 25 927 |
+| odrzucone za niepełne makro | 597 (2,3 %) |
+| odrzucone za brak nazwy | 1 259 |
+| odrzucone za nazwę niełacińską | 188 |
+
+Warto mieć to w głowie, zanim zacznie się podejrzewać filtr o gubienie
+produktów. **Jedna trzecia polskiej części bazy to same kody kreskowe**,
+które ktoś zeskanował i nigdy nie uzupełnił - żadna aplikacja licząca
+kalorie ich nie użyje. Własny filtr kosztuje około sześciuset pozycji.
+
+Prefiks `590` okazał się wart więcej niż cały filtr makro: dokłada 11 235
+produktów ponad te 23 824 ze znacznika kraju. To zwyczajne polskie rzeczy,
+których nikt nie oznaczył krajem - skrobia ziemniaczana, włoszczyzna, miód
+akacjowy, serek Łowicz.
+
+Po odrzuceniu obcych i powtórek paczka ma **28 739 pozycji**.
+
+### Hierarchia źródeł
+
+Katalog zbiera dane z pięciu miejsc o bardzo różnej wiarygodności, więc mają
+ustaloną kolejność. Miarą jest to, **czy ktoś te liczby widział na oczy**:
+
+| | źródło | skąd pewność |
+|---|---|---|
+| 1 | produkt własny | przepisałeś z opakowania |
+| 2 | przepis | policzony z Twoich składników |
+| 3 | zestaw podstawowy | kurowany, sprawdzony arytmetyką |
+| 4 | zeskanowany z Open Food Facts | trzymałeś opakowanie, dane świeżo z serwera |
+| 5 | paczka | wsad masowy, którego nikt nie oglądał |
+
+Kolejność działa w dwóch miejscach. W **wyszukiwaniu** decyduje o sortowaniu:
+wpisanie „twaróg" daje najpierw twaróg chudy i półtłusty z zestawu, a dopiero
+pod nimi wpisy z paczki. Przy **imporcie paczki** decyduje o odrzucaniu:
+produkt, którego nazwa już w katalogu jest, nie wchodzi drugi raz - bo dwa
+wiersze o tej samej nazwie na liście wyników to pytanie bez odpowiedzi.
+
+Zeskanowane odróżniamy od paczkowych po `updated_at`: paczka wstawia zero,
+a odczyt z serwera znacznik czasu.
+
+### Czy są inne bazy niż Open Food Facts
+
+Dla **polskich produktów z kodem kreskowym - nie ma.** Sprawdzone: nie
+istnieje polska otwarta baza produktów spożywczych z API. Alternatywy to
+serwisy komercyjne, których warunki zabraniają przechowywania i dalszego
+udostępniania danych, więc nie nadają się do paczki w aplikacji.
+
+Dla **produktów podstawowych** źródła są: amerykańskie USDA FoodData Central
+(domena publiczna, ale nazwy po angielsku i asortyment amerykański) oraz
+szwedzka baza Livsmedelsverket. Oba problemy rozwiązuje zestaw własny
+w `FoodSeed.kt` - kurowany po polsku i sprawdzony arytmetyką.
+
+Wniosek: tego, czego nie ma w Open Food Facts, nie ma gdzie wziąć. Zostaje
+zeskanowanie raz i wpisanie ręczne - produkt zapamiętuje się razem z kodem
+kreskowym, więc płaci się za to jeden raz.
+
+### Zanim uznasz, że produktu nie ma
+
+Dwa razy pod rząd wyglądało na brak danych, a nie było nim ani razu.
+
+**Marka bywa zapisana na kilka sposobów.** Yeemy występuje w zrzucie jako
+`Yeemy` (31 razy), `YEEMY` (6) i `Yemmy` (2). Szukanie po jednej pisowni
+znajduje ułamek asortymentu i wygląda, jakby reszty nie było - a marka ma
+w paczce 39 produktów.
+
+**Brak wyniku bywa wadą wyszukiwania, nie danych.** „Skrzydełka panierowane"
+marki Yeemy nie znajdowały się po „yeemy skrzydełka", bo szukaliśmy ciągłego
+fragmentu, a między tymi słowami stoi „panierowane". Stąd dzielenie
+zapytania na słowa - patrz [searchWords].
+
+Kolejność sprawdzania przy podejrzeniu, że czegoś brakuje: najpierw wpisz
+samą nazwę rodzajową bez marki („nuggetsy", „skrzydełka pikantne"), potem
+policz wystąpienia marki w pliku paczki, a dopiero na końcu podejrzewaj
+filtr.
+
+Kolumny zrzutu są podane numerami, bo CSV ma ich 211 i nazwy w nagłówku są
+jedynym sposobem, żeby je odnaleźć. Przy zmianie układu zrzutu trzeba je
+sprawdzić od nowa: `gzip -dc | head -1 | tr '\t' '\n' | cat -n`.
+
+Po podmianie pliku **podbij `FoodPack.VERSION`** - inaczej aplikacja uzna,
+że paczka już jest wczytana, i nowych produktów nie dociągnie.
 
 **Zmieniając którąkolwiek liczbę z tego dokumentu, zmień i jego.**
 

@@ -2,6 +2,7 @@ package pl.gymbro.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -117,6 +118,44 @@ class NutrientsTest {
     @Test
     fun `nadmiarowe odstepy sie zwijaja`() {
         assertEquals("jogurt naturalny", searchKey("  Jogurt    naturalny  "))
+    }
+
+    // ---- Dzielenie zapytania na slowa ------------------------------------
+
+    @Test
+    fun `kolejnosc slow w zapytaniu nie ma znaczenia`() {
+        // Usterka zgloszona przy uzywaniu: "skrzydelka panierowane" marki
+        // Yemmy maja klucz "skrzydelka panierowane yemmy". Przy szukaniu
+        // jednym ciaglym kawalkiem "yemmy skrzydelka" nie trafialo w nic,
+        // bo miedzy tymi slowami stoi "panierowane".
+        assertEquals(listOf("yemmy", "skrzydelka"), searchWords("yemmy skrzydelka"))
+        assertEquals(listOf("skrzydelka", "yemmy"), searchWords("Skrzydełka Yemmy"))
+    }
+
+    @Test
+    fun `nadmiarowe odstepy i ogonki znikaja tak samo jak w kluczu`() {
+        assertEquals(listOf("zurek", "staropolski"), searchWords("  Żurek   Staropolski "))
+    }
+
+    @Test
+    fun `znaki rozdzielaja slowa`() {
+        assertEquals(listOf("mleko", "3", "2"), searchWords("mleko 3,2%"))
+    }
+
+    @Test
+    fun `puste zapytanie nie daje slow`() {
+        assertTrue(searchWords("").isEmpty())
+        assertTrue(searchWords("   ").isEmpty())
+        assertTrue(searchWords("%%%").isEmpty())
+    }
+
+    @Test
+    fun `wklejone zdanie nie rozsadza zapytania`() {
+        // Kazde slowo dokłada warunek do SQL-a. Bez limitu wklejony akapit
+        // zrobilby zapytanie bez konca i tak bez zadnego wyniku.
+        val duzo = searchWords("raz dwa trzy cztery piec szesc siedem osiem")
+        assertEquals(5, duzo.size)
+        assertEquals("raz", duzo.first())
     }
 
     @Test

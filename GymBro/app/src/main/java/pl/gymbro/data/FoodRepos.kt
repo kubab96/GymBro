@@ -107,35 +107,75 @@ class FoodRepository(context: Context) {
      * produktów trafienie w pierwsze trzy wiersze decyduje o tym, czy wpis
      * zajmuje dwie sekundy, czy dwadzieścia:
      *
-     * 1. trafienie od początku nazwy przed trafieniem w środku - „ser" ma
-     *    znaleźć ser, a nie „masło roślinne z serwatką",
-     * 2. produkty własne i przepisy przed zestawem podstawowym, a ten przed
-     *    Open Food Facts - to, co sam wpisałeś, jesz częściej,
-     * 3. krótsza nazwa przed dłuższą; „mleko 2 %" jest zwykle tym, czego
+     * Szukamy **każdego słowa osobno**, bo nazwa produktu rzadko wygląda
+     * tak, jak się ją wpisuje - patrz [searchWords]. Kolejność wyników:
+     *
+     * 1. wszystkie słowa na początku wyrazów przed trafieniem w środek
+     *    wyrazu - „ser" ma znaleźć ser przed deserem,
+     * 2. pierwsze wpisane słowo na samym początku nazwy,
+     * 3. **hierarchia źródeł** - opisana niżej,
+     * 4. krótsza nazwa przed dłuższą; „mleko 2 %" jest zwykle tym, czego
      *    szukasz, a nie „napój mleczny o smaku…".
+     *
+     * Warunek z gwiazdką z przodu nie korzysta z indeksu, więc to przegląd
+     * całej tabeli - przy trzydziestu tysiącach krótkich napisów to u SQLite
+     * kilkanaście milisekund i nie ma czego optymalizować. Gdyby katalog
+     * kiedyś urósł o rząd wielkości, odpowiedzią jest FTS5, nie ręczne
+     * sztuczki z indeksem.
+     *
+     * Hierarchia idzie od danych najpewniejszych do najbardziej surowych,
+     * a miarą pewności jest to, **czy ktoś te liczby widział na oczy**:
+     *
+     * 1. produkt własny - przepisałeś z opakowania,
+     * 2. przepis - policzony z Twoich składników,
+     * 3. zestaw podstawowy - kurowany, sprawdzony arytmetyką,
+     * 4. zeskanowany z Open Food Facts - trzymałeś opakowanie w ręce,
+     *    a dane przyszły świeżo z serwera (stąd `updated_at > 0`),
+     * 5. paczka - wsad masowy ze zrzutu, którego nikt nie oglądał.
      *
      * Porcji tu nie dociągamy - przy liście wyników byłoby to trzydzieści
      * dodatkowych zapytań na każde wpisane słowo.
      */
     fun search(query: String, limit: Int = 30): List<Food> {
-        val key = searchKey(query)
-        if (key.isBlank()) return emptyList()
+        val words = searchWords(query)
+        if (words.isEmpty()) return emptyList()
+
+        // Każde słowo musi wystąpić, w dowolnym miejscu i w dowolnej
+        // kolejności - patrz [searchWords].
+        val warunek = words.joinToString(" AND ") { "name_key LIKE ?" }
+
+        // Słowo stojące na początku nazwy albo na początku któregoś z jej
+        // wyrazów liczy się lepiej niż trafienie w środku wyrazu. Dzięki
+        // temu „ser" pokazuje ser przed deserem, a nie odwrotnie.
+        val naPoczatkuWyrazu = words.joinToString(" AND ") {
+            "(name_key LIKE ? OR name_key LIKE ?)"
+        }
+
+        val args = buildList {
+            words.forEach { add("%$it%") }
+            words.forEach { add("$it%"); add("% $it%") }
+            add("${words.first()}%")
+            add(limit.toString())
+        }
+
         return db.readableDatabase.rawQuery(
             """
             SELECT * FROM food
-            WHERE name_key LIKE ? OR name_key LIKE ?
+            WHERE $warunek
             ORDER BY
+                CASE WHEN $naPoczatkuWyrazu THEN 0 ELSE 1 END,
                 CASE WHEN name_key LIKE ? THEN 0 ELSE 1 END,
-                CASE source
-                    WHEN 'OWN' THEN 0
-                    WHEN 'RECIPE' THEN 1
-                    WHEN 'SEED' THEN 2
-                    ELSE 3
+                CASE
+                    WHEN source = 'OWN' THEN 0
+                    WHEN source = 'RECIPE' THEN 1
+                    WHEN source = 'SEED' THEN 2
+                    WHEN source = 'OFF' AND updated_at > 0 THEN 3
+                    ELSE 4
                 END,
                 LENGTH(name_key)
             LIMIT ?
             """.trimIndent(),
-            arrayOf("$key%", "%$key%", "$key%", limit.toString())
+            args.toTypedArray()
         ).mapAll(::from)
     }
 
