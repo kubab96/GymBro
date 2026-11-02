@@ -35,8 +35,28 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 16 - jedzenie: katalog produktow, dziennik, cele i oszacowanie wydatku
          * 17 - zestaw rozszerzony o potrawy po obrobce
          * 18 - zestaw rozszerzony o sieci restauracji
+         * 19 - tabelka stanu aplikacji, pod wersje wczytanej paczki produktow
          */
-        const val VERSION = 18
+        const val VERSION = 19
+
+        /**
+         * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
+         * dziedziny.
+         *
+         * Powstala dla jednego wpisu: wersji wczytanej paczki produktow
+         * z Open Food Facts. Alternatywa byla doklejenie kolumny do
+         * `user_profile`, ale tamta tabela opisuje uzytkownika, a nie to,
+         * co aplikacja zdazyla u siebie zrobic - i kazdy kolejny taki
+         * znacznik puchlby ja dalej.
+         */
+        private val V19_STATEMENTS = listOf(
+            """
+            CREATE TABLE app_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """.trimIndent()
+        )
 
         /**
          * Bez tego indeksu zapytanie o ostatnie ukończenie jednostki skanowało
@@ -589,6 +609,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V7_STATEMENTS.forEach { db.execSQL(it) }
         V8_STATEMENTS.forEach { db.execSQL(it) }
         V16_STATEMENTS.forEach { db.execSQL(it) }
+        V19_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -683,6 +704,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         // z oficjalnych tabel wartosci odzywczych. Ta sama wstawka.
         if (oldVersion < 18) {
             FoodSeed.populate(db)
+        }
+
+        if (oldVersion < 19) {
+            V19_STATEMENTS.forEach { db.execSQL(it) }
         }
     }
 }

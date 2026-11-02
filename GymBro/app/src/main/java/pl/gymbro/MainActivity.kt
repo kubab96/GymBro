@@ -52,6 +52,8 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import pl.gymbro.data.Db
+import pl.gymbro.data.FoodPack
 import pl.gymbro.data.GymRepository
 import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ProfileRepository
@@ -210,6 +212,35 @@ fun SpikeApp() {
     val appContext = LocalContext.current.applicationContext
     LaunchedEffect(Unit) {
         if (AutoSync.runIfDue(appContext)) Refresh.bump()
+    }
+
+    // Paczka polskich produktow z Open Food Facts - wczytywana raz, w tle.
+    //
+    // Celowo poza migracja: trzydziesci kilka tysiecy wierszy to kilka
+    // sekund, a migracja wykonuje sie przy pierwszym dotknieciu bazy, czyli
+    // przy starcie aplikacji. Zamrozenie ekranu startowego raz w zyciu
+    // instalacji jest gorsze niz wczytanie w tle, w trakcie ktorego
+    // wyszukiwanie przez chwile zwraca mniej wynikow.
+    //
+    // Tak samo poza Busy, jak synchronizacja z zegarkiem: to czynnosc,
+    // o ktora nikt nie prosil, wiec nie ma prawa pokazywac paska ladowania
+    // ani blokowac nawigacji.
+    LaunchedEffect(Unit) {
+        val dodane = withContext(Dispatchers.IO) {
+            runCatching {
+                val db = Db.get(appContext)
+                if (FoodPack.isImported(db.readableDatabase)) 0
+                else FoodPack.import(appContext, db.writableDatabase)
+            }.onFailure {
+                // Blad musi zostawic slad. Pierwsza wersja konczyla sie
+                // samym getOrDefault(0) i kiedy paczka nie wczytala sie
+                // przez zla nazwe pliku, wygladalo to dokladnie tak samo
+                // jak poprawne dzialanie - wyszukiwanie po prostu nic nie
+                // znajdowalo, bez jednej linijki w logu.
+                android.util.Log.w("GymBroPack", "Nie wczytano paczki produktow", it)
+            }.getOrDefault(0)
+        }
+        if (dodane > 0) Refresh.bump()
     }
     // Wskaźnik pojawia się dopiero, gdy wczytywanie trwa dłużej niż chwilę.
     //
