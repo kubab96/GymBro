@@ -39,7 +39,21 @@ data class Exercise(
     val name: String,
     val equipment: Equipment,
     val muscleGroup: String,
-    val isCustom: Boolean = false
+    val isCustom: Boolean = false,
+
+    /**
+     * Krok ciężaru przy sprzęcie bez talerzy. null = [DEFAULT_STEP_KG].
+     *
+     * Przy sztandze i hantlach krok wynika z tego, co leży na siłowni, i liczy
+     * go [pl.gymbro.gym.PlateCalculator]. Stos wyciągu i maszyna nie mają
+     * talerzy, więc ich progi zna tylko tabliczka przy maszynie - i tylko
+     * stamtąd da się je tu przepisać. Bez tego pola każdy wyciąg chodził
+     * co 2,5 kg i ciężaru 28,4 kg nie dawało się ustawić w ogóle.
+     *
+     * Przy ćwiczeniu, a nie przy pozycji planu: ta sama maszyna ma ten sam
+     * krok w każdej jednostce, w której się pojawia.
+     */
+    val stepKg: Double? = null
 )
 
 /**
@@ -110,6 +124,9 @@ data class PlanItem(
     /** Wyciszenie propozycji progresji dla tej pozycji. */
     val noProgress: Boolean = false,
 
+    /** Krok ciężaru z ćwiczenia - denormalizowany, patrz [Exercise.stepKg]. */
+    val stepKg: Double? = null,
+
     /** Czekajaca propozycja zmiany. null = nie ma zadnej. */
     val advice: StoredAdvice? = null
 ) {
@@ -122,6 +139,9 @@ data class PlanItem(
     val hasTargetWeight: Boolean get() = targetKg > 0.0
     val hasRepRange: Boolean get() = repsFrom > 0 && repsTo > 0
     val hasRest: Boolean get() = restSec > 0
+
+    /** Krok ciężaru do plusa i minusa, gdy talerze nie rozstrzygają. */
+    val step: Double get() = stepOrDefault(stepKg)
 
     val repRange: String get() = if (repsFrom == repsTo) "$repsFrom" else "$repsFrom-$repsTo"
 

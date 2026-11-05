@@ -88,6 +88,7 @@ import pl.gymbro.data.ProgramRepository
 import pl.gymbro.data.Session
 import pl.gymbro.data.SessionRepository
 import pl.gymbro.data.SetEntry
+import pl.gymbro.data.roundKg
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.net.WatchLinkService
 import pl.gymbro.gym.LiveSession
@@ -1174,6 +1175,16 @@ private fun ActiveExercise(
     }
     var rir by remember(item.id, state.doneSets.size) { mutableStateOf<Int?>(null) }
     var showRir by remember { mutableStateOf(false) }
+    var typingWeight by remember { mutableStateOf(false) }
+
+    if (typingWeight) {
+        WeightDialog(
+            initialKg = weight,
+            title = item.exerciseName,
+            onDismiss = { typingWeight = false },
+            onPick = { weight = it; typingWeight = false }
+        )
+    }
     // Dotknięcie zapisanej serii otwiera jej poprawianie. Wcześniej kasowało
     // ją od razu, bez pytania - pomyłka o jedno powtórzenie kosztowała całą serię.
     var editingSet by remember { mutableStateOf<SetEntry?>(null) }
@@ -1231,13 +1242,17 @@ private fun ActiveExercise(
                     onMinus = {
                         weight = if (mode != null) {
                             PlateCalculator.nextDown(weight, mode, inventory)?.totalKg ?: weight
-                        } else (weight - 2.5).coerceAtLeast(0.0)
+                        } else roundKg((weight - item.step).coerceAtLeast(0.0))
                     },
                     onPlus = {
                         weight = if (mode != null) {
                             PlateCalculator.nextUp(weight, mode, inventory)?.totalKg ?: weight
-                        } else weight + 2.5
-                    }
+                        } else roundKg(weight + item.step)
+                    },
+                    // Przy talerzach wpisywania nie ma i nie ma go celowo:
+                    // ciężar, którego nie da się nałożyć, nie jest ciężarem.
+                    // Przy wyciągu liczba z tabliczki bywa dowolna.
+                    onLabelClick = if (mode == null) ({ typingWeight = true }) else null
                 )
 
                 if (mode != null) {
@@ -1400,6 +1415,19 @@ private fun EditSetDialog(
     val mode = LoadMode.of(item.equipment, inventory)
     var weight by remember(entry.id) { mutableStateOf(entry.weightKg) }
     var reps by remember(entry.id) { mutableStateOf(entry.reps) }
+    // Zapas wchodzi do poprawki z tym, co zapisano - inaczej okno milczało
+    // o jedynej wartości, której po treningu nie da się odtworzyć z pamięci.
+    var rir by remember(entry.id) { mutableStateOf(entry.rir) }
+    var typingWeight by remember { mutableStateOf(false) }
+
+    if (typingWeight) {
+        WeightDialog(
+            initialKg = weight,
+            title = item.exerciseName,
+            onDismiss = { typingWeight = false },
+            onPick = { weight = it; typingWeight = false }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1412,13 +1440,14 @@ private fun EditSetDialog(
                         onMinus = {
                             weight = if (mode != null) {
                                 PlateCalculator.nextDown(weight, mode, inventory)?.totalKg ?: weight
-                            } else (weight - 2.5).coerceAtLeast(0.0)
+                            } else roundKg((weight - item.step).coerceAtLeast(0.0))
                         },
                         onPlus = {
                             weight = if (mode != null) {
                                 PlateCalculator.nextUp(weight, mode, inventory)?.totalKg ?: weight
-                            } else weight + 2.5
-                        }
+                            } else roundKg(weight + item.step)
+                        },
+                        onLabelClick = if (mode == null) ({ typingWeight = true }) else null
                     )
                     Spacer(Modifier.height(12.dp))
                 }
@@ -1427,6 +1456,41 @@ private fun EditSetDialog(
                     onMinus = { if (reps > 1) reps-- },
                     onPlus = { reps++ }
                 )
+
+                // Zapas widoczny od razu, nie pod przyciskiem jak przy
+                // świeżej serii: tam się go podaje, tutaj przede wszystkim
+                // sprawdza, co się wtedy podało.
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    if (rir != null) "Zapas powtórzeń: $rir" else "Zapas powtórzeń: nie podano",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (rir != null) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(0, 1, 2, 3).forEach { v ->
+                        // Ponowne naciśnięcie zdejmuje zapas - tak samo jak
+                        // przy świeżej serii i tak samo jak na zegarku.
+                        if (rir == v) {
+                            Button(
+                                onClick = { rir = null },
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                                modifier = Modifier.weight(1f)
+                            ) { Text(if (v >= 3) "3+" else v.toString()) }
+                        } else {
+                            OutlinedButton(
+                                onClick = { rir = v },
+                                contentPadding = PaddingValues(horizontal = 4.dp),
+                                modifier = Modifier.weight(1f)
+                            ) { Text(if (v >= 3) "3+" else v.toString()) }
+                        }
+                    }
+                }
+
                 Spacer(Modifier.height(12.dp))
                 TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
                     Text("Usuń tę serię", color = MaterialTheme.colorScheme.error)
@@ -1434,7 +1498,7 @@ private fun EditSetDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(weight, reps, entry.rir) }) { Text("Zapisz") }
+            TextButton(onClick = { onSave(weight, reps, rir) }) { Text("Zapisz") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
     )

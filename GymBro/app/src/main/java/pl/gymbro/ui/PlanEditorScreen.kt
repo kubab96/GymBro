@@ -60,6 +60,8 @@ import pl.gymbro.data.Program
 import pl.gymbro.data.ProgramRepository
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.data.UserProfile
+import pl.gymbro.data.DEFAULT_STEP_KG
+import pl.gymbro.data.roundKg
 import pl.gymbro.gym.ProgressionReview
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.gym.Loading
@@ -699,6 +701,7 @@ private fun ExercisePickerDialog(
     // Kasować wolno wyłącznie to, czego nie trzyma żaden plan ani historia.
     var unused by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var toDelete by remember { mutableStateOf<Exercise?>(null) }
+    var editingExercise by remember { mutableStateOf<Exercise?>(null) }
 
     // Filtr startuje od sprzętu z profilu, ale jest w pełni edytowalny -
     // możesz zaznaczyć dowolną kombinację, np. same hantle i wyciąg.
@@ -728,7 +731,11 @@ private fun ExercisePickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("Wybierz ćwiczenie") },
         text = {
-            Column(Modifier.heightIn(max = 440.dp)) {
+            // Prawie cała wysokość okna idzie na listę. Wcześniej mieściło
+            // się w niej czterdzieści ćwiczeń oglądanych przez szparę na
+            // trzy wiersze, bo szukanie i filtr sprzętu brały górę ekranu,
+            // a lista dostawała to, co zostało.
+            Column(Modifier.heightIn(max = 620.dp)) {
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -819,24 +826,48 @@ private fun ExercisePickerDialog(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.tertiary
                     )
+                } else {
+                    Text(
+                        "Dotknij nazwy, żeby poprawić ćwiczenie.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 // Stała maksymalna wysokość zamiast weight(): wewnątrz okna
                 // dialogowego wysokość bywa nieograniczona, a wtedy weight() nic nie mierzy.
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                // Minimum, bo przy jednym wyniku lista kurczyła się do wiersza
+                // i okno skakało na wysokość przy każdej wpisanej literze.
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(min = 240.dp, max = 460.dp)
+                ) {
                     items(filtered, key = { it.id }) { e ->
                         Card(
-                            Modifier.fillMaxWidth().padding(vertical = 3.dp)
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp)
                         ) {
                             Row(
-                                Modifier.fillMaxWidth().padding(10.dp),
+                                Modifier.fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 14.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(e.name)
+                                // Dotknięcie nazwy poprawia ćwiczenie. Osobny
+                                // przycisk nie mieścił się obok "Usuń" i "Dodaj"
+                                // w szerokości okna dialogowego, a nazwa jest
+                                // i tak największym celem w tym wierszu.
+                                Column(
+                                    Modifier
+                                        .weight(1f)
+                                        .clickable { editingExercise = e }
+                                ) {
+                                    Text(e.name, style = MaterialTheme.typography.bodyLarge)
                                     Text(
-                                        "${e.muscleGroup} · ${equipmentName(e.equipment)}",
+                                        buildString {
+                                            append("${e.muscleGroup} · ${equipmentName(e.equipment)}")
+                                            if (!e.equipment.isPlateLoaded && e.stepKg != null) {
+                                                append(" · co ${Loading.fmt(e.stepKg)} kg")
+                                            }
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -864,9 +895,9 @@ private fun ExercisePickerDialog(
     )
 
     if (creating) {
-        NewExerciseDialog(
+        ExerciseDialog(
             onDismiss = { creating = false },
-            onCreate = { name, equipment, muscle ->
+            onSave = { name, equipment, muscle, step ->
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         exerciseRepo.insert(
@@ -874,12 +905,39 @@ private fun ExercisePickerDialog(
                                 name = name,
                                 equipment = equipment,
                                 muscleGroup = muscle,
-                                isCustom = true
+                                isCustom = true,
+                                stepKg = step
                             )
                         )
                     }
                     creating = false
                     reload()
+                }
+            }
+        )
+    }
+
+    editingExercise?.let { e ->
+        ExerciseDialog(
+            existing = e,
+            onDismiss = { editingExercise = null },
+            onSave = { name, equipment, muscle, step ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        exerciseRepo.update(
+                            e.copy(
+                                name = name,
+                                equipment = equipment,
+                                muscleGroup = muscle,
+                                stepKg = step
+                            )
+                        )
+                    }
+                    editingExercise = null
+                    reload()
+                    // Pozycje planu niosą nazwę i sprzęt przepisane z ćwiczenia,
+                    // więc po jego zmianie ekran pod spodem pokazuje stare.
+                    Refresh.bump()
                 }
             }
         )
@@ -912,18 +970,32 @@ private fun ExercisePickerDialog(
 }
 
 
+/**
+ * Ćwiczenie: nowe albo poprawiane.
+ *
+ * Jedno okno na oba przypadki, bo pola są te same, a dwa osobne rozjechałyby
+ * się przy pierwszej zmianie. [existing] puste znaczy „nowe".
+ *
+ * Poprawianie w ogóle istnieje od niedawna: dotąd ćwiczenie dało się utworzyć
+ * i skasować, ale nie zmienić - a literówka w nazwie albo źle wybrany sprzęt
+ * wymagały skasowania, czego przy ćwiczeniu z historią nie wolno zrobić.
+ */
 @Composable
-private fun NewExerciseDialog(
+private fun ExerciseDialog(
+    existing: Exercise? = null,
     onDismiss: () -> Unit,
-    onCreate: (String, Equipment, String) -> Unit
+    onSave: (String, Equipment, String, Double?) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var muscle by remember { mutableStateOf("") }
-    var equipment by remember { mutableStateOf(Equipment.BARBELL) }
+    var name by remember { mutableStateOf(existing?.name ?: "") }
+    var muscle by remember { mutableStateOf(existing?.muscleGroup ?: "") }
+    var equipment by remember { mutableStateOf(existing?.equipment ?: Equipment.BARBELL) }
+    var step by remember {
+        mutableStateOf(existing?.stepKg?.let { Loading.fmt(it) } ?: "")
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Nowe ćwiczenie") },
+        title = { Text(if (existing == null) "Nowe ćwiczenie" else "Popraw ćwiczenie") },
         text = {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 OutlinedTextField(
@@ -974,14 +1046,47 @@ private fun NewExerciseDialog(
                         if (pair.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
+
+                // Krok tylko tam, gdzie nie wynika z talerzy. Przy sztandze
+                // byłby polem, które nic nie robi - a takie pole uczy, że
+                // ustawienia w tym oknie i tak nie działają.
+                if (!equipment.isPlateLoaded) {
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = step,
+                        onValueChange = { step = it },
+                        label = { Text("Krok ciężaru (kg)") },
+                        placeholder = { Text(Loading.fmt(DEFAULT_STEP_KG)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "O tyle skacze plus i minus przy tym ćwiczeniu - tu " +
+                            "i na zegarku. Przepisz z tabliczki przy maszynie; " +
+                            "stos w funtach ma progi co 5,67 kg. Puste znaczy " +
+                            "${Loading.fmt(DEFAULT_STEP_KG)} kg.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         },
         confirmButton = {
             TextButton(onClick = {
                 if (name.isNotBlank()) {
-                    onCreate(name.trim(), equipment, muscle.trim().ifEmpty { "inne" })
+                    onSave(
+                        name.trim(),
+                        equipment,
+                        muscle.trim().ifEmpty { "inne" },
+                        // Krok ma sens wyłącznie przy sprzęcie bez talerzy -
+                        // przy sztandze zapisana liczba leżałaby w bazie
+                        // i czekała, aż ktoś przestawi sprzęt i się zdziwi.
+                        if (equipment.isPlateLoaded) null
+                        else step.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+                    )
                 }
-            }) { Text("Utwórz") }
+            }) { Text(if (existing == null) "Utwórz" else "Zapisz") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
     )
@@ -1004,8 +1109,18 @@ private fun ItemEditorDialog(
     var noProgress by remember { mutableStateOf(item.noProgress) }
     var weight by remember { mutableStateOf(item.targetKg) }
     var useWeight by remember { mutableStateOf(item.hasTargetWeight) }
+    var typingWeight by remember { mutableStateOf(false) }
 
     val mode = LoadMode.of(item.equipment, inventory)
+
+    if (typingWeight) {
+        WeightDialog(
+            initialKg = weight,
+            title = item.exerciseName,
+            onDismiss = { typingWeight = false },
+            onPick = { weight = it; typingWeight = false }
+        )
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1050,11 +1165,22 @@ private fun ItemEditorDialog(
                         )
                     }
                 } else {
-                    // Wyciąg i maszyna: stos ustawiasz ręcznie, więc dowolna liczba.
+                    // Wyciąg i maszyna: stos ustawiasz ręcznie, więc dowolna
+                    // liczba - i dosłownie dowolna, przez dotknięcie liczby.
+                    // Sam krok nie wystarcza: stos w funtach ma progi co
+                    // 5,67 kg i do 28,4 kg nie dało się dojść plusem znikąd.
+                    val krok = item.step
                     Stepper(
                         label = "${Loading.fmt(weight)} kg",
-                        onMinus = { weight = (weight - 2.5).coerceAtLeast(0.0) },
-                        onPlus = { weight += 2.5 }
+                        onMinus = { weight = roundKg((weight - krok).coerceAtLeast(0.0)) },
+                        onPlus = { weight = roundKg(weight + krok) },
+                        onLabelClick = { typingWeight = true }
+                    )
+                    Text(
+                        "Skok co ${Loading.fmt(krok)} kg; dotknij liczby, żeby " +
+                            "wpisać dokładnie. Krok zmienisz przy ćwiczeniu.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 

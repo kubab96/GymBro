@@ -36,8 +36,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 17 - zestaw rozszerzony o potrawy po obrobce
          * 18 - zestaw rozszerzony o sieci restauracji
          * 19 - tabelka stanu aplikacji, pod wersje wczytanej paczki produktow
+         * 21 - zestaw rozszerzony o pieczywo z wlasnego wypieku
+         * 22 - pieczywo Biedronki z oficjalnych wartosci
          */
-        const val VERSION = 19
+        const val VERSION = 22
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -56,6 +58,18 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
                 value TEXT NOT NULL
             )
             """.trimIndent()
+        )
+
+        /**
+         * Krok ciężaru przy ćwiczeniu - patrz [Exercise.stepKg].
+         *
+         * NULL znaczy „konwencja", czyli [DEFAULT_STEP_KG], a nie „zero".
+         * Dlatego kolumna jest bez NOT NULL i bez wartości domyślnej:
+         * wpisana dwójka i pół byłaby nie do odróżnienia od tej, którą
+         * użytkownik faktycznie wybrał, a to różnica przy podpowiedziach.
+         */
+        private val V20_STATEMENTS = listOf(
+            "ALTER TABLE exercise ADD COLUMN weight_step REAL"
         )
 
         /**
@@ -610,6 +624,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V8_STATEMENTS.forEach { db.execSQL(it) }
         V16_STATEMENTS.forEach { db.execSQL(it) }
         V19_STATEMENTS.forEach { db.execSQL(it) }
+        V20_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -708,6 +723,26 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
 
         if (oldVersion < 19) {
             V19_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        if (oldVersion < 20) {
+            V20_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        // Pieczywo rodzajowe: bulki, rogale, chleby i drozdzowki.
+        //
+        // Nie ma go w Open Food Facts, bo sprzedaje sie je na wage, bez kodu
+        // kreskowego, a tamta baza jest indeksowana kodami. Niektore sieci
+        // publikuja jednak wlasne tabele - patrz wersja 22.
+        if (oldVersion < 21) {
+            FoodSeed.populate(db)
+        }
+
+        // Pieczywo Biedronki - prawdziwe wartosci z biedronka.pl, nie
+        // konwencje. Siec publikuje je dla calego pieczywa razem z gramatura
+        // sztuki, w zwyklym HTML-u.
+        if (oldVersion < 22) {
+            FoodSeed.populate(db)
         }
     }
 }

@@ -78,7 +78,8 @@ class ExerciseRepository(context: Context) {
         name = c.str("name"),
         equipment = Equipment.fromName(c.str("equipment")),
         muscleGroup = c.str("muscle_group"),
-        isCustom = c.bool("is_custom")
+        isCustom = c.bool("is_custom"),
+        stepKg = c.dblOrNull("weight_step")
     )
 
     fun all(): List<Exercise> =
@@ -95,13 +96,22 @@ class ExerciseRepository(context: Context) {
             put("equipment", e.equipment.name)
             put("muscle_group", e.muscleGroup)
             put("is_custom", if (e.isCustom) 1 else 0)
+            putOrNull("weight_step", e.stepKg)
         })
 
+    /**
+     * Zmiana samego ćwiczenia: nazwa, sprzęt, partia, krok ciężaru.
+     *
+     * `is_custom` zostaje nietknięte celowo. Poprawienie kroku przy ćwiczeniu
+     * z biblioteki nie czyni go nagle „własnym" - a to właśnie ta flaga
+     * decyduje o tym, czy wstawka z [Seed] ma je kiedyś odtworzyć.
+     */
     fun update(e: Exercise): Int =
         db.writable.update("exercise", ContentValues().apply {
             put("name", e.name)
             put("equipment", e.equipment.name)
             put("muscle_group", e.muscleGroup)
+            putOrNull("weight_step", e.stepKg)
         }, "id = ?", arrayOf(e.id.toString()))
 
     /**
@@ -249,7 +259,8 @@ class PlanRepository(context: Context) {
     fun items(planId: Long): List<PlanItem> =
         db.readableDatabase.rawQuery(
             """
-            SELECT pi.*, e.name AS ex_name, e.equipment AS ex_equipment
+            SELECT pi.*, e.name AS ex_name, e.equipment AS ex_equipment,
+                   e.weight_step AS ex_step
             FROM plan_item pi
             JOIN exercise e ON e.id = pi.exercise_id
             WHERE pi.plan_id = ?
@@ -272,6 +283,7 @@ class PlanRepository(context: Context) {
         equipment = Equipment.fromName(c.str("ex_equipment")),
         goal = runCatching { TrainingGoal.valueOf(c.str("goal")) }.getOrNull(),
         noProgress = c.int("no_progress") == 1,
+        stepKg = c.dblOrNull("ex_step"),
         advice = c.strOrNull("adv_kind")?.let { kind ->
             StoredAdvice(
                 kind = kind,
@@ -389,7 +401,8 @@ class PlanRepository(context: Context) {
     fun itemsWithAdvice(): List<PlanItem> =
         db.readableDatabase.rawQuery(
             """
-            SELECT pi.*, e.name AS ex_name, e.equipment AS ex_equipment
+            SELECT pi.*, e.name AS ex_name, e.equipment AS ex_equipment,
+                   e.weight_step AS ex_step
             FROM plan_item pi JOIN exercise e ON e.id = pi.exercise_id
             WHERE pi.adv_kind IS NOT NULL
             ORDER BY pi.plan_id, pi.position

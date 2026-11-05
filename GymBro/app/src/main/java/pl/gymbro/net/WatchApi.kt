@@ -16,6 +16,7 @@ import pl.gymbro.gym.LiveSession
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.gym.ProgressionReview
 import pl.gymbro.gym.PlateCalculator
+import pl.gymbro.gym.StepLadder
 
 /**
  * Odpowiedzi dla pilota na zegarku.
@@ -278,7 +279,7 @@ class WatchApi(context: Context) {
             if (up) PlateCalculator.nextUp(from, mode, gymRepo.inventory())?.totalKg
             else PlateCalculator.nextDown(from, mode, gymRepo.inventory())?.totalKg
         } else {
-            if (up) from + FALLBACK_STEP else (from - FALLBACK_STEP).coerceAtLeast(0.0)
+            StepLadder.next(from, st.item.stepKg, up)
         }
         return LocalServer.Response.ok("""{"weight":${round(next ?: from)}}""")
     }
@@ -321,8 +322,8 @@ class WatchApi(context: Context) {
             val mode = LoadMode.of(st.item.equipment, inventory)
             val step = if (st.item.hasTargetWeight && mode != null) {
                 val up = PlateCalculator.nextUp(st.nextWeight, mode, inventory)?.totalKg
-                if (up != null && up > st.nextWeight) up - st.nextWeight else FALLBACK_STEP
-            } else FALLBACK_STEP
+                if (up != null && up > st.nextWeight) up - st.nextWeight else st.item.step
+            } else st.item.step
             val ladder = ladder(st, mode, inventory)
 
             exercises.put(
@@ -564,12 +565,11 @@ class WatchApi(context: Context) {
 
         val from = st.nextWeight
         if (mode == null) {
-            // Sprzęt nieładowany talerzami - równe progi są tu prawdą.
-            // Dołu pilnuje zero, góry nie zna nikt, więc oba końce są miękkie.
-            for (i in -LADDER_SPAN..LADDER_SPAN) {
-                val v = from + i * FALLBACK_STEP
-                if (v > 0) out.put(round(v))
-            }
+            // Sprzęt nieładowany talerzami - równe progi są tu prawdą, a ich
+            // odstęp bierze się z ćwiczenia, bo stos wyciągu zna tylko ten,
+            // kto przy nim stał. Dołu pilnuje zero, góry nie zna nikt,
+            // więc oba końce są miękkie.
+            StepLadder.rungs(from, st.item.stepKg, LADDER_SPAN).forEach { out.put(it) }
             return Rungs(out, atMin = false, atMax = false)
         }
 
@@ -617,9 +617,6 @@ class WatchApi(context: Context) {
     private companion object {
         /** Ile ostatnich znacznikow polecen pamietamy. */
         const val SEEN_MAX = 200
-
-        /** Gdy sprzęt nie jest ładowany talerzami - wyciąg, maszyna, hantle ze stosu. */
-        const val FALLBACK_STEP = 2.5
 
         /** Kilodżule na kilokalorię - wzór Keytela liczy w kJ. */
         const val KJ_PER_KCAL = 4.184
