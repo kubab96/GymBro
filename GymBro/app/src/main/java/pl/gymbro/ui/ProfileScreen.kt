@@ -95,6 +95,10 @@ fun ProfileScreen() {
     val linkToken = remember { WatchLinkService.tokenOf(context) }
     var linkAlways by remember { mutableStateOf(WatchLinkService.always(context)) }
     var linkListening by remember { mutableStateOf(WatchLinkService.listening) }
+    // Czytane przy każdym wejściu w zakładkę, nie raz: zgodę daje się
+    // w systemowym oknie, czyli poza aplikacją, i po powrocie stan ma
+    // się zgadzać bez zamykania całości.
+    var batteryFree by remember { mutableStateOf(WatchLinkService.batteryUnrestricted(context)) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
 
     suspend fun reloadInventory() {
@@ -120,6 +124,8 @@ fun ProfileScreen() {
     // które zmieniasz tylko tutaj, więc tamto wystarczy wczytać raz.
     LaunchedEffect(Refresh.version) {
         counts = withContext(Dispatchers.IO) { sessions.historyCounts() }
+        batteryFree = WatchLinkService.batteryUnrestricted(context)
+        linkListening = WatchLinkService.listening
     }
 
     fun persist(updated: UserProfile) {
@@ -491,6 +497,31 @@ fun ProfileScreen() {
                 color = if (linkListening) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.error
             )
+            // Drugi stan, osobny od pierwszego i ważniejszy, niż wygląda:
+            // pilot może działać teraz i zginąć za kwadrans. Dopóki system
+            // ma prawo go ubić, "Pilot działa" mówi prawdę tylko o tej chwili.
+            Spacer(Modifier.height(10.dp))
+            Text("Praca w tle", style = MaterialTheme.typography.labelMedium)
+            if (batteryFree) {
+                Text(
+                    "Bez ograniczeń - pilot przeżyje wygaszony ekran",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                Text(
+                    "System może ubić pilota, gdy telefon leży w szatni. " +
+                        "Wtedy serie z zegarka czekają w jego kolejce, a po " +
+                        "ośmiu godzinach przepadają.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = { WatchLinkService.askBattery(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Pozwól pracować w tle") }
+            }
+
             Spacer(Modifier.height(8.dp))
             Text("Adres", style = MaterialTheme.typography.labelMedium)
             Text(
@@ -564,8 +595,10 @@ fun ProfileScreen() {
         // jedynym miejscem, gdzie nie przeszkadza przy codziennym użyciu.
         Text(
             "Dane o produktach pochodzą z Open Food Facts i są udostępniane " +
-                "na licencji Open Database License (ODbL). Produkty podstawowe " +
-                "i wpisane ręcznie są własne.",
+                "na licencji Open Database License (ODbL). Pieczywo, nabiał, " +
+                "warzywa i wędliny bez kodu kreskowego pochodzą z tabel " +
+                "opublikowanych przez sklepy - Biedronkę i Frisco.pl. " +
+                "Produkty podstawowe i wpisane ręcznie są własne.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

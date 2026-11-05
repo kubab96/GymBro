@@ -8,8 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import pl.gymbro.MainActivity
 import java.security.SecureRandom
@@ -192,6 +195,39 @@ class WatchLinkService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, WatchLinkService::class.java))
+        }
+
+        /**
+         * Czy system obiecał nie ubijać tej aplikacji w tle.
+         *
+         * Usługa pierwszoplanowa ze `START_STICKY` wystarcza w czystym
+         * Androidzie i nie wystarcza na HyperOS: bez tego wyjątku usługa
+         * ginie po kilkunastu minutach z wygaszonym ekranem, czyli dokładnie
+         * wtedy, gdy telefon leży w szatni. Trening 02.11 nie dojechał
+         * właśnie dlatego - zegarek nadawał w próżnię, a telefon nie miał
+         * jak powiedzieć, że przestał słuchać.
+         */
+        fun batteryUnrestricted(context: Context): Boolean {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                ?: return true
+            return pm.isIgnoringBatteryOptimizations(context.packageName)
+        }
+
+        /**
+         * Systemowe okno z pytaniem o ten wyjątek.
+         *
+         * Prosto do okna, a nie do listy ustawień: droga przez ustawienia
+         * ma na tym telefonie pięć kroków i trzy różne nazwy tej samej opcji.
+         * Gdyby producent okna nie miał, zostaje ekran z listą aplikacji.
+         */
+        fun askBattery(context: Context) {
+            val wprost = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                .setData(Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val zapasowy = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(wprost) }
+                .recoverCatching { context.startActivity(zapasowy) }
         }
 
         /**

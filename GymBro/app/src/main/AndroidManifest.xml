@@ -29,6 +29,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!--
+        Bez tego wyjatku HyperOS ubija pilota po kilkunastu minutach z
+        wygaszonym ekranem, czyli dokladnie wtedy, gdy telefon lezy w szatni.
+        Uprawnienie samo niczego nie wlacza - pozwala tylko pokazac systemowe
+        okno z pytaniem, a odpowiada na nie uzytkownik. Prosba jest w Profilu.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- Wibracja na koniec przerwy miedzy seriami -->
     <uses-permission android:name="android.permission.VIBRATE" />
