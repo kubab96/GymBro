@@ -44,7 +44,7 @@ Demon Gradle'a zostaje w tle po buildzie i **trzyma uchwyty do katalogu projektu
 
 ```sh
 cd gymbro-watch
-node tools/check.js          # 344 sprawdzenia, bez zegarka
+node tools/check.js          # 377 sprawdzen, bez zegarka
 zeus build
 zeus preview -t "Amazfit Balance"
 ```
@@ -52,6 +52,8 @@ zeus preview -t "Amazfit Balance"
 `zeus preview` bez `-t` pyta interaktywnie i zawiesza się w nieinteraktywnej powłoce. Kończy się kodem QR do zeskanowania w aplikacji Zepp - to jedyna droga instalacji, nie ma odpowiednika `adb install`.
 
 W PowerShellu wołaj `zeus.cmd`, nie `zeus`.
+
+**Każda zmiana w `gymbro-watch/` kończy się kodem QR.** Bez niego poprawka leży w repozytorium, a na nadgarstku zostaje stara wersja - i następny trening wygląda tak, jakby nikt niczego nie naprawił. Więc po zmianie: `node tools/check.js`, `zeus build`, `zeus preview -t "Amazfit Balance"`, a obrazek QR podaj użytkownikowi do zeskanowania. Nie pytaj, czy go chce.
 
 `tools/check.js` ładuje prawdziwy `page/index.js` z zaślepkami pod `@zos/*` i pod telefon, po czym przechodzi scenariusze tak, jak robi to palec. **Sprawdza zachowanie, nie składnię** - przepływ ekranów, licznik serii, kolejkę offline, liczbę zapisów do widgetów. Nie powie, że napis się obcina.
 
@@ -117,7 +119,7 @@ Zasada naczelna doradcy: koszt milczenia jest wyższy niż koszt zbędnej propoz
 
 ### Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 15. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
+`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 20. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
 
 Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Trzynaście tabel; `session` / `set_entry` / `plan_item` to rdzeń.
 
