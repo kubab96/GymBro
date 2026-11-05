@@ -54,6 +54,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import pl.gymbro.data.Db
 import pl.gymbro.data.FoodPack
+import pl.gymbro.data.ShopPack
 import pl.gymbro.data.GymRepository
 import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ProfileRepository
@@ -229,8 +230,24 @@ fun SpikeApp() {
         val dodane = withContext(Dispatchers.IO) {
             runCatching {
                 val db = Db.get(appContext)
-                if (FoodPack.isImported(db.readableDatabase)) 0
-                else FoodPack.import(appContext, db.writableDatabase)
+                var dodane = 0
+
+                // Paczka z Open Food Facts idzie pierwsza, bo paczka sklepowa
+                // ustepuje jej przy rownych nazwach - patrz ShopPack.import.
+                // Przy odwrotnej kolejnosci bulka z lady wygrywalaby z
+                // produktem majacym kod kreskowy, czyli z tym, ktory wychodzi
+                // tez przy skanowaniu.
+                val wczytanoOff = !FoodPack.isImported(db.readableDatabase)
+                if (wczytanoOff) dodane += FoodPack.import(appContext, db.writableDatabase)
+
+                // Po ponownym wczytaniu paczki OFF paczke sklepowa trzeba
+                // zlozyc od nowa, nawet jesli jej wersja sie nie zmienila:
+                // FoodPack kasuje i wstawia swoje wiersze ponownie, a wtedy
+                // to one ustepowalyby sklepowym, zamiast odwrotnie.
+                if (wczytanoOff || !ShopPack.isImported(db.readableDatabase)) {
+                    dodane += ShopPack.import(appContext, db.writableDatabase)
+                }
+                dodane
             }.onFailure {
                 // Blad musi zostawic slad. Pierwsza wersja konczyla sie
                 // samym getOrDefault(0) i kiedy paczka nie wczytala sie

@@ -44,6 +44,21 @@ enum class FoodSource {
     /** Zestaw produktów podstawowych dostarczony z aplikacją. */
     SEED,
 
+    /**
+     * Tabela wartości odżywczych opublikowana przez sklep na własnej stronie.
+     *
+     * Osobne źródło, a nie [SEED], z dwóch powodów. Pierwszy: proweniencja
+     * jest inna - [SEED] to pozycje wpisane ręcznie, po jednej, z konwencjami
+     * opisanymi w `docs/kalorie.md`, a to jest wsad maszynowy. Drugi: wsad
+     * maszynowy musi dać się wycofać w całości, bo poprawka w czytniku strony
+     * ma usunąć to, co wpuściła jego poprzednia wersja - dokładnie ta lekcja,
+     * która kazała [OFF] kasować paczkę przed ponownym wczytaniem.
+     *
+     * Ufamy temu więcej niż paczce [OFF]: wartości podaje sprzedawca dla
+     * swojego asortymentu, a nie przypadkowy współautor otwartej bazy.
+     */
+    SHOP,
+
     /** Produkt wpisany ręcznie. */
     OWN,
 

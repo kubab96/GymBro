@@ -459,7 +459,7 @@ Po odrzuceniu obcych i powtórek paczka ma **28 739 pozycji**.
 
 ### Hierarchia źródeł
 
-Katalog zbiera dane z pięciu miejsc o bardzo różnej wiarygodności, więc mają
+Katalog zbiera dane z sześciu miejsc o bardzo różnej wiarygodności, więc mają
 ustaloną kolejność. Miarą jest to, **czy ktoś te liczby widział na oczy**:
 
 | | źródło | skąd pewność |
@@ -467,8 +467,16 @@ ustaloną kolejność. Miarą jest to, **czy ktoś te liczby widział na oczy**:
 | 1 | produkt własny | przepisałeś z opakowania |
 | 2 | przepis | policzony z Twoich składników |
 | 3 | zestaw podstawowy | kurowany, sprawdzony arytmetyką |
-| 4 | zeskanowany z Open Food Facts | trzymałeś opakowanie, dane świeżo z serwera |
-| 5 | paczka | wsad masowy, którego nikt nie oglądał |
+| 4 | tabela ze strony sklepu | podaje je sprzedawca dla swojego asortymentu, każdy wiersz sprawdzony wzorem |
+| 5 | zeskanowany z Open Food Facts | trzymałeś opakowanie, dane świeżo z serwera |
+| 6 | paczka | wsad masowy, którego nikt nie oglądał |
+
+Przy **imporcie** paczka sklepowa ustępuje jednak także paczce OFF, choć stoi
+wyżej. To nie niekonsekwencja: import nie wybiera lepszego wiersza, tylko
+unika dwóch wierszy o tej samej nazwie na liście wyników - a przy równej
+nazwie użyteczniejszy jest ten z kodem kreskowym, bo wychodzi też przy
+skanowaniu. Stąd kolejność wczytywania w `MainActivity`: najpierw OFF, potem
+sklepy.
 
 Kolejność działa w dwóch miejscach. W **wyszukiwaniu** decyduje o sortowaniu:
 wpisanie „twaróg" daje najpierw twaróg chudy i półtłusty z zestawu, a dopiero
@@ -481,23 +489,167 @@ a odczyt z serwera znacznik czasu.
 
 ### Czy są inne bazy niż Open Food Facts
 
-Dla **polskich produktów z kodem kreskowym - nie ma.** Sprawdzone: nie
-istnieje polska otwarta baza produktów spożywczych z API. Alternatywy to
-serwisy komercyjne, których warunki zabraniają przechowywania i dalszego
-udostępniania danych, więc nie nadają się do paczki w aplikacji.
+**Są, i to zdanie zastępuje poprzednie, które twierdziło, że nie ma.** Ta
+pomyłka miała konkretną przyczynę: wniosek wyciągnięto z wyszukiwarki, a nie
+z odwiedzenia stron. Sklep sprzedający na odległość **musi** podać wartości
+odżywcze, więc tam, gdzie jest sklep internetowy, są i dane.
 
-Dla **produktów podstawowych** źródła są: amerykańskie USDA FoodData Central
-(domena publiczna, ale nazwy po angielsku i asortyment amerykański) oraz
-szwedzka baza Livsmedelsverket. Oba problemy rozwiązuje zestaw własny
-w `FoodSeed.kt` - kurowany po polsku i sprawdzony arytmetyką.
+Przeszukane, z wynikiem:
 
-Wniosek: tego, czego nie ma w Open Food Facts, nie ma gdzie wziąć. Zostaje
-zeskanowanie raz i wpisanie ręczne - produkt zapamiętuje się razem z kodem
-kreskowym, więc płaci się za to jeden raz.
+| źródło | wynik |
+|---|---|
+| `biedronka.pl/pl/pieczywo` | **ma dane**, w zwykłym HTML-u, razem z gramaturą sztuki - w `FoodSeed.kt` |
+| `frisco.pl` | **ma dane**, karty produktów serwowane w HTML-u - w `sklepy-polska.tsv` |
+| `zakupy.auchan.pl` | ma dane i własną mapę 25 109 produktów, ale odpowiada 403 na uczciwego klienta i 202 z pustą treścią na przeglądarkowego; przejście wymagałoby obejścia zabezpieczenia przed botami, więc odpada |
+| `lidl.pl` | katalog internetowy tylko non-food |
+| `kaufland.pl`, `carrefour.pl` | HTTP 403 |
+| `marketdino.pl` | karty produktów są, wartości odżywczych nie ma |
+| `netto.pl` | mapa strony bez kart produktów |
+| `stokrotka.pl`, `polomarket.pl`, `aldi.pl` | zero wystąpień „kcal" |
+| `vitalia.pl` | baza produktów zwraca HTTP 410 Gone, wycofana |
+| `ilewazy.pl` | **ma wagi porcji**, czyli to, czego nie ma nigdzie indziej - ale regulamin § 7 zabrania kopiowania bez zgody, a serwis należy do Burda Media Polska i sprzedaje abonament na dziennik posiłków; nadaje się tylko do zaglądania ręcznie. Odpowiada po `http`, nie po `https` - stąd wcześniejsze „nie odpowiada" |
+| `kalorie.pl` | zaparkowana domena na sprzedaż |
+| `kcalmar.com`, `fitatu.com` | bazy komercyjnych konkurentów, nie publiczne dane |
+| PZH, „Tabele wartości odżywczej produktów", 1045 pozycji | „udostępniana na podstawie umowy licencyjnej w formacie pliku .XLSX" - nie do swobodnego użycia |
+| `dane.gov.pl` | zero zbiorów o wartościach odżywczych |
+| USDA FoodData Central | domena publiczna i do pobrania, ale nazwy po angielsku i asortyment amerykański |
+| Ciqual (FR), Fineli (FI), Frida (DK), Matvaretabellen (NO) | otwarte licencje, ale produkty nie nasze |
+
+Wniosek, który z tego płynie: **kod kreskowy i jego brak to dwie różne
+sprawy.** Produkty paczkowane pokrywa Open Food Facts, bo jest indeksowana
+kodami. Czego tam nie ma i być nie może, to towar sprzedawany na wagę -
+pieczywo, nabiał z lady, warzywa, wędliny. Na te trzeba iść do sklepu, który
+publikuje własne tabele.
+
+### Jak odtworzyć paczkę sklepową
+
+Plik: `app/src/main/assets/sklepy-polska.tsv`, dziesięć kolumn rozdzielonych
+tabulatorem - nazwa, kcal, białko, węglowodany, tłuszcz, błonnik, cukry,
+nasycone, sól, gramatura. Cztery pierwsze są obowiązkowe, pozostałe mogą być
+puste, bo puste znaczy „sklep tego nie podał", a nie „zero".
+
+Narzędzia: `tools/frisco-zbierz.sh` pobiera jedną kartę i wypisuje wiersz,
+`tools/frisco-pola.awk` czyta z niej liczby.
+
+```sh
+# 1. Adresy kart z czterech dzialow. Stronicowanie przez ?page=N,
+#    osiemdziesiat produktow na strone.
+for C in "18703/cat,warzywa-i-owoce:5" "18894/cat,z-piekarni-i-cukierni:4" \
+         "18974/cat,nabial-jaja-sery:14" "19136/cat,mieso-i-wedliny:8"; do
+  SCIEZKA=${C%:*}; for S in $(seq 1 ${C#*:}); do
+    [ "$S" = 1 ] && Q="" || Q="?page=$S"
+    curl -s --compressed "https://www.frisco.pl/c,$SCIEZKA/stn,searchResults$Q" \
+      | grep -aoE '/pid,[0-9]+/n,[a-z0-9-]+/stn,product'
+  done; done | sort -u > adresy.txt
+
+# 2. Karty. FRISCO_D wskazuje katalog roboczy z podkatalogiem karty/.
+export FRISCO_D=$PWD; mkdir -p karty
+xargs -a adresy.txt -I{} -P 4 sh tools/frisco-zbierz.sh {} > wszystko.tsv
+
+# 3. Tylko udane wiersze, bez powtorzen. Liczby na stderr.
+awk -f tools/frisco-zloz.awk wszystko.tsv > sklepy-polska.tsv
+```
+
+Powtórki odsiewa `frisco-zloz.awk` po **kluczu wyszukiwania**, nie po nazwie -
+tak samo jak `searchKey()` w `Nutrition.kt`. Inaczej liczba wierszy w pliku
+nie zgadzałaby się z liczbą zaimportowanych, bo „Chleb żytni, 500 g" i „Chleb
+żytni 500 g" to dla `ShopPack` jeden produkt.
+
+**Pobieraj z `--compressed`.** Karta waży 1,6 MB bez kompresji i 148 kB z nią.
+Bez tej flagi dwanaście kart schodziło minutami i wyglądało, jakby sklep
+ograniczał ruch; z nią te same dwanaście pobiera się w cztery sekundy.
+
+Karty odkładają się spakowane w `karty/`, bo poprawka czytnika nie może
+oznaczać tysiąca ośmiuset żądań do cudzego serwisu od nowa.
+
+Pobranie tysiąca ośmiuset kart zajmuje około trzydziestu minut, ale
+**przeparsowanie ich od nowa - sześć minut i ani jednego żądania**, bo karty
+leżą spakowane. Czytnik robi jeden przebieg po pliku: korzysta z tego, że
+HTML jest zminifikowany i tabela siedzi w jednym wierszu, więc znaczniki
+rozbiera tylko w tym jednym. Pierwsza wersja była potokiem `gzip` do pliku,
+`sed` po całych 1,6 MB, dwa `tr`, `grep` po tytuł i `wc` po rozmiar - czyli
+czterokrotne czytanie karty i pięć procesów na produkt. Schodziło pół karty
+na sekundę, czyli godzinę na komplet.
+
+**Pięć pułapek czytnika strony**, każda udająca brak danych:
+
+1. Frisco używa **dwóch zestawów etykiet**: jedne karty mają „Wartość
+   odżywcza (kJ)", inne „Wartość energetyczna (kJ)", w różnej wielkości
+   liter. Pierwsza wersja znała jeden zestaw i uznała dwanaście kart
+   z danymi za puste.
+2. **Kolejność wierszy nie jest stała** - na części kart wiersz
+   z kilodżulami stoi na końcu tabeli. Zaczep o „(kJ)" ucinał wtedy całą
+   tabelę, czytnik czytał stopkę i wypisywał liczby w rodzaju „003".
+   Dlatego zaczepiamy się o nagłówek sekcji.
+3. **Tabelę trzeba odciąć, nie tylko znaleźć.** Etykieta nieobecna
+   w tabeli dopasowywała się dalej na stronie: w karcie jogurtu Bakomy
+   słowo „błonnik" trafiło 185 344 znaki dalej, w nazwie innego produktu
+   z listy polecanych, i czytnik wziął 400 gramów błonnika. Granica od
+   góry to zdanie „Dzienna porcja obliczona", stojące zaraz za tabelą.
+4. Między liczbą a jednostką Frisco stawia **twardą spację** (U+00A0,
+   bajty `C2 A0`), nie zwykłą - „250 g" to nie „250" plus spacja plus
+   „g". Wzorzec `" ?(g|kg)$"` jej nie trafiał i gramatura wychodziła pusta
+   dla **każdego** produktu, we wszystkich wersjach czytnika. Gorzej:
+   `gawk` pracuje tu na bajtach, nie na znakach, więc
+   `sprintf("%c", 160)` daje pojedynczy bajt `A0`, który dopasowuje się do
+   drugiego bajtu pary i po podmianie zostawia wiszący `C2` - w nazwie
+   widać wtedy „500? g". Dlatego podmieniamy najpierw całą parę, potem
+   pojedynczy znak: w trybie bajtowym działa pierwsze, w znakowym drugie.
+5. Każda karta zawiera tabelę **dwa razy**: raz jako HTML, raz w stanie
+   Reacta, gdzie znaczniki są zapisane jako `<`. Założenie, że ten
+   blok stoi zawsze na końcu pliku, jest błędne - w karcie serka Almette
+   z czosnkiem niedźwiedzim pierwsze wystąpienie nagłówka jest właśnie
+   w nim, w wierszu 374 z 521. Rozbieranie znaczników go nie tyka,
+   a odczyt liczby po „(kcal)" brał cyfry z „003c" i kalorie wychodziły
+   „003". Odcinek z `<` pomijamy i szukamy dalej. Jeśli karta ma
+   tabelę **tylko** w tym bloku, idzie do odrzutu - liczby są tam
+   okrojone („966.", „145.") i zgadywanie ich byłoby gorsze niż brak.
+
+Obroną przed szóstą taką pułapką jest **sprawdzenie wzorem unijnym**:
+4·białko + 4·węglowodany + 9·tłuszcz + 2·błonnik musi zgadzać się
+z deklarowanymi kaloriami w granicach dziesięciu procent. Wiersz, który tego
+nie spełnia, idzie do odrzutu - i to właśnie ten warunek wyłapał wszystkie
+pięć powyżej, każdą po tym, jak poprzednia wyglądała na ostatnią. Gramatura
+jest tu wyjątkiem: wzór jej nie sprawdza, więc twarda spacja przeżyła trzy
+wersje czytnika niezauważona, aż `od -c` na prawdziwym tytule pokazał, co tam
+naprawdę stoi. **Pole, którego nic nie weryfikuje, bywa puste latami.**
+
+Czego wzór **nie** sprawdza: czy sklep podał kolumnę na sto gramów, czy na
+opakowanie. Karta Monokla z cynamonem podaje 738 kcal, 37 g tłuszczu, 83 g
+węglowodanów i 15 g białka „na 100 g". Wzór daje z tego 725 kcal, czyli
+zgadza się w granicach dziesięciu procent - bo kolumna na opakowanie jest
+wewnętrznie spójna dokładnie tak samo jak ta właściwa. A 135 gramów makro
+w stu gramach produktu nie istnieje; podzielone przez gramaturę (160 g) dają
+sensowne 461 kcal.
+
+Dlatego drugi warunek: **suma białka, węglowodanów i tłuszczu nie może
+przekroczyć 105 g na 100 g produktu.** Granica to 105, nie 100, bo masło
+klarowane ze smalcem ma 99,8 g tłuszczu plus śladowe białko i węglowodany,
+czyli 100,3 g po zaokrągleniu - i jest prawdziwe.
+
+Tego nie poprawiamy dzieleniem przez gramaturę: to byłoby zgadywanie, którą
+kolumnę sklep pomylił. Wiersz idzie do odrzutu. I trzeba wiedzieć, że ten
+warunek wyłapuje tylko przypadki rażące - produkt, którego wartości na
+opakowanie zmieściłyby się pod stu gramami, przejdzie niezauważony.
+
+Część kart **nie ma tabeli w ogóle** - i to nie usterka. Świeże mięso, surowe
+warzywa i ziemniaki to produkty jednoskładnikowe, zwolnione z obowiązku
+deklaracji żywieniowej, więc sklep nie podaje dla nich nic. Sprawdzone: w tych
+plikach słowo „odżywcz" nie występuje ani raz. Dla takich produktów zostaje
+zestaw własny w `FoodSeed.kt`, bo surowa marchew ma te same wartości niezależnie
+od sklepu.
+
+Czego **nie** dopisujemy ze wzoru: energii, gdy karta podaje komplet makro
+bez wiersza z kaloriami. Policzona energia zgadzałaby się zawsze, także
+z błędnie odczytanej tabeli, więc jedyne sprawdzenie przestałoby cokolwiek
+sprawdzać.
+
+Po podmianie pliku **podbij `ShopPack.VERSION`** - inaczej aplikacja uzna, że
+paczka już jest wczytana.
 
 ### Zanim uznasz, że produktu nie ma
 
-Dwa razy pod rząd wyglądało na brak danych, a nie było nim ani razu.
+Pięć razy pod rząd wyglądało na brak danych, a nie było nim ani razu.
 
 **Marka bywa zapisana na kilka sposobów.** Yeemy występuje w zrzucie jako
 `Yeemy` (31 razy), `YEEMY` (6) i `Yemmy` (2). Szukanie po jednej pisowni
@@ -509,10 +661,31 @@ marki Yeemy nie znajdowały się po „yeemy skrzydełka", bo szukaliśmy ciąg�
 fragmentu, a między tymi słowami stoi „panierowane". Stąd dzielenie
 zapytania na słowa - patrz [searchWords].
 
+**Wyszukiwarka nie jest dowodem, że strony nie ma.** Pytanie, czy sieci
+publikują wartości odżywcze własnego pieczywa, zamknięto raz odpowiedzią
+„nie publikują" - na podstawie wyników wyszukiwania, które zwróciły same
+serwisy wtórne. Biedronka podaje te dane pod adresem
+`biedronka.pl/pl/pieczywo?page=skladniki`, w zwykłym HTML-u, razem
+z gramaturą sztuki. Wniosek: zanim napiszesz, że źródła nie ma, **wejdź na
+stronę sklepu.**
+
+**Brak połączenia nie jest dowodem, że serwis nie żyje.** `ilewazy.pl`
+zapisano jako „nie odpowiada", bo `curl` po `https` zwracał kod 000. Serwis
+po prostu **nie ma HTTPS** - po `http` odpowiada 200. Przy kodzie 000
+sprawdź drugi protokół, zanim uznasz stronę za martwą; 000 znaczy „nie
+zestawiono połączenia", a nie „serwera nie ma".
+
+**Odrzut czytnika nie jest dowodem, że karta jest pusta.** Trzy razy
+„produkt bez wartości odżywczych" okazało się usterką czytnika strony -
+nieznany zestaw etykiet, przestawiona kolejność wierszy, nieodcięta tabela.
+Patrz rozdział o odtwarzaniu paczki sklepowej. Przy odrzucie otwórz kartę
+i przeczytaj ją oczami, zamiast dopisywać wyjątek.
+
 Kolejność sprawdzania przy podejrzeniu, że czegoś brakuje: najpierw wpisz
 samą nazwę rodzajową bez marki („nuggetsy", „skrzydełka pikantne"), potem
-policz wystąpienia marki w pliku paczki, a dopiero na końcu podejrzewaj
-filtr.
+policz wystąpienia marki w pliku paczki, potem sprawdź, czy produkt ma
+w ogóle kod kreskowy - towar na wagę go nie ma i w Open Food Facts być nie
+może - a dopiero na końcu podejrzewaj filtr.
 
 Kolumny zrzutu są podane numerami, bo CSV ma ich 211 i nazwy w nagłówku są
 jedynym sposobem, żeby je odnaleźć. Przy zmianie układu zrzutu trzeba je

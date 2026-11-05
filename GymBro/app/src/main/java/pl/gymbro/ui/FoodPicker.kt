@@ -196,6 +196,7 @@ private fun sourceLabel(source: FoodSource): String = when (source) {
     FoodSource.SEED -> "produkt podstawowy"
     FoodSource.OWN -> "mój produkt"
     FoodSource.RECIPE -> "przepis"
+    FoodSource.SHOP -> "tabela sklepu"
     FoodSource.OFF -> "Open Food Facts"
 }
 

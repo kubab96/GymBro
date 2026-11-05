@@ -129,9 +129,12 @@ class FoodRepository(context: Context) {
      * 1. produkt własny - przepisałeś z opakowania,
      * 2. przepis - policzony z Twoich składników,
      * 3. zestaw podstawowy - kurowany, sprawdzony arytmetyką,
-     * 4. zeskanowany z Open Food Facts - trzymałeś opakowanie w ręce,
+     * 4. tabela ze strony sklepu - wartości podaje sprzedawca dla swojego
+     *    asortymentu, a każdy wiersz przeszedł sprawdzenie wzorem unijnym
+     *    przy pobieraniu,
+     * 5. zeskanowany z Open Food Facts - trzymałeś opakowanie w ręce,
      *    a dane przyszły świeżo z serwera (stąd `updated_at > 0`),
-     * 5. paczka - wsad masowy ze zrzutu, którego nikt nie oglądał.
+     * 6. paczka - wsad masowy ze zrzutu, którego nikt nie oglądał.
      *
      * Porcji tu nie dociągamy - przy liście wyników byłoby to trzydzieści
      * dodatkowych zapytań na każde wpisane słowo.
@@ -169,8 +172,9 @@ class FoodRepository(context: Context) {
                     WHEN source = 'OWN' THEN 0
                     WHEN source = 'RECIPE' THEN 1
                     WHEN source = 'SEED' THEN 2
-                    WHEN source = 'OFF' AND updated_at > 0 THEN 3
-                    ELSE 4
+                    WHEN source = 'SHOP' THEN 3
+                    WHEN source = 'OFF' AND updated_at > 0 THEN 4
+                    ELSE 5
                 END,
                 LENGTH(name_key)
             LIMIT ?
