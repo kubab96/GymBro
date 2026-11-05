@@ -524,6 +524,365 @@ object FoodSeed {
         Item("Tost z serem", 280.0, 12.0, 28.0, 13.0, fiberG = 1.5, portions = listOf(p("sztuka", 70.0))),
 
         // ====================================================================
+        // PIECZYWO Z WŁASNEGO WYPIEKU
+        //
+        // Osobny dział, bo tego nie da się wziąć z żadnej bazy produktów.
+        // Bułki i chleby pieczone na miejscu w Biedronce, Lidlu czy piekarni
+        // sprzedaje się **na wagę, bez kodu kreskowego** - a Open Food Facts
+        // jest indeksowane kodami. Taka bułka fizycznie nie może tam trafić.
+        //
+        // Bazy społecznościowe przeczą sobie nawzajem - ta sama kajzerka raz
+        // 262 kcal na 100 g, raz 297. Niektóre sieci publikują jednak własne
+        // tabele i wtedy warto je wziąć: niżej jest dział Biedronki
+        // z prawdziwymi wartościami.
+        //
+        // Ten dział zostaje dla reszty: piekarni za rogiem, innych sieci
+        // i sytuacji, w której nie wiadomo, skąd bułka pochodzi.
+        //
+        // To produkty rodzajowe, jak „ziemniaki smażone". Różnica
+        // między kajzerką z Biedronki, z Lidla i z piekarni za rogiem jest
+        // rzędu kilku procent, a **masa bułki waha się od 50 do 80 gramów**,
+        // czyli dwa razy bardziej. Dlatego przy każdej pozycji stoi typowa
+        // gramatura - to ona decyduje o wyniku, nie receptura.
+        // ====================================================================
+
+        // ---- Bułki ------------------------------------------------------------
+        Item(
+            "Bułka pszenna zwykła", 285.0, 9.0, 55.0, 2.5, fiberG = 2.5,
+            portions = listOf(p("sztuka", 55.0))
+        ),
+        Item(
+            "Bułka grahamka", 265.0, 9.0, 48.0, 2.0, fiberG = 5.0,
+            portions = listOf(p("sztuka", 60.0))
+        ),
+        Item(
+            "Bułka maślana", 320.0, 8.0, 52.0, 8.0, fiberG = 2.0,
+            portions = listOf(p("sztuka", 60.0))
+        ),
+        Item(
+            "Bułka wieloziarnista", 290.0, 10.0, 45.0, 7.0, fiberG = 5.0,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item(
+            "Bułka orkiszowa", 270.0, 9.0, 50.0, 3.0, fiberG = 4.0,
+            portions = listOf(p("sztuka", 65.0))
+        ),
+        Item(
+            "Bułka hamburgerowa", 280.0, 8.5, 50.0, 5.0, fiberG = 2.5,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item(
+            "Bułka hot-dogowa", 280.0, 8.5, 50.0, 5.0, fiberG = 2.5,
+            portions = listOf(p("sztuka", 60.0))
+        ),
+
+        // ---- Pozostałe pieczywo drobne -----------------------------------------
+        Item(
+            "Rogal maślany", 400.0, 7.5, 45.0, 21.0, fiberG = 2.0,
+            portions = listOf(p("sztuka", 65.0))
+        ),
+        Item(
+            "Bagietka", 275.0, 9.0, 54.0, 1.5, fiberG = 3.0,
+            portions = listOf(p("kawałek", 60.0), p("sztuka", 250.0))
+        ),
+        Item("Ciabatta", 270.0, 9.0, 52.0, 2.5, fiberG = 2.5, portions = listOf(p("sztuka", 100.0))),
+        Item(
+            "Chałka", 330.0, 8.0, 58.0, 7.0, fiberG = 2.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item("Bajgiel", 280.0, 10.0, 53.0, 2.0, fiberG = 3.0, portions = listOf(p("sztuka", 90.0))),
+        Item(
+            "Obwarzanek krakowski", 290.0, 9.0, 57.0, 2.5, fiberG = 2.5,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item("Pita", 275.0, 9.0, 53.0, 1.5, fiberG = 2.5, portions = listOf(p("sztuka", 60.0))),
+        Item("Cebularz", 300.0, 8.0, 50.0, 7.5, fiberG = 2.5, portions = listOf(p("sztuka", 120.0))),
+
+        // ---- Chleby ------------------------------------------------------------
+        Item(
+            "Chleb pszenno-żytni", 240.0, 7.0, 46.0, 1.5, fiberG = 4.0,
+            portions = listOf(p("kromka", 35.0))
+        ),
+        Item(
+            "Chleb orkiszowy", 250.0, 8.5, 45.0, 2.0, fiberG = 6.0,
+            portions = listOf(p("kromka", 35.0))
+        ),
+        Item(
+            "Chleb wieloziarnisty", 265.0, 9.0, 42.0, 6.0, fiberG = 7.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb na zakwasie", 230.0, 7.0, 45.0, 1.0, fiberG = 4.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+
+        // ---- Słodkie z piekarni -------------------------------------------------
+        Item(
+            "Drożdżówka z serem", 300.0, 7.0, 45.0, 9.5, fiberG = 1.5,
+            portions = listOf(p("sztuka", 90.0))
+        ),
+        Item(
+            "Jagodzianka", 290.0, 6.5, 48.0, 8.0, fiberG = 2.0,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item("Pączek", 390.0, 6.0, 47.0, 19.0, fiberG = 1.5, portions = listOf(p("sztuka", 70.0))),
+        Item(
+            "Donut lukrowany", 420.0, 6.0, 53.0, 20.0, fiberG = 1.5,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item("Muffin", 400.0, 5.5, 50.0, 19.0, fiberG = 1.5, portions = listOf(p("sztuka", 90.0))),
+
+        // ====================================================================
+        // PIECZYWO BIEDRONKI
+        //
+        // Wartosci z biedronka.pl/pl/pieczywo?page=skladniki - sieć publikuje
+        // je dla całego pieczywa razem z gramaturą sztuki. To **prawdziwe
+        // liczby z etykiety**, nie konwencje jak w dziale wyżej.
+        //
+        // Dział wyżej zostaje, bo pieczywo kupuje się też gdzie indziej.
+        // Tutaj masz dokładność, tam uniwersalność.
+        //
+        // Ten sam produkt bywa u kilku producentów i wtedy wartości się
+        // różnią - rogal croissant ma cztery warianty od 425 do 437 kcal.
+        // Bierzemy jeden, bo przy półce i tak nie wiadomo, który leży
+        // w koszyku, a różnica mieści się w grubości skórki.
+        // ====================================================================
+
+        // ---- Bułki -------------------------------------------------------------
+        Item(
+            "Bułka poranna, Biedronka", 289.0, 9.0, 56.0, 2.6, fiberG = 2.9,
+            portions = listOf(p("sztuka", 65.0))
+        ),
+        Item(
+            "Bułka poznańska, Biedronka", 274.0, 8.7, 54.0, 2.1, fiberG = 2.5,
+            portions = listOf(p("sztuka", 75.0))
+        ),
+        Item(
+            "Bułka codzienna, Biedronka", 272.0, 9.0, 53.0, 1.9, fiberG = 2.7,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item(
+            "Bułka grahamka, Biedronka", 260.0, 10.9, 48.0, 1.4, fiberG = 6.9,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item(
+            "Bułka pasterska, Biedronka", 265.0, 9.3, 52.0, 1.5, fiberG = 2.6,
+            portions = listOf(p("sztuka", 90.0))
+        ),
+        Item(
+            "Bułka śniadaniowa, Biedronka", 293.0, 8.7, 57.0, 2.4, fiberG = 3.2,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka śniadaniowa z ziarnami, Biedronka", 310.0, 11.0, 49.0, 6.9, fiberG = 3.2,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka śniadaniowa pełnoziarnista, Biedronka", 282.0, 9.3, 51.0, 2.7, fiberG = 7.7,
+            portions = listOf(p("sztuka", 73.0))
+        ),
+        Item(
+            "Bułka wysokobiałkowa, Biedronka", 282.0, 18.0, 35.0, 6.4, fiberG = 6.2,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka razowa z mąki żytniej, Biedronka", 240.0, 13.0, 33.0, 4.5, fiberG = 7.5,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka z pestkami dyni, Biedronka", 300.0, 12.0, 49.0, 5.8, fiberG = 2.7,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item(
+            "Bułka z żółtym serem, Biedronka", 286.0, 11.0, 48.0, 5.1,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+        Item(
+            "Bułka fala ciemna z ziarnami, Biedronka", 283.0, 10.0, 46.0, 5.6, fiberG = 3.7,
+            portions = listOf(p("sztuka", 110.0))
+        ),
+        Item(
+            "Bułka poranna fitness, Biedronka", 291.0, 11.0, 49.0, 4.6, fiberG = 6.6,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka samo ziarno, Biedronka", 309.0, 14.0, 19.0, 17.0, fiberG = 8.5,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Bułka paryska, Biedronka", 276.0, 9.8, 52.0, 2.8, fiberG = 2.4,
+            portions = listOf(p("sztuka", 240.0))
+        ),
+        Item(
+            "Bułka żytnia niski IG, Biedronka", 253.0, 11.0, 44.0, 2.7, fiberG = 4.1,
+            portions = listOf(p("sztuka", 55.0))
+        ),
+        Item(
+            "BIO bułka z chia i siemieniem, Biedronka", 282.0, 8.8, 52.0, 3.2, fiberG = 5.2,
+            portions = listOf(p("sztuka", 75.0))
+        ),
+        Item(
+            "BIO bułka z dynią, Biedronka", 329.0, 11.0, 52.0, 7.6, fiberG = 4.4,
+            portions = listOf(p("sztuka", 70.0))
+        ),
+
+        // ---- Bagietki ------------------------------------------------------------
+        Item(
+            "Bagietka duża, Biedronka", 272.0, 9.1, 53.0, 2.1, fiberG = 2.5,
+            portions = listOf(p("sztuka", 405.0), p("kawałek", 100.0))
+        ),
+        Item(
+            "Półbagietka, Biedronka", 282.0, 9.5, 57.0, 1.2, fiberG = 3.0,
+            portions = listOf(p("sztuka", 110.0))
+        ),
+        Item(
+            "Półbagietka pełnoziarnista, Biedronka", 253.0, 11.0, 46.0, 1.4, fiberG = 6.6,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item(
+            "Bagietka czosnkowa, Biedronka", 289.0, 8.1, 47.0, 7.0, fiberG = 2.9,
+            portions = listOf(p("sztuka", 165.0))
+        ),
+        Item(
+            "Ciabatta, Biedronka", 249.0, 8.7, 49.0, 1.4, fiberG = 2.4,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+
+        // ---- Chleby ----------------------------------------------------------------
+        Item(
+            "Chleb pasterski, Biedronka", 260.0, 9.1, 51.0, 1.4, fiberG = 2.7,
+            portions = listOf(p("kromka", 40.0), p("bochenek", 500.0))
+        ),
+        Item(
+            "Chleb rodzinny, Biedronka", 250.0, 8.5, 50.0, 1.0, fiberG = 3.3,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb słowiański, Biedronka", 264.0, 11.0, 51.0, 1.4, fiberG = 2.9,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb Nowodworski z makiem, Biedronka", 257.0, 9.0, 49.0, 1.8, fiberG = 3.7,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb fitness, Biedronka", 290.0, 12.0, 44.0, 6.4, fiberG = 4.1,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb orkiszowy z ziarnami, Biedronka", 292.0, 11.2, 46.0, 6.1, fiberG = 3.8,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb słonecznikowy, Biedronka", 292.0, 8.5, 43.0, 8.5, fiberG = 5.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb całe ziarno, Biedronka", 322.0, 12.0, 29.0, 15.0, fiberG = 9.7,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb multi-ziarno, Biedronka", 300.0, 10.0, 46.0, 7.3, fiberG = 5.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb żytni 100% bez drożdży, Biedronka", 210.0, 4.2, 43.0, 1.2, fiberG = 4.9,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb w stylu włoskim, Biedronka", 257.0, 9.0, 51.0, 1.4, fiberG = 2.4,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Chleb śniadaniowy, Biedronka", 242.0, 7.0, 50.0, 1.0,
+            portions = listOf(p("kromka", 40.0))
+        ),
+
+        // ---- Słodkie z piekarni Biedronki -------------------------------------------
+        Item(
+            "Rogal croissant z masłem, Biedronka", 435.0, 7.5, 44.0, 25.0, fiberG = 2.0,
+            portions = listOf(p("sztuka", 60.0))
+        ),
+        Item(
+            "Croissant orzechowo-kakaowy, Biedronka", 414.0, 8.5, 45.4, 21.4, fiberG = 2.8,
+            portions = listOf(p("sztuka", 85.0))
+        ),
+        Item(
+            "Chałka z kruszonką, Biedronka", 347.0, 7.7, 59.0, 8.5, fiberG = 1.9,
+            portions = listOf(p("kromka", 50.0))
+        ),
+        Item(
+            "Rożek z jabłkiem, Biedronka", 352.0, 4.0, 45.0, 17.0, fiberG = 1.4,
+            portions = listOf(p("sztuka", 95.0))
+        ),
+        Item(
+            "Bajgiel z ziarnami, Biedronka", 351.0, 11.0, 48.0, 12.0, fiberG = 4.5,
+            portions = listOf(p("sztuka", 80.0))
+        ),
+        Item(
+            "Cynamonka, Biedronka", 410.0, 6.9, 53.0, 19.0, fiberG = 2.9,
+            portions = listOf(p("sztuka", 100.0))
+        ),
+        Item(
+            "Ciacho z kruszonką, Biedronka", 319.0, 7.0, 51.0, 9.3, fiberG = 1.6,
+            portions = listOf(p("kawałek", 80.0))
+        ),
+        Item(
+            "Chlebek bananowy, Biedronka", 356.0, 5.6, 42.0, 18.0, fiberG = 1.7,
+            portions = listOf(p("sztuka", 170.0))
+        ),
+        Item(
+            "Twist musli, Biedronka", 335.0, 11.0, 46.0, 11.0, fiberG = 4.0,
+            portions = listOf(p("sztuka", 95.0))
+        ),
+
+        // ---- Przekąski z lady --------------------------------------------------------
+        Item(
+            "Zapiekanka z pieczarkami, Biedronka", 288.0, 10.1, 25.9, 15.3,
+            portions = listOf(p("sztuka", 150.0))
+        ),
+        Item(
+            "Hot dog z berlinką, Biedronka", 352.0, 9.6, 24.2, 23.8,
+            portions = listOf(p("sztuka", 120.0))
+        ),
+        Item(
+            "Tost z szynką i serem, Biedronka", 259.0, 9.2, 33.4, 9.4, fiberG = 2.0,
+            portions = listOf(p("sztuka", 120.0))
+        ),
+        Item(
+            "Mini pizza z salami, Biedronka", 272.0, 10.31, 35.3, 9.02,
+            portions = listOf(p("sztuka", 130.0))
+        ),
+        Item(
+            "Chleb z pomidorami i oliwkami, Biedronka", 245.0, 8.7, 44.0, 3.2, fiberG = 2.9,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "BIO chleb żytni z płatkami, Biedronka", 234.0, 4.7, 49.0, 0.8, fiberG = 6.1,
+            portions = listOf(p("kromka", 40.0))
+        ),
+        Item(
+            "Ciastko Duet truskawkowy, Biedronka", 359.0, 5.3, 40.0, 20.0, fiberG = 1.6,
+            portions = listOf(p("sztuka", 94.0))
+        ),
+        Item(
+            "Pinsa capriciosa, Biedronka", 235.0, 9.0, 32.0, 6.1,
+            portions = listOf(p("sztuka", 150.0))
+        ),
+        Item(
+            "Przekąska a'la cheeseburger, Biedronka", 243.0, 9.1, 26.9, 10.6, fiberG = 1.8,
+            portions = listOf(p("sztuka", 125.0))
+        ),
+        Item(
+            "Flauto z pomidorami i mozzarellą, Biedronka", 201.0, 8.4, 32.0, 4.4,
+            portions = listOf(p("sztuka", 120.0))
+        ),
+        Item(
+            "Borek ze szpinakiem i serem, Biedronka", 324.0, 6.2, 34.0, 18.0, fiberG = 2.1,
+            portions = listOf(p("sztuka", 75.0))
+        ),
+
+        // ====================================================================
         // SIECI RESTAURACJI
         //
         // Jedyny dzial, w ktorym liczby nie sa konwencja, tylko konkretna
