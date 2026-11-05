@@ -54,8 +54,30 @@ const VIEW_FIX = 9
 // lista nazw wyniosła się stamtąd kiedyś z tego samego powodu.
 const VIEW_TONS = 10
 
-// Tyle serii jednego ćwiczenia mieści się na liście.
-const LOG_ROWS = 6
+/**
+ * Dziennik serii: wiersze są przyciskami, więc trafia w nie kciuk.
+ *
+ * Cztery zamiast sześciu, za to każdy o dwadzieścia sześć pikseli wyższy
+ * i o pięć punktów większym pismem. Sześć wierszy po 46 pikseli mieściło
+ * wprawdzie całe ćwiczenie naraz, ale czytało się je z nadgarstka jak
+ * regulamin, a trafienie w ten właściwy wymagało patrzenia. Czego nie
+ * widać od razu, dobiera się gestem w dół - patrz [logFrom].
+ *
+ * Szerokość 340 przy x=70, a nie 380 przy x=50: przy tej wysokości wiersza
+ * rogi górnego wychodziły poza okrąg tarczy i wyglądały na przycięte.
+ */
+const LOG_ROWS = 4
+const LOG_ROW_H = 72
+const LOG_ROW_GAP = 78
+const LOG_TOP = 76
+
+/**
+ * Początek bloku z ciężarem i powtórzeniami.
+ *
+ * Blok ma 260 pikseli wysokości, ekran 480 - stąd 110 marginesu z góry
+ * i tyle samo z dołu.
+ */
+const EDIT_TOP = 110
 
 // Tyle nazw mieści się na ekranie braków; reszta idzie w "i jeszcze N".
 const GAP_ROWS = 6
@@ -215,6 +237,8 @@ Page({
     // Czy przycisk kasowania czeka na potwierdzenie.
     fixConfirm: false,
     rirFor: null,
+    /** Pierwsza widoczna seria w dzienniku - patrz [logFrom]. */
+    logAt: 0,
     editedFor: null,
     zones: null,
     // Wstrzymanie trzymamy lokalnie. null znaczy "co powie telefon";
@@ -432,7 +456,15 @@ Page({
         hrMax: this.state.hrMax,
         kcalBase: this.state.kcalBase,
         burnKcal: this.state.burnKcal,
+        // Współczynniki spalania, nie tylko sam licznik. Przychodzą
+        // wyłącznie z telefonu, a zgaszenie ekranu ubija mini-aplikację -
+        // bez nich [addBurn] wychodziło na pierwszej linijce i kalorie
+        // stały aż do następnej odpowiedzi. Z telefonem w szatni: cały trening.
+        burn: this.state.burn,
         kcalSeen: this.state.kcalSeen,
+        // Pytanie o zapas dotyczy serii sprzed chwili. Przerwa przeżywa
+        // zgaszenie ekranu, więc pytanie musi przeżyć razem z nią.
+        rirFor: this.state.rirFor,
         wasComplete: this.state.wasComplete,
         maPlan: !!this.state.localId,
         outbox: this.state.outbox,
@@ -505,7 +537,9 @@ Page({
     this.state.hrMax = zapis.hrMax || 0
     this.state.kcalBase = zapis.kcalBase === undefined ? null : zapis.kcalBase
     this.state.burnKcal = zapis.burnKcal || 0
+    this.state.burn = (zapis.burn && zapis.burn.k1) ? zapis.burn : null
     this.state.kcalSeen = !!zapis.kcalSeen
+    this.state.rirFor = zapis.rirFor || null
     this.state.wasComplete = !!zapis.wasComplete
     // Dokładamy, zamiast podmieniać: po restarcie bez łączności zdążyły
     // już powstać nowe polecenia, a te z pamięci są od nich starsze.
@@ -576,6 +610,9 @@ Page({
           }
           // Pod głównym ekranem leży dziennik serii tego ćwiczenia.
           if (event === GESTURE_DOWN && view === VIEW_SETS) {
+            // Zawsze od pierwszej serii: wejście w dziennik to pytanie
+            // "co dzisiaj zrobiłem", a nie powrót tam, gdzie się skończyło.
+            this.state.logAt = 0
             this.showView(VIEW_LOG, 1, 'y')
             return true
           }
@@ -589,6 +626,11 @@ Page({
           if (event === GESTURE_UP && view === VIEW_LOG) {
             this.showView(VIEW_SETS, -1, 'y')
             return true
+          }
+          // W dół kolejne serie, a gdy wszystkie się mieszczą - nic.
+          // Przed tą linijką gest w dół w dzienniku nie robił nic nigdy.
+          if (event === GESTURE_DOWN && view === VIEW_LOG) {
+            return this.logScroll()
           }
           // Z poprawki wychodzi się każdym rozsądnym gestem - to ekran
           // doraźny, a nie miejsce w nawigacji.
@@ -1032,7 +1074,8 @@ Page({
       case VIEW_EDIT: return [w.wMinus, w.wPlus, w.rMinus, w.rPlus]
       case VIEW_DONE: return [w.doneBtn]
       case VIEW_GAPS: return w.gapsRows.slice(0, this.gapsRows().length)
-      case VIEW_LOG: return w.logRows.slice(0, this.logRows().length)
+      case VIEW_LOG:
+        return w.logRows.slice(0, this.logRows().length - this.logFrom())
       case VIEW_FIX: return [w.fixWMinus, w.fixWPlus, w.fixRMinus, w.fixRPlus]
         .concat(w.fixRirRow).concat([w.fixSave, w.fixDelete])
       case VIEW_CONTROL: return [w.ctrlPause, w.ctrlSkip, w.ctrlEnd]
@@ -1117,17 +1160,24 @@ Page({
     w.heartRange = this.text(70, 372, 340, 28, 19, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: ciężar i powtórzenia ----
-    w.wLabel = this.text(100, 56, 280, 34, 24, DIM)
+    //
+    // Cały blok wyśrodkowany w tarczy: od EDIT_TOP do EDIT_TOP + EDIT_H,
+    // z tym samym marginesem u góry i u dołu. Wcześniej zaczynał się na
+    // 56 i kończył na 316, więc nad nim zostawało 56 pikseli, a pod nim
+    // 164 - na okrągłym ekranie widać to od razu, bo dół tarczy świeci pustką.
+    w.wLabel = this.text(100, EDIT_TOP, 280, 34, 24, DIM)
     // Plusy i minusy bez wibracji: naciska się je po kilka razy z rzędu,
     // a wtedy potwierdzanie każdego kliknięcia robi się męczące.
-    w.wMinus = this.button(86, 96, 84, 84, 36, '-', GREY, () => this.stepWeight(-1))
-    w.wValue = this.text(170, 112, 140, 56, 36, FG, hmUI.text_style.NONE)
-    w.wPlus = this.button(310, 96, 84, 84, 36, '+', GREY, () => this.stepWeight(1))
+    w.wMinus = this.button(86, EDIT_TOP + 40, 84, 84, 36, '-', GREY, () => this.stepWeight(-1))
+    // Liczba w pionie na środku przycisków: 84 i 56 wysokości to różnica
+    // 28, czyli 14 na stronę. Wcześniej stała dwa piksele niżej.
+    w.wValue = this.text(170, EDIT_TOP + 54, 140, 56, 36, FG, hmUI.text_style.NONE)
+    w.wPlus = this.button(310, EDIT_TOP + 40, 84, 84, 36, '+', GREY, () => this.stepWeight(1))
 
-    w.rLabel = this.text(100, 196, 280, 34, 24, DIM)
-    w.rMinus = this.button(86, 232, 84, 84, 36, '-', GREY, () => this.stepReps(-1))
-    w.rValue = this.text(170, 248, 140, 56, 36, FG, hmUI.text_style.NONE)
-    w.rPlus = this.button(310, 232, 84, 84, 36, '+', GREY, () => this.stepReps(1))
+    w.rLabel = this.text(100, EDIT_TOP + 140, 280, 34, 24, DIM)
+    w.rMinus = this.button(86, EDIT_TOP + 176, 84, 84, 36, '-', GREY, () => this.stepReps(-1))
+    w.rValue = this.text(170, EDIT_TOP + 190, 140, 56, 36, FG, hmUI.text_style.NONE)
+    w.rPlus = this.button(310, EDIT_TOP + 176, 84, 84, 36, '+', GREY, () => this.stepReps(1))
 
     // Bez przycisków od serii. Dokładanie serii robi się na ekranie ćwiczenia,
     // a kasowanie - w poprawce konkretnej serii, gdzie widać, którą się rusza.
@@ -1151,7 +1201,13 @@ Page({
     w.logTitle = this.text(70, 30, 340, 34, 23, DIM, hmUI.text_style.NONE)
     w.logRows = []
     for (let i = 0; i < LOG_ROWS; i++) {
-      const row = this.button(50, 76 + i * 52, 380, 46, 21, '', 0x1c2127, () => this.openFix(i))
+      // Węższe niż dotąd o dwadzieścia pikseli z każdej strony: przy 50
+      // i szerokości 380 górny wiersz wychodził rogami poza okrąg tarczy
+      // i wyglądał na przycięty, bo był.
+      const row = this.button(
+        70, LOG_TOP + i * LOG_ROW_GAP, 340, LOG_ROW_H, 26, '', 0x1c2127,
+        () => this.openFix(i)
+      )
       row.setProperty(hmUI.prop.VISIBLE, false)
       w.logRows.push(row)
     }
@@ -1477,7 +1533,9 @@ Page({
     const fix = !msg && view === VIEW_FIX
     ;[w.logTitle, w.logHint].forEach((x) => this.setVisible(x, log))
     const wiersze = this.logRows()
-    w.logRows.forEach((row, i) => this.setVisible(row, log && i < wiersze.length))
+    const odWiersza = this.logFrom()
+    w.logRows.forEach((row, i) =>
+      this.setVisible(row, log && odWiersza + i < wiersze.length))
     ;[w.fixTitle, w.fixWLabel, w.fixWMinus, w.fixWValue, w.fixWPlus,
       w.fixRLabel, w.fixRMinus, w.fixRValue, w.fixRPlus,
       w.fixRirLabel, w.fixSave, w.fixDelete].forEach((x) => this.setVisible(x, fix))
@@ -2024,22 +2082,59 @@ Page({
     return (ex && ex.entries) || []
   },
 
+  /**
+   * Od której serii zaczyna się to, co widać.
+   *
+   * Dotąd widać było sześć pierwszych i koniec: siódma seria nie istniała
+   * na tym ekranie, a przy ćwiczeniu z ośmioma nie dało się poprawić
+   * żadnej z ostatnich dwóch. Okno przesuwa się gestem w dół i zawija.
+   */
+  logFrom() {
+    const lista = this.logRows()
+    if (lista.length <= LOG_ROWS) return 0
+    const max = lista.length - LOG_ROWS
+    return Math.min(this.state.logAt || 0, max)
+  },
+
+  /**
+   * Gest w dół w dzienniku: kolejne serie.
+   *
+   * W górę wychodzi z ekranu i tak zostaje - wyjście jest ważniejsze od
+   * przewijania w drugą stronę, a okno i tak zawija się na końcu listy.
+   */
+  logScroll() {
+    const lista = this.logRows()
+    if (lista.length <= LOG_ROWS) return false
+    const max = lista.length - LOG_ROWS
+    const teraz = this.logFrom()
+    this.state.logAt = teraz >= max ? 0 : Math.min(teraz + LOG_ROWS, max)
+    this.applyVisibility()
+    this.paintLog()
+    return true
+  },
+
   paintLog() {
     const w = this.w
     const ex = this.current()
     if (!ex) return
     this.setText(w.logTitle, ex.name)
     const lista = this.logRows()
-    lista.slice(0, LOG_ROWS).forEach((e, i) => {
+    const od = this.logFrom()
+    lista.slice(od, od + LOG_ROWS).forEach((e, i) => {
       this.setBtn(w.logRows[i], {
-        text: (i + 1) + '.   ' + this.num(e.weight) + ' ' + ex.unit + '   x ' + e.reps +
+        text: (od + i + 1) + '.  ' + this.num(e.weight) + ' ' + ex.unit + '  x ' + e.reps +
           (e.rir >= 0 ? '   RIR ' + (e.rir >= 3 ? '3+' : e.rir) : ''),
         color: FG
       })
     })
+    // Podpis mówi, ile zostało poza oknem - inaczej nic nie zdradza,
+    // że gest w dół w ogóle coś da.
     this.setText(
       w.logHint,
-      lista.length ? 'dotknij, by poprawić' : 'brak zapisanych serii'
+      lista.length === 0 ? 'brak zapisanych serii'
+        : lista.length <= LOG_ROWS ? 'dotknij, by poprawić'
+          : (od + 1) + '-' + Math.min(od + LOG_ROWS, lista.length) +
+            ' z ' + lista.length + ' · w dół po resztę'
     )
   },
 
@@ -2052,12 +2147,13 @@ Page({
    */
   openFix(i) {
     const lista = this.logRows()
-    const wpis = lista[i]
+    const wpis = lista[this.logFrom() + i]
     if (!wpis) return
     // Zapas z dziennika; -1 znaczy "nie podano" i tak też wraca na ekran.
     const zapas = (wpis.rir === undefined || wpis.rir === null) ? -1 : wpis.rir
     this.state.fix = {
-      id: wpis.id, nr: i + 1, weight: wpis.weight, reps: wpis.reps, rir: zapas,
+      id: wpis.id, nr: this.logFrom() + i + 1,
+      weight: wpis.weight, reps: wpis.reps, rir: zapas,
       exerciseId: (this.current() || {}).id
     }
     this.state.fixConfirm = false
@@ -2074,9 +2170,16 @@ Page({
     this.setText(w.fixWValue, ex.hasWeight ? this.num(fix.weight) : '-')
     this.setText(w.fixRLabel, 'Powtórzenia')
     this.setText(w.fixRValue, String(fix.reps))
-    this.setText(w.fixRirLabel, 'zapas powtórzeń')
-    // Wybrany zapas podświetlony - inaczej nie widać, co tam w ogóle stoi.
+    // Zapas napisany słowem, nie tylko podświetlony. Sam kolor przycisku
+    // nie wystarczał: cztery szare pola i jedno zielone na małej tarczy
+    // czyta się jak "wybierz", a nie jak "wtedy podałeś dwa" - a przy
+    // serii bez zapasu nie różniło się to niczym od zapasu zerowego.
     const wybrany = (fix.rir === undefined || fix.rir === null) ? -1 : fix.rir
+    this.setText(
+      w.fixRirLabel,
+      wybrany < 0 ? 'zapas: nie podano'
+        : 'zapas: ' + (wybrany >= 3 ? '3+' : wybrany)
+    )
     w.fixRirRow.forEach((btn, i) => {
       this.setBtn(btn, { normal_color: i === wybrany ? GREEN : GREY })
     })
@@ -2381,7 +2484,6 @@ Page({
 
     this.state.phase = PHASE_REST
     this.state.phaseSince = now
-    this.paintSets()
 
     // Bez podążania za telefonem. Odpowiedź niesie jego wskaźnik bieżącego
     // ćwiczenia, a ten przy ukończonym planie pokazuje ostatnie ćwiczenie -
@@ -2393,6 +2495,14 @@ Page({
     // przeskoczy ekran po domknięciu poprzedniego.
     this.state.rirFor = id
     this.remember()
+
+    // Rząd zapasu pojawia się tutaj, a nie dopiero po odpowiedzi telefonu.
+    // Widoczność zmienia wyłącznie [applyVisibility], a na tej ścieżce nikt
+    // jej nie wołał: pytanie wisiało do pierwszej odpowiedzi z Bluetootha,
+    // a bez zasięgu nie pokazywało się wcale. Malowanie dopiero po
+    // ustawieniu [rirFor], bo podpis pod licznikiem zmienia się razem z nim.
+    this.applyVisibility()
+    this.paintSets()
 
     // Domknięcie całego ćwiczenia dostaje osobny, dłuższy i zielony błysk -
     // to inny rodzaj wydarzenia niż kolejna seria i ma się tak czuć.

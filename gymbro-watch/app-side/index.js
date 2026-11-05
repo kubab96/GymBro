@@ -59,11 +59,17 @@ const handle = async (ctx, request) => {
       case 'SET':
         data = await call('/set', 'POST', request.params)
         break
+      // `request.params`, nie `params`. Goła nazwa nie istniała w tym
+      // zakresie, a moduł chodzi w trybie ścisłym, więc odwołanie do niej
+      // rzucało wyjątek - prosto w `catch` niżej. Zegarek dostawał za to
+      // „Otwórz GymBro na telefonie" i kasował polecenie z kolejki, więc
+      // podany zapas znikał bez śladu, a seria wracała z „nie podano".
+      // Tą samą drogą ginęło kasowanie serii z ekranu poprawki.
       case 'RIR':
-        data = await call('/rir', 'POST', params)
+        data = await call('/rir', 'POST', request.params)
         break
       case 'DELETE':
-        data = await call('/delete', 'POST', params)
+        data = await call('/delete', 'POST', request.params)
         break
       case 'UNDO':
         data = await call('/undo', 'POST', request.params)

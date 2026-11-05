@@ -386,6 +386,57 @@ function makePhone() {
 
 // ---- Ładowanie strony -----------------------------------------------------
 
+/**
+ * Usługa towarzysząca z `app-side/index.js`, z zaślepkami pod Zepp OS.
+ *
+ * Reszta harnessu zaczyna udawać telefon dopiero za mostem: `messageBuilder`
+ * w [loadPage] odpowiada od razu, więc ten plik nie wykonywał się nigdy.
+ * A to przez niego przechodzi każde polecenie z zegarka i to tutaj łatwo
+ * o literówkę, której nic nie widzi aż do siłowni.
+ */
+function loadSide() {
+  const file = path.join(__dirname, '..', 'app-side', 'index.js')
+  const body = fs.readFileSync(file, 'utf8')
+    .replace(/^import[\s\S]*?from '[^']+'\s*$/gm, '')
+
+  const wyslane = []
+  const fetchStub = async (options) => {
+    wyslane.push(options)
+    return { status: 200, body: JSON.stringify({ active: true }) }
+  }
+
+  let naZadanie = null
+  const builder = {
+    listen() {},
+    on(nazwa, cb) { if (nazwa === 'request') naZadanie = cb },
+    // Harness podaje ładunek już jako obiekt, więc nie ma czego rozpakowywać.
+    buf2Json(payload) { return payload }
+  }
+  const MessageBuilder = function () { return builder }
+  let service = null
+  const AppSideService = (o) => { service = o }
+
+  const names = ['MessageBuilder', 'PHONE_URL', 'TOKEN', 'AppSideService', 'fetch']
+  const values = [
+    MessageBuilder, 'http://127.0.0.1:48627', 'token-testowy', AppSideService, fetchStub
+  ]
+  // eslint-disable-next-line no-new-func
+  new Function(names.join(','), body).apply(null, values)
+  service.onInit()
+
+  return {
+    wyslane,
+    async zadaj(method, params) {
+      const odpowiedzi = []
+      await naZadanie({
+        request: { payload: { method: method, params: params } },
+        response: (r) => odpowiedzi.push(r)
+      })
+      return odpowiedzi[0]
+    }
+  }
+}
+
 function loadPage(phone) {
   const file = path.join(__dirname, '..', 'page', 'index.js')
   const source = fs.readFileSync(file, 'utf8')
@@ -1271,6 +1322,97 @@ async function main() {
   ok('wyjscie nic nie zapisalo', phone.log.length === przedWyjsciem,
     przedWyjsciem + ' -> ' + phone.log.length)
 
+  section('Dlugi dziennik przewija sie w dol')
+  // Zgloszone 02.11: lista serii byla mala i konczyla sie tam, gdzie
+  // konczyly sie wiersze. Przy osmiu seriach dwoch ostatnich nie dalo sie
+  // ani zobaczyc, ani poprawic - nie istnialy na tym ekranie.
+  phone.reset()
+  page.startUnit(0)
+  await flush(); await flush()
+  for (let i = 0; i < 7; i++) {
+    page.state.index = 0
+    await zapiszSerie(page)
+  }
+  page.state.index = 0
+  page.state.logAt = 0
+  page.state.view = VIEW.SETS
+  handlers.gesture(GESTURE_DOWN)
+  ok('dziennik ma wszystkie siedem serii', page.logRows().length === 7,
+    page.logRows().length + ' serii')
+
+  // Liczone z liczby wierszy, a nie wpisane na sztywno: ile ich jest,
+  // to decyzja o wielkosci pisma i moze sie jeszcze zmienic. Scenariusz
+  // ma pilnowac przewijania, a nie konkretnej liczby.
+  const ile = page.w.logRows.length
+  const ogon = 7 - ile
+  const okno1 = page.w.logRows.filter((r) => r.visible)
+  ok('widac pelne okno', okno1.length === ile, okno1.length + ' z ' + ile)
+  ok('numery od pierwszego', /^1\./.test(okno1[0].attrs.text), okno1[0].attrs.text)
+  ok('podpis mowi, ile zostalo',
+    page.w.logHint.attrs.text.indexOf('1-' + ile + ' z 7') === 0,
+    page.w.logHint.attrs.text)
+
+  handlers.gesture(GESTURE_DOWN)
+  ok('gest w dol zostaje w dzienniku', page.state.view === VIEW.LOG,
+    nazwa(page.state.view))
+  const okno2 = page.w.logRows.filter((r) => r.visible)
+  // Okno dosuwa sie do konca listy zamiast wyjechac poza nia: widac
+  // pelen komplet wierszy, a nie dwa wiersze i reszta pustych miejsc.
+  ok('widac ogon listy, bez dziur', okno2.length === ile, okno2.length + ' wierszy')
+  ok('i numery sie zgadzaja',
+    okno2[0].attrs.text.indexOf((ogon + 1) + '.') === 0, okno2[0].attrs.text)
+  ok('podpis tez',
+    page.w.logHint.attrs.text.indexOf((ogon + 1) + '-7 z 7') === 0,
+    page.w.logHint.attrs.text)
+  ok('ostatnia seria wreszcie widoczna',
+    okno2[ile - 1].attrs.text.indexOf('7.') === 0, okno2[ile - 1].attrs.text)
+
+  // Numer serii w poprawce musi byc prawdziwy, nie numerem wiersza:
+  // po przewinieciu pierwszy wiersz nie jest pierwsza seria.
+  const przewinieta = page.logRows()[ogon]
+  okno2[0].onClick()
+  ok('poprawka otwiera te serie, w ktora trafil palec',
+    page.state.fix.id === przewinieta.id,
+    page.state.fix.id + ' vs ' + przewinieta.id)
+  ok('i tak sie podpisuje', page.state.fix.nr === ogon + 1,
+    'Seria ' + page.state.fix.nr)
+  handlers.gesture(GESTURE_DOWN)
+
+  handlers.gesture(GESTURE_DOWN)
+  ok('na koncu listy zawija do poczatku',
+    page.w.logHint.attrs.text.indexOf('1-' + ile + ' z 7') === 0,
+    page.w.logHint.attrs.text)
+  handlers.gesture(GESTURE_UP)
+  ok('w gore nadal wychodzi z dziennika', page.state.view === VIEW.SETS,
+    nazwa(page.state.view))
+
+  section('Wiersze dziennika mieszcza sie w tarczy')
+  // Okragly ekran: wiersz na 50 i szerokosci 380 wychodzil rogami poza
+  // okrag i wygladal na przyciety, bo byl. Sprawdzamy kazdy rog.
+  const poza = page.w.logRows.filter((r) => {
+    const a = r.attrs
+    return [[a.x, a.y], [a.x + a.w, a.y], [a.x, a.y + a.h], [a.x + a.w, a.y + a.h]]
+      .some(([x, y]) => Math.hypot(x - 240, y - 240) > 240)
+  })
+  ok('zaden wiersz nie wystaje poza okrag', poza.length === 0,
+    poza.length + ' wierszy poza tarcza')
+
+  section('Ciezar i powtorzenia stoja na srodku tarczy')
+  // Blok zaczynal sie na 56 i konczyl na 316: 56 pikseli nad nim, 164 pod.
+  // Na okraglej tarczy widac to od razu, bo dol swieci pustka.
+  const blokGora = page.w.wLabel.attrs.y
+  const blokDol = page.w.rMinus.attrs.y + page.w.rMinus.attrs.h
+  ok('tyle samo miejsca nad blokiem co pod nim', blokGora === 480 - blokDol,
+    blokGora + ' nad, ' + (480 - blokDol) + ' pod')
+  // Liczba w pionie na srodku swoich przyciskow, nie dwa piksele nizej.
+  const srodek = (widget) => widget.attrs.y + widget.attrs.h / 2
+  ok('ciezar na srodku swoich przyciskow',
+    srodek(page.w.wValue) === srodek(page.w.wMinus),
+    srodek(page.w.wValue) + ' vs ' + srodek(page.w.wMinus))
+  ok('powtorzenia tak samo',
+    srodek(page.w.rValue) === srodek(page.w.rMinus),
+    srodek(page.w.rValue) + ' vs ' + srodek(page.w.rMinus))
+
   section('Nastepna jednostka po treningu')
   page.state.view = VIEW.DONE
   await page.send('FINISH')
@@ -1292,11 +1434,9 @@ async function main() {
   await zapiszSerie(page)
   page.state.index = 0
   page.state.phase = 'rest'
-  page.applyVisibility()
   ok('po serii, w przerwie, pytamy o zapas', page.askingRir() === true)
   ok('strzalki ustepuja miejsca', page.w.prev.visible === false)
   ok('cztery przyciski zapasu', page.w.rirRow.filter((b) => b.visible).length === 4)
-  page.paintSets()
   ok('podpis pyta wprost', /zosta/.test(page.w.load.attrs.text), page.w.load.attrs.text)
 
   page.w.rirRow[2].onClick()
@@ -1305,7 +1445,6 @@ async function main() {
     phone.wpisy[1] && phone.wpisy[1][0].rir === 2,
     JSON.stringify(phone.wpisy[1]))
   ok('po wyborze przestajemy pytac', page.askingRir() === false)
-  page.applyVisibility()
   ok('strzalki wracaja', page.w.prev.visible === true)
   ok('rzad zapasu znika', page.w.rirRow.every((b) => !b.visible))
 
@@ -1323,6 +1462,29 @@ async function main() {
   page.applyVisibility()
   ok('w trakcie serii nie pytamy', page.askingRir() === false)
   ok('seria bez zapasu zapisana i tak', (phone.wpisy[1] || []).length >= 1)
+
+  section('Zapas pokazuje sie bez odpowiedzi telefonu')
+  // Zgloszone po treningu 02.11: rzad zapasu nie pojawial sie po serii.
+  // Widocznosc zmieniala wylacznie odpowiedz telefonu, wiec z Bluetoothem
+  // w kieszeni przychodzila z opoznieniem, a z telefonem w szatni nie
+  // przychodzila wcale. Ten scenariusz celowo nie wola zadnego
+  // przemalowania recznie - sprawdza to, co widzi palec po odlozeniu sztangi.
+  phone.reset()
+  page.startUnit(0)
+  await flush(); await flush()
+  phone.setGlucha(true)
+  jump(2000)
+  if (page.state.phase === 'rest') page.press()
+  jump(2000)
+  page.press()
+  ok('pytamy o zapas od razu', page.askingRir() === true)
+  ok('cztery przyciski zapasu na ekranie',
+    page.w.rirRow.filter((b) => b.visible).length === 4,
+    page.w.rirRow.filter((b) => b.visible).length + ' widocznych')
+  ok('strzalki ustapily od razu', page.w.prev.visible === false)
+  ok('podpis pyta wprost, bez telefonu', /zosta/.test(page.w.load.attrs.text),
+    page.w.load.attrs.text)
+  phone.setGlucha(false)
 
   section('Bledy zgloszone po treningu 21.10')
   phone.reset()
@@ -1744,11 +1906,19 @@ async function main() {
   ok('wszystkie widoczne', page.w.fixRirRow.every((b) => b.visible))
   ok('ekran poprawki czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
 
+  // Przy serii bez zapasu podpis mowi to wprost. Sam kolor przyciskow
+  // nie odroznial "nie podano" od zapasu zerowego - cztery szare pola
+  // wygladaja tak samo, gdy nie wybrano nic i gdy wybrano zero.
+  ok('podpis mowi, ze zapasu nie podano',
+    /nie podano/.test(page.w.fixRirLabel.attrs.text), page.w.fixRirLabel.attrs.text)
+
   // Jedno nacisniecie ustawia, drugie to samo - zdejmuje.
   page.w.fixRirRow[1].onClick()
   ok('nacisniecie ustawia zapas', page.state.fix.rir === 1, String(page.state.fix.rir))
   ok('wybrany jest podswietlony', page.w.fixRirRow[1].props.normal_color !==
     page.w.fixRirRow[0].props.normal_color)
+  ok('i podpis podaje liczbe', /zapas: 1/.test(page.w.fixRirLabel.attrs.text),
+    page.w.fixRirLabel.attrs.text)
   page.w.fixRirRow[1].onClick()
   ok('to samo nacisniecie zdejmuje zapas', page.state.fix.rir === -1,
     String(page.state.fix.rir))
@@ -2196,6 +2366,13 @@ async function main() {
   ok('trening stoi przed zgasnieciem', page.state.view === VIEW.SETS,
     nazwa(page.state.view))
 
+  // Wspolczynniki spalania przychodza wylacznie z telefonu, a ten milczy.
+  // Zapisane raz, musza przezyc zgasniecie ekranu - inaczej po pierwszym
+  // opuszczeniu nadgarstka licznik kalorii staje na reszte treningu.
+  page.state.burn = { k0: -6.1, k1: 0.116 }
+  page.state.burnKcal = 42
+  page.remember()
+
   // Stan zapisuje sie z opoznieniem - przed zgasnieciem musi zdazyc.
   await zapis()
   // Zgasniecie ekranu: aplikacja startuje od zera, pamiec trwala zostaje.
@@ -2218,6 +2395,16 @@ async function main() {
     JSON.stringify(page2.state.pending))
   ok('kolejka przezyla restart', (page2.state.outbox || []).length >= 2,
     JSON.stringify((page2.state.outbox || []).map((x) => x.m)))
+  ok('spalone kalorie przezyly restart', page2.state.burnKcal === 42,
+    String(page2.state.burnKcal))
+  ok('i wspolczynniki, z ktorych rosna',
+    !!(page2.state.burn && page2.state.burn.k1), JSON.stringify(page2.state.burn))
+  const kcalPrzed = page2.state.burnKcal
+  page2.noteHeart(140)
+  jump(60000)
+  page2.noteHeart(140)
+  ok('wiec licznik idzie dalej, bez telefonu', page2.state.burnKcal > kcalPrzed,
+    kcalPrzed.toFixed(1) + ' -> ' + page2.state.burnKcal.toFixed(1))
 
   section('Pierwsze otwarcie bez telefonu')
   // Z zapamietanym planem da sie zaczac trening nawet wtedy, gdy telefon
@@ -2294,6 +2481,34 @@ async function main() {
   ok('na ekranie wyboru zegarek sam dopytuje o liste', handlers.zadania > 0,
     handlers.zadania + ' zapytan')
   await osusz()
+
+  section('Most do telefonu przekazuje parametry')
+  // Zgloszone 02.11: podany zapas wracal jako "nie podano". Dwa polecenia
+  // siegaly w usludze towarzyszacej po gola nazwe `params` zamiast
+  // `request.params`. Modul chodzi w trybie scislym, wiec bylo to odwolanie
+  // do nieistniejacej zmiennej - wyjatek leciał prosto w `catch`, zegarek
+  // dostawal "Otworz GymBro na telefonie" i kasowal polecenie z kolejki.
+  // Reszta scenariuszy tego nie lapie, bo udaje telefon od razu za mostem.
+  const most = loadSide()
+  const polecenia = [
+    ['SET', { exerciseId: 1, weight: 60, reps: 8, cid: 'c1' }],
+    ['RIR', { exerciseId: 1, rir: 2, cid: 'c2' }],
+    ['DELETE', { setId: 7, cid: 'c3' }],
+    ['UNDO', { exerciseId: 1, cid: 'c4' }],
+    ['EDIT', { setId: 7, reps: 9, cid: 'c5' }],
+    ['WEIGHT', { exerciseId: 1, from: 60, dir: 1 }],
+    ['START', { planId: 1, localId: 'w1', cid: 'c6' }]
+  ]
+  for (let i = 0; i < polecenia.length; i++) {
+    const metoda = polecenia[i][0]
+    const parametry = polecenia[i][1]
+    most.wyslane.length = 0
+    const odpowiedz = await most.zadaj(metoda, parametry)
+    const zadanie = most.wyslane[0]
+    ok(metoda + ': parametry docieraja do telefonu',
+      !!zadanie && zadanie.body === JSON.stringify(parametry),
+      JSON.stringify((odpowiedz || {}).data) + ' / ' + (zadanie && zadanie.body))
+  }
 
   console.log('\n' + (failures === 0
     ? 'Wszystko przeszlo: ' + checks + ' sprawdzen.'
