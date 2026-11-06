@@ -68,7 +68,7 @@ W Git Bashu ścieżki androidowe wymagają `MSYS_NO_PATHCONV=1`, inaczej bash pr
 
 Serwer adb też dziedziczy katalog roboczy i trzyma folder - `adb kill-server`, gdy przeszkadza.
 
-`GymBro/tools/bench.sh` mierzy płynność przez `dumpsys gfxinfo`. Uwaga: ma zaszyte pięć pozycji zakładek, a aplikacja ma ich cztery - wymaga poprawki przed użyciem. Płynność oceniaj na wariancie release; debug Compose jest kilkukrotnie wolniejszy i pomiar z niego nic nie znaczy.
+`GymBro/tools/bench.sh` mierzy płynność przez `dumpsys gfxinfo`. Ma zaszyte pięć pozycji zakładek (`XS="98 319 540 761 980"`) i od czasu dołożenia Jedzenia zgadza się to z aplikacją - wcześniej wymagał poprawki. Płynność oceniaj na wariancie release; debug Compose jest kilkukrotnie wolniejszy i pomiar z niego nic nie znaczy.
 
 ## Architektura
 
@@ -119,15 +119,15 @@ Zasada naczelna doradcy: koszt milczenia jest wyższy niż koszt zbędnej propoz
 
 ### Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 20. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
+`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 23. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
 
-Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Trzynaście tabel; `session` / `set_entry` / `plan_item` to rdzeń.
+Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia jeden tabel; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
 
 Zapisując ciężary, przepuszczaj je przez `data/Kg.kt` (`roundKg`). Arytmetyka zmiennoprzecinkowa wpisywała do bazy wartości w rodzaju `81.39999999999999`.
 
 ### Zakładki
 
-Cztery: Trening, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`).
+Pięć: Trening, Jedzenie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`).
 
 Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar zostaje, bo mierzenie rozbudowanego ekranu od nowa to kilkadziesiąt milisekund zwiechy przy każdym powrocie. Głuchota jest konieczna, bo ukryty ekran nadal leży w drzewie.
 
