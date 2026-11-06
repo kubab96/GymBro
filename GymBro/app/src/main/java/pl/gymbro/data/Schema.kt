@@ -39,7 +39,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 21 - zestaw rozszerzony o pieczywo z wlasnego wypieku
          * 22 - pieczywo Biedronki z oficjalnych wartosci
          */
-        const val VERSION = 22
+        const val VERSION = 23
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -742,6 +742,18 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         // konwencje. Siec publikuje je dla calego pieczywa razem z gramatura
         // sztuki, w zwyklym HTML-u.
         if (oldVersion < 22) {
+            FoodSeed.populate(db)
+        }
+
+        // Porcje dla calego zestawu: kromka, lyzka, sztuka, garsc.
+        //
+        // Mialo je 248 pozycji z 311. Reszta wymagala wagi kuchennej przy
+        // kazdym wpisie, co jest dokladnie tym, czego porcje maja oszczedzic.
+        //
+        // Ta galaz jest potrzebna, bo populate pomija pozycje, ktore juz sa
+        // w bazie - a wszystkie 311 juz tam byly. Bez niej nowe porcje
+        // zostalyby w kodzie i nigdy nie dotarly na telefon.
+        if (oldVersion < 23) {
             FoodSeed.populate(db)
         }
     }

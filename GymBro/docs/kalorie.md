@@ -647,6 +647,36 @@ sprawdzać.
 Po podmianie pliku **podbij `ShopPack.VERSION`** - inaczej aplikacja uzna, że
 paczka już jest wczytana.
 
+### Skąd się biorą wagi porcji
+
+Porcja - kromka, łyżka, sztuka, garść - jest po to, żeby wpis nie wymagał
+wagi kuchennej. **Ma ją każda z 311 pozycji zestawu podstawowego**, i pilnuje
+tego test: nowa pozycja bez porcji się nie przeciśnie. Wcześniej test
+sprawdzał ręcznie wybraną listę jedenastu produktów „których nikt nie waży" -
+to było obejście, nie reguła, bo porcje miało wtedy 248 pozycji z 311.
+
+Liczby pochodzą z trzech miejsc i **różnią się pewnością**:
+
+| | skąd | przykład |
+|---|---|---|
+| 1 | gramatura podana przez sprzedawcę | pieczywo Biedronki, `package_g` z kart Frisco |
+| 2 | miara domowa | łyżka 15 g, łyżeczka 5 g, szklanka 250 ml, garść 30 g |
+| 3 | typowa masa sztuki | jabłko 180 g, jajko 55 g, plaster boczku 20 g |
+
+**Dwa ostatnie wiersze to konwencje, nie pomiary.** Są okrągłe i mieszczą się
+w rzeczywistym zakresie, ale konkretna śliwka waży tyle, ile waży. Gdy
+pojawia się liczba z wiersza pierwszego, zastępuje konwencję - dlatego
+produkt z paczki sklepowej, który ma `package_g`, dostaje „opakowanie"
+z prawdziwą gramaturą, a nie zgadywaną sztukę.
+
+Granica rozsądku, też w teście: porcja większa od zera i nie większa niż
+kilogram. Główka kalafiora (700 g) jest przy tej granicy i jest prawdziwa.
+
+`ilewazy.pl` ma te wagi zmierzone i sfotografowane - to jego cała wartość -
+ale regulamin zabrania kopiowania, więc służy wyłącznie do zajrzenia, gdy
+konwencja wydaje się podejrzana. Tak właśnie poprawiono świeżą śliwkę: miała
+w pierwszym podejściu 35 g, a waży 50-70.
+
 ### Zanim uznasz, że produktu nie ma
 
 Pięć razy pod rząd wyglądało na brak danych, a nie było nim ani razu.

@@ -212,17 +212,16 @@ class FoodSeedTest {
     }
 
     @Test
-    fun `produkty jedzone na wage maja porcje`() {
+    fun `kazda pozycja zestawu ma porcje`() {
         // Kromka, lyzka, sztuka - bez nich kazdy wpis wymaga wagi kuchennej.
-        // Lista jest wyborem: to produkty, ktorych nikt nie wazy.
-        val wymagaja = listOf(
-            "chleb zytni razowy", "jajo kurze cale", "maslo", "oliwa z oliwek",
-            "mleko 2", "banan", "jablko", "platki owsiane", "ryz bialy suchy",
-            "makaron pszenny suchy", "odzywka bialkowa wpc"
-        )
-        val bez = FoodSeed.ITEMS
-            .filter { searchKey(it.name) in wymagaja && it.portions.isEmpty() }
-            .map { it.name }
-        assertTrue(bez.joinToString(), bez.isEmpty())
+        //
+        // Wczesniej ten test sprawdzal recznie wybrana liste jedenastu
+        // produktow, "ktorych nikt nie wazy". To bylo obejscie, nie regula:
+        // porcje mialo 248 pozycji z 311, a wyboru bronilo tylko to, ze
+        // reszty nikt jeszcze nie uzupelnil. Teraz maja wszystkie, wiec
+        // regula brzmi tak, jak powinna byla od poczatku - i nowa pozycja
+        // bez porcji zatrzyma sie tutaj, zamiast trafic do zestawu.
+        val bez = FoodSeed.ITEMS.filter { it.portions.isEmpty() }.map { it.name }
+        assertTrue("bez porcji: ${bez.joinToString()}", bez.isEmpty())
     }
 }

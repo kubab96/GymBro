@@ -80,21 +80,21 @@ object FoodSeed {
             "Pierś z kurczaka, surowa", 110.0, 23.0, 0.0, 1.5,
             portions = listOf(p("sztuka", 180.0))
         ),
-        Item("Udko z kurczaka bez skóry", 120.0, 19.0, 0.0, 4.5),
-        Item("Pierś z indyka, surowa", 105.0, 22.0, 0.0, 1.0),
-        Item("Wołowina, ligawa", 130.0, 21.0, 0.0, 4.5),
-        Item("Wołowina mielona 10%", 180.0, 19.0, 0.0, 11.0),
-        Item("Polędwica wołowa", 130.0, 21.0, 0.0, 5.0),
-        Item("Schab środkowy", 140.0, 21.0, 0.0, 6.0),
-        Item("Karkówka", 220.0, 17.0, 0.0, 17.0),
-        Item("Boczek wędzony", 420.0, 13.0, 0.0, 40.0),
-        Item("Kiełbasa śląska", 300.0, 13.0, 1.0, 27.0),
-        Item("Parówki drobiowe", 240.0, 11.0, 2.0, 20.0),
+        Item("Udko z kurczaka bez skóry", 120.0, 19.0, 0.0, 4.5, portions = listOf(p("sztuka", 110.0))),
+        Item("Pierś z indyka, surowa", 105.0, 22.0, 0.0, 1.0, portions = listOf(p("porcja", 150.0))),
+        Item("Wołowina, ligawa", 130.0, 21.0, 0.0, 4.5, portions = listOf(p("porcja", 150.0))),
+        Item("Wołowina mielona 10%", 180.0, 19.0, 0.0, 11.0, portions = listOf(p("porcja", 150.0))),
+        Item("Polędwica wołowa", 130.0, 21.0, 0.0, 5.0, portions = listOf(p("porcja", 150.0))),
+        Item("Schab środkowy", 140.0, 21.0, 0.0, 6.0, portions = listOf(p("plaster", 120.0))),
+        Item("Karkówka", 220.0, 17.0, 0.0, 17.0, portions = listOf(p("plaster", 150.0))),
+        Item("Boczek wędzony", 420.0, 13.0, 0.0, 40.0, portions = listOf(p("plaster", 20.0))),
+        Item("Kiełbasa śląska", 300.0, 13.0, 1.0, 27.0, portions = listOf(p("sztuka", 110.0))),
+        Item("Parówki drobiowe", 240.0, 11.0, 2.0, 20.0, portions = listOf(p("sztuka", 40.0))),
         Item(
             "Szynka z indyka", 100.0, 18.0, 1.5, 2.5,
             portions = listOf(p("plaster", 20.0))
         ),
-        Item("Wątróbka drobiowa", 130.0, 20.0, 1.0, 5.0),
+        Item("Wątróbka drobiowa", 130.0, 20.0, 1.0, 5.0, portions = listOf(p("porcja", 100.0))),
 
         // ---- Jaja ----------------------------------------------------------
         Item(
@@ -105,17 +105,17 @@ object FoodSeed {
         Item("Żółtko jaja", 320.0, 16.0, 0.3, 28.0, portions = listOf(p("sztuka", 18.0))),
 
         // ---- Ryby i owoce morza --------------------------------------------
-        Item("Łosoś świeży", 200.0, 20.0, 0.0, 13.0),
-        Item("Łosoś wędzony", 180.0, 22.0, 0.0, 10.0),
-        Item("Dorsz", 80.0, 18.0, 0.0, 0.7),
-        Item("Mintaj", 75.0, 17.0, 0.0, 0.6),
+        Item("Łosoś świeży", 200.0, 20.0, 0.0, 13.0, portions = listOf(p("porcja", 150.0))),
+        Item("Łosoś wędzony", 180.0, 22.0, 0.0, 10.0, portions = listOf(p("plaster", 20.0))),
+        Item("Dorsz", 80.0, 18.0, 0.0, 0.7, portions = listOf(p("porcja", 150.0))),
+        Item("Mintaj", 75.0, 17.0, 0.0, 0.6, portions = listOf(p("porcja", 150.0))),
         Item(
             "Tuńczyk w sosie własnym", 100.0, 23.0, 0.0, 1.0,
             portions = listOf(p("puszka odsączona", 120.0))
         ),
-        Item("Makrela wędzona", 300.0, 20.0, 0.0, 24.0),
-        Item("Śledź w oleju", 280.0, 16.0, 0.0, 24.0),
-        Item("Krewetki", 85.0, 18.0, 0.0, 1.0),
+        Item("Makrela wędzona", 300.0, 20.0, 0.0, 24.0, portions = listOf(p("filet", 120.0))),
+        Item("Śledź w oleju", 280.0, 16.0, 0.0, 24.0, portions = listOf(p("płat", 50.0))),
+        Item("Krewetki", 85.0, 18.0, 0.0, 1.0, portions = listOf(p("porcja", 100.0))),
 
         // ---- Nabiał --------------------------------------------------------
         Item("Mleko 0,5%", 37.0, 3.4, 4.9, 0.5, portions = listOf(p("szklanka", 250.0))),
@@ -135,12 +135,12 @@ object FoodSeed {
         ),
         Item("Twaróg półtłusty", 130.0, 17.0, 3.0, 5.0, portions = listOf(p("kostka", 250.0))),
         Item("Serek wiejski", 100.0, 12.0, 3.0, 4.5, portions = listOf(p("opakowanie", 200.0))),
-        Item("Serek homogenizowany naturalny", 130.0, 9.0, 8.0, 7.0),
+        Item("Serek homogenizowany naturalny", 130.0, 9.0, 8.0, 7.0, portions = listOf(p("kubek", 150.0))),
         Item("Serek kanapkowy", 230.0, 6.0, 4.0, 21.0, portions = listOf(p("łyżka", 15.0))),
         Item("Ser gouda", 350.0, 25.0, 0.0, 27.0, portions = listOf(p("plaster", 20.0))),
         Item("Mozzarella", 250.0, 18.0, 2.0, 19.0, portions = listOf(p("kulka", 125.0))),
         Item("Parmezan", 400.0, 33.0, 0.0, 29.0, portions = listOf(p("łyżka startego", 8.0))),
-        Item("Feta", 260.0, 14.0, 1.0, 21.0),
+        Item("Feta", 260.0, 14.0, 1.0, 21.0, portions = listOf(p("porcja", 50.0), p("kostka", 200.0))),
         Item("Śmietana 18%", 180.0, 2.5, 3.5, 18.0, portions = listOf(p("łyżka", 15.0))),
         Item("Śmietana 30%", 290.0, 2.3, 3.0, 30.0, portions = listOf(p("łyżka", 15.0))),
         Item(
@@ -177,14 +177,17 @@ object FoodSeed {
             "Tortilla pszenna", 310.0, 8.0, 50.0, 8.0, fiberG = 3.0,
             portions = listOf(p("sztuka", 60.0))
         ),
-        Item("Bułka tarta", 360.0, 11.0, 70.0, 3.0, fiberG = 4.0),
+        Item("Bułka tarta", 360.0, 11.0, 70.0, 3.0, fiberG = 4.0, portions = listOf(p("łyżka", 15.0))),
 
         // ---- Zboża, kasze, makarony ----------------------------------------
         Item(
             "Płatki owsiane", 370.0, 13.0, 60.0, 7.0, fiberG = 10.0,
             portions = listOf(p("porcja", 50.0), p("łyżka", 10.0))
         ),
-        Item("Płatki owsiane górskie", 360.0, 12.0, 62.0, 6.0, fiberG = 9.0),
+        Item(
+            "Płatki owsiane górskie", 360.0, 12.0, 62.0, 6.0, fiberG = 9.0,
+            portions = listOf(p("łyżka", 10.0), p("porcja", 50.0))
+        ),
         Item(
             "Musli bez cukru", 360.0, 10.0, 60.0, 8.0, fiberG = 9.0,
             portions = listOf(p("porcja", 50.0))
@@ -213,7 +216,7 @@ object FoodSeed {
             "Kasza jaglana, sucha", 350.0, 10.0, 70.0, 3.0, fiberG = 3.0,
             portions = listOf(p("porcja", 60.0))
         ),
-        Item("Kasza jęczmienna, sucha", 340.0, 9.0, 70.0, 2.0, fiberG = 6.0),
+        Item("Kasza jęczmienna, sucha", 340.0, 9.0, 70.0, 2.0, fiberG = 6.0, portions = listOf(p("porcja", 60.0))),
         Item(
             "Makaron pszenny, suchy", 360.0, 12.0, 71.0, 1.5, fiberG = 3.0,
             portions = listOf(p("porcja", 80.0))
@@ -222,35 +225,59 @@ object FoodSeed {
             "Makaron pełnoziarnisty, suchy", 340.0, 13.0, 64.0, 2.5, fiberG = 8.0,
             portions = listOf(p("porcja", 80.0))
         ),
-        Item("Kuskus, suchy", 360.0, 12.0, 72.0, 1.5, fiberG = 5.0),
+        Item("Kuskus, suchy", 360.0, 12.0, 72.0, 1.5, fiberG = 5.0, portions = listOf(p("porcja", 60.0))),
         Item("Mąka pszenna", 350.0, 10.0, 72.0, 1.0, fiberG = 3.0, portions = listOf(p("łyżka", 10.0))),
-        Item("Mąka żytnia", 330.0, 8.0, 70.0, 1.5, fiberG = 6.0),
+        Item(
+            "Mąka żytnia", 330.0, 8.0, 70.0, 1.5, fiberG = 6.0,
+            portions = listOf(p("łyżka", 10.0), p("szklanka", 130.0))
+        ),
 
         // ---- Warzywa -------------------------------------------------------
         Item(
             "Ziemniaki", 75.0, 2.0, 15.0, 0.1, fiberG = 1.5,
             portions = listOf(p("sztuka", 100.0))
         ),
-        Item("Bataty", 90.0, 1.6, 17.0, 0.1, fiberG = 3.0),
+        Item("Bataty", 90.0, 1.6, 17.0, 0.1, fiberG = 3.0, portions = listOf(p("sztuka", 200.0))),
         Item("Pomidor", 18.0, 0.9, 2.6, 0.2, fiberG = 1.2, portions = listOf(p("sztuka", 120.0))),
         Item("Ogórek świeży", 12.0, 0.7, 1.8, 0.1, fiberG = 0.7, portions = listOf(p("sztuka", 250.0))),
         Item("Papryka czerwona", 30.0, 1.0, 4.6, 0.3, fiberG = 2.0, portions = listOf(p("sztuka", 150.0))),
         Item("Cebula", 40.0, 1.2, 6.3, 0.1, fiberG = 1.7, portions = listOf(p("sztuka", 100.0))),
         Item("Marchew", 35.0, 0.9, 6.0, 0.2, fiberG = 2.8, portions = listOf(p("sztuka", 80.0))),
-        Item("Brokuł", 34.0, 2.8, 2.5, 0.4, fiberG = 2.6),
-        Item("Kalafior", 25.0, 1.9, 2.3, 0.3, fiberG = 2.0),
-        Item("Kapusta biała", 25.0, 1.3, 3.4, 0.1, fiberG = 2.5),
-        Item("Kapusta kiszona", 20.0, 1.0, 1.2, 0.1, fiberG = 2.0),
-        Item("Szpinak", 23.0, 2.9, 1.4, 0.4, fiberG = 2.2),
-        Item("Sałata lodowa", 15.0, 1.4, 1.5, 0.2, fiberG = 1.2),
-        Item("Cukinia", 17.0, 1.2, 2.1, 0.3, fiberG = 1.0),
-        Item("Buraki", 43.0, 1.6, 8.0, 0.2, fiberG = 2.8),
-        Item("Pieczarki", 22.0, 3.1, 1.0, 0.3, fiberG = 1.0),
-        Item("Fasolka szparagowa", 31.0, 1.8, 4.0, 0.2, fiberG = 3.0),
-        Item("Groszek zielony", 80.0, 5.0, 11.0, 0.4, fiberG = 5.0),
-        Item("Kukurydza konserwowa", 85.0, 3.0, 14.0, 1.2, fiberG = 3.0),
-        Item("Ogórek kwaszony", 12.0, 0.6, 1.5, 0.1, fiberG = 0.8),
-        Item("Pomidory z puszki", 25.0, 1.2, 3.5, 0.2, fiberG = 1.2),
+        Item(
+            "Brokuł", 34.0, 2.8, 2.5, 0.4, fiberG = 2.6,
+            portions = listOf(p("różyczka", 30.0), p("sztuka", 500.0))
+        ),
+        Item(
+            "Kalafior", 25.0, 1.9, 2.3, 0.3, fiberG = 2.0,
+            portions = listOf(p("różyczka", 30.0), p("sztuka", 700.0))
+        ),
+        Item("Kapusta biała", 25.0, 1.3, 3.4, 0.1, fiberG = 2.5, portions = listOf(p("porcja", 100.0))),
+        Item(
+            "Kapusta kiszona", 20.0, 1.0, 1.2, 0.1, fiberG = 2.0,
+            portions = listOf(p("łyżka", 25.0), p("porcja", 100.0))
+        ),
+        Item("Szpinak", 23.0, 2.9, 1.4, 0.4, fiberG = 2.2, portions = listOf(p("garść", 30.0))),
+        Item("Sałata lodowa", 15.0, 1.4, 1.5, 0.2, fiberG = 1.2, portions = listOf(p("liść", 15.0))),
+        Item("Cukinia", 17.0, 1.2, 2.1, 0.3, fiberG = 1.0, portions = listOf(p("sztuka", 300.0))),
+        Item("Buraki", 43.0, 1.6, 8.0, 0.2, fiberG = 2.8, portions = listOf(p("sztuka", 150.0))),
+        Item(
+            "Pieczarki", 22.0, 3.1, 1.0, 0.3, fiberG = 1.0,
+            portions = listOf(p("sztuka", 18.0), p("garść", 80.0))
+        ),
+        Item("Fasolka szparagowa", 31.0, 1.8, 4.0, 0.2, fiberG = 3.0, portions = listOf(p("porcja", 100.0))),
+        Item(
+            "Groszek zielony", 80.0, 5.0, 11.0, 0.4, fiberG = 5.0,
+            portions = listOf(p("łyżka", 15.0), p("porcja", 80.0))
+        ),
+        Item(
+            "Kukurydza konserwowa", 85.0, 3.0, 14.0, 1.2, fiberG = 3.0,
+            portions = listOf(p("łyżka", 20.0), p("puszka", 140.0))
+        ),
+        Item("Ogórek kwaszony", 12.0, 0.6, 1.5, 0.1, fiberG = 0.8, portions = listOf(p("sztuka", 60.0))),
+        Item(
+            "Pomidory z puszki", 25.0, 1.2, 3.5, 0.2, fiberG = 1.2,
+            portions = listOf(p("łyżka", 30.0), p("puszka", 400.0))
+        ),
         // Awokado to podręcznikowy przykład pomylenia konwencji: po amerykańsku
         // ma 9 g węglowodanów, po europejsku 1 g, bo pozostałe 7 to błonnik.
         Item("Awokado", 160.0, 2.0, 1.0, 15.0, fiberG = 7.0, portions = listOf(p("sztuka", 150.0))),
@@ -259,20 +286,29 @@ object FoodSeed {
         Item("Banan", 90.0, 1.1, 20.0, 0.3, fiberG = 2.6, portions = listOf(p("sztuka", 120.0))),
         Item("Jabłko", 52.0, 0.3, 12.0, 0.2, fiberG = 2.4, portions = listOf(p("sztuka", 180.0))),
         Item("Gruszka", 57.0, 0.4, 12.0, 0.1, fiberG = 3.0, portions = listOf(p("sztuka", 170.0))),
-        Item("Truskawki", 32.0, 0.7, 6.0, 0.3, fiberG = 2.0),
-        Item("Maliny", 52.0, 1.2, 5.0, 0.7, fiberG = 6.5),
-        Item("Borówki", 57.0, 0.7, 12.0, 0.3, fiberG = 2.4),
-        Item("Winogrona", 70.0, 0.7, 17.0, 0.2, fiberG = 0.9),
+        Item(
+            "Truskawki", 32.0, 0.7, 6.0, 0.3, fiberG = 2.0,
+            portions = listOf(p("sztuka", 14.0), p("garść", 100.0))
+        ),
+        Item("Maliny", 52.0, 1.2, 5.0, 0.7, fiberG = 6.5, portions = listOf(p("garść", 60.0))),
+        Item("Borówki", 57.0, 0.7, 12.0, 0.3, fiberG = 2.4, portions = listOf(p("garść", 60.0))),
+        Item(
+            "Winogrona", 70.0, 0.7, 17.0, 0.2, fiberG = 0.9,
+            portions = listOf(p("sztuka", 5.0), p("garść", 80.0))
+        ),
         Item("Pomarańcza", 47.0, 0.9, 9.0, 0.1, fiberG = 2.4, portions = listOf(p("sztuka", 180.0))),
         Item("Mandarynka", 53.0, 0.8, 11.0, 0.3, fiberG = 1.8, portions = listOf(p("sztuka", 80.0))),
-        Item("Arbuz", 30.0, 0.6, 7.5, 0.2, fiberG = 0.4),
-        Item("Ananas", 50.0, 0.5, 12.0, 0.1, fiberG = 1.4),
+        Item("Arbuz", 30.0, 0.6, 7.5, 0.2, fiberG = 0.4, portions = listOf(p("plaster", 300.0))),
+        Item("Ananas", 50.0, 0.5, 12.0, 0.1, fiberG = 1.4, portions = listOf(p("plaster", 80.0))),
         Item("Kiwi", 61.0, 1.1, 11.0, 0.5, fiberG = 3.0, portions = listOf(p("sztuka", 75.0))),
-        Item("Brzoskwinia", 39.0, 0.9, 8.0, 0.2, fiberG = 1.5),
-        Item("Śliwki", 46.0, 0.7, 10.0, 0.3, fiberG = 1.4),
+        Item("Brzoskwinia", 39.0, 0.9, 8.0, 0.2, fiberG = 1.5, portions = listOf(p("sztuka", 150.0))),
+        Item("Śliwki", 46.0, 0.7, 10.0, 0.3, fiberG = 1.4, portions = listOf(p("sztuka", 55.0))),
         Item("Rodzynki", 300.0, 3.0, 75.0, 0.5, fiberG = 4.0, portions = listOf(p("łyżka", 15.0))),
         Item("Daktyle suszone", 280.0, 2.5, 68.0, 0.4, fiberG = 8.0, portions = listOf(p("sztuka", 8.0))),
-        Item("Morele suszone", 240.0, 3.4, 53.0, 0.5, fiberG = 7.0),
+        Item(
+            "Morele suszone", 240.0, 3.4, 53.0, 0.5, fiberG = 7.0,
+            portions = listOf(p("sztuka", 6.0), p("garść", 40.0))
+        ),
 
         // ---- Orzechy i nasiona ---------------------------------------------
         Item("Orzechy włoskie", 650.0, 15.0, 7.0, 65.0, fiberG = 7.0, portions = listOf(p("garść", 30.0))),
@@ -287,7 +323,7 @@ object FoodSeed {
         Item("Nasiona chia", 480.0, 17.0, 8.0, 31.0, fiberG = 34.0, portions = listOf(p("łyżka", 12.0))),
         Item("Pestki dyni", 560.0, 30.0, 11.0, 49.0, fiberG = 6.0, portions = listOf(p("garść", 30.0))),
         Item("Słonecznik", 580.0, 21.0, 11.0, 51.0, fiberG = 9.0, portions = listOf(p("garść", 30.0))),
-        Item("Wiórki kokosowe", 600.0, 7.0, 7.0, 62.0, fiberG = 16.0),
+        Item("Wiórki kokosowe", 600.0, 7.0, 7.0, 62.0, fiberG = 16.0, portions = listOf(p("łyżka", 8.0))),
 
         // ---- Tłuszcze ------------------------------------------------------
         Item(
@@ -303,7 +339,10 @@ object FoodSeed {
             "Soczewica czerwona, sucha", 340.0, 24.0, 50.0, 1.5, fiberG = 10.0,
             portions = listOf(p("porcja", 60.0))
         ),
-        Item("Ciecierzyca, sucha", 360.0, 19.0, 45.0, 6.0, fiberG = 15.0),
+        Item(
+            "Ciecierzyca, sucha", 360.0, 19.0, 45.0, 6.0, fiberG = 15.0,
+            portions = listOf(p("porcja", 60.0), p("szklanka", 200.0))
+        ),
         Item(
             "Ciecierzyca z puszki", 120.0, 7.0, 14.0, 2.5, fiberG = 6.0,
             portions = listOf(p("puszka odsączona", 240.0))
@@ -312,8 +351,14 @@ object FoodSeed {
             "Fasola czerwona z puszki", 100.0, 7.0, 11.0, 0.5, fiberG = 6.0,
             portions = listOf(p("puszka odsączona", 240.0))
         ),
-        Item("Fasola biała, sucha", 330.0, 21.0, 46.0, 1.5, fiberG = 15.0),
-        Item("Tofu naturalne", 120.0, 13.0, 2.0, 7.0, fiberG = 1.0),
+        Item(
+            "Fasola biała, sucha", 330.0, 21.0, 46.0, 1.5, fiberG = 15.0,
+            portions = listOf(p("porcja", 60.0), p("szklanka", 190.0))
+        ),
+        Item(
+            "Tofu naturalne", 120.0, 13.0, 2.0, 7.0, fiberG = 1.0,
+            portions = listOf(p("kostka", 180.0), p("porcja", 100.0))
+        ),
         Item("Hummus", 230.0, 7.0, 15.0, 16.0, fiberG = 5.0, portions = listOf(p("łyżka", 25.0))),
 
         // ---- Słodkie i dodatki ---------------------------------------------
@@ -331,9 +376,12 @@ object FoodSeed {
             "Dżem niskosłodzony", 150.0, 0.4, 36.0, 0.1, fiberG = 1.0,
             portions = listOf(p("łyżeczka", 10.0))
         ),
-        Item("Lody waniliowe", 200.0, 3.5, 24.0, 10.0),
-        Item("Ciastka kruche", 470.0, 6.0, 65.0, 20.0, fiberG = 2.0),
-        Item("Chipsy ziemniaczane", 530.0, 6.0, 52.0, 33.0, fiberG = 4.0),
+        Item("Lody waniliowe", 200.0, 3.5, 24.0, 10.0, portions = listOf(p("gałka", 50.0))),
+        Item("Ciastka kruche", 470.0, 6.0, 65.0, 20.0, fiberG = 2.0, portions = listOf(p("sztuka", 12.0))),
+        Item(
+            "Chipsy ziemniaczane", 530.0, 6.0, 52.0, 33.0, fiberG = 4.0,
+            portions = listOf(p("garść", 25.0), p("paczka", 130.0))
+        ),
         Item("Ketchup", 100.0, 1.2, 23.0, 0.2, fiberG = 1.0, portions = listOf(p("łyżka", 15.0))),
         Item("Musztarda", 80.0, 5.0, 6.0, 4.0, portions = listOf(p("łyżeczka", 8.0))),
         Item("Sos sojowy", 60.0, 6.0, 6.0, 0.5, portions = listOf(p("łyżka", 15.0))),
@@ -343,8 +391,11 @@ object FoodSeed {
             "Odżywka białkowa WPC", 390.0, 78.0, 6.0, 6.0,
             portions = listOf(p("miarka", 30.0))
         ),
-        Item("Żelatyna", 340.0, 85.0, 0.0, 0.0),
-        Item("Drożdże piekarskie", 100.0, 12.0, 8.0, 1.5, fiberG = 2.0),
+        Item("Żelatyna", 340.0, 85.0, 0.0, 0.0, portions = listOf(p("łyżeczka", 3.0), p("saszetka", 10.0))),
+        Item(
+            "Drożdże piekarskie", 100.0, 12.0, 8.0, 1.5, fiberG = 2.0,
+            portions = listOf(p("kostka", 100.0), p("łyżeczka", 5.0))
+        ),
 
         // ---- Napoje --------------------------------------------------------
         Item("Kawa czarna bez cukru", 2.0, 0.1, 0.0, 0.0, portions = listOf(p("kubek", 250.0))),
@@ -426,8 +477,11 @@ object FoodSeed {
             "Kasza jaglana, ugotowana", 115.0, 3.5, 23.0, 1.0, fiberG = 1.0,
             portions = listOf(p("porcja", 150.0))
         ),
-        Item("Soczewica, ugotowana", 115.0, 9.0, 15.0, 0.4, fiberG = 4.0),
-        Item("Ciecierzyca, ugotowana", 140.0, 8.0, 18.0, 2.5, fiberG = 6.0),
+        Item("Soczewica, ugotowana", 115.0, 9.0, 15.0, 0.4, fiberG = 4.0, portions = listOf(p("porcja", 150.0))),
+        Item(
+            "Ciecierzyca, ugotowana", 140.0, 8.0, 18.0, 2.5, fiberG = 6.0,
+            portions = listOf(p("łyżka", 30.0), p("porcja", 150.0))
+        ),
 
         // ---- Mięso i ryby po obróbce ---------------------------------------
         Item(
@@ -443,12 +497,18 @@ object FoodSeed {
             "Pierś z kurczaka grillowana", 165.0, 31.0, 0.0, 3.6,
             portions = listOf(p("sztuka", 150.0))
         ),
-        Item("Pierś z kurczaka panierowana", 250.0, 22.0, 12.0, 13.0, fiberG = 0.5),
+        Item(
+            "Pierś z kurczaka panierowana", 250.0, 22.0, 12.0, 13.0, fiberG = 0.5,
+            portions = listOf(p("sztuka", 150.0))
+        ),
         Item("Udko z kurczaka pieczone", 215.0, 26.0, 0.0, 12.0, portions = listOf(p("sztuka", 120.0))),
         Item("Karkówka z grilla", 280.0, 25.0, 0.0, 20.0, portions = listOf(p("sztuka", 150.0))),
         Item("Gulasz wołowy", 180.0, 16.0, 4.0, 11.0, fiberG = 0.5, portions = listOf(p("porcja", 200.0))),
-        Item("Wątróbka smażona", 190.0, 23.0, 4.0, 9.0),
-        Item("Ryba smażona panierowana", 200.0, 17.0, 10.0, 10.0, fiberG = 0.4),
+        Item("Wątróbka smażona", 190.0, 23.0, 4.0, 9.0, portions = listOf(p("porcja", 100.0))),
+        Item(
+            "Ryba smażona panierowana", 200.0, 17.0, 10.0, 10.0, fiberG = 0.4,
+            portions = listOf(p("porcja", 150.0))
+        ),
         Item("Łosoś pieczony", 230.0, 25.0, 0.0, 14.0, portions = listOf(p("porcja", 150.0))),
 
         // ---- Jajka po obróbce ----------------------------------------------
@@ -1002,6 +1062,12 @@ object FoodSeed {
      * i rozszerzalne**: pomija pozycje, które już są, więc dodanie dziesięciu
      * nowych produktów w kolejnej wersji dociągnie wyłącznie te dziesięć.
      *
+     * Rozszerzalne dotyczy też **porcji**, nie tylko pozycji. Pozycja znana
+     * z nazwy, ale bez ani jednej porcji, dostaje te z zestawu - inaczej
+     * porcje dopisane po instalacji nie trafiłyby na telefon nigdy, bo
+     * pomijanie znanych nazw odcinało je razem z pozycją. Porcji już
+     * istniejących nie ruszamy.
+     *
      * Rozpoznawanie po `name_key`, nie po nazwie: inaczej poprawienie
      * wielkości litery w nazwie zakładało drugi wiersz tego samego produktu.
      *
@@ -1010,17 +1076,39 @@ object FoodSeed {
      * dwa wpisy i to jest poprawne: Twój ma wartości z Twojego opakowania.
      */
     fun populate(db: SQLiteDatabase) {
-        val existing = HashSet<String>()
+        val existing = HashMap<String, Long>()
         db.rawQuery(
-            "SELECT name_key FROM food WHERE source = ?",
+            "SELECT id, name_key FROM food WHERE source = ?",
             arrayOf(FoodSource.SEED.name)
         ).use { c ->
-            while (c.moveToNext()) existing += c.getString(0)
+            while (c.moveToNext()) existing[c.getString(1)] = c.getLong(0)
+        }
+
+        // Które pozycje mają już jakąkolwiek porcję.
+        //
+        // Potrzebne, bo samo pomijanie znanych pozycji nie wystarcza:
+        // porcje dopisane do zestawu **po** instalacji nie trafiłyby na
+        // telefon nigdy. Pozycja już była, więc `continue` odcinało ją
+        // razem z jej nowymi porcjami - a wyglądało to tak, jakby
+        // migracja przeszła poprawnie.
+        val zPorcjami = HashSet<Long>()
+        db.rawQuery("SELECT DISTINCT food_id FROM food_portion", null).use { c ->
+            while (c.moveToNext()) zPorcjami += c.getLong(0)
         }
 
         for (item in ITEMS) {
             val key = searchKey(item.name)
-            if (key in existing) continue
+
+            val znany = existing[key]
+            if (znany != null) {
+                // Dopisujemy porcje tylko tej pozycji, która nie ma żadnej.
+                // Nie uzupełniamy ani nie nadpisujemy porcji istniejących -
+                // mogłeś je sobie poprawić, a zestaw nie ma prawa tego cofać.
+                if (item.portions.isNotEmpty() && znany !in zPorcjami) {
+                    wstawPorcje(db, znany, item.portions)
+                }
+                continue
+            }
 
             val id = db.insert("food", null, ContentValues().apply {
                 putNull("barcode")
@@ -1041,15 +1129,18 @@ object FoodSeed {
                 put("updated_at", 0)
             })
             if (id <= 0) continue
+            wstawPorcje(db, id, item.portions)
+        }
+    }
 
-            item.portions.forEachIndexed { i, portion ->
-                db.insert("food_portion", null, ContentValues().apply {
-                    put("food_id", id)
-                    put("label", portion.label)
-                    put("grams", portion.grams)
-                    put("position", i)
-                })
-            }
+    private fun wstawPorcje(db: SQLiteDatabase, foodId: Long, portions: List<Portion>) {
+        portions.forEachIndexed { i, portion ->
+            db.insert("food_portion", null, ContentValues().apply {
+                put("food_id", foodId)
+                put("label", portion.label)
+                put("grams", portion.grams)
+                put("position", i)
+            })
         }
     }
 }
