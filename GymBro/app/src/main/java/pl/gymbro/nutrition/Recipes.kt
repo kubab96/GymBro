@@ -72,9 +72,27 @@ object Recipes {
             name = recipe.name,
             brand = null,
             per100 = per100,
-            servingG = null,
+            servingG = portionWeight(recipe),
             packageG = effectiveWeight(recipe),
             source = FoodSource.RECIPE
         )
+    }
+
+    /**
+     * Ile waży jedna porcja dania.
+     *
+     * `null`, gdy nie podano podziału - wtedy zostają gramy i całe danie.
+     * Zero i liczby ujemne traktujemy jak brak, bo dzielenie przez nie nie
+     * daje wagi, tylko nieskończoność albo bzdurę.
+     *
+     * Dzielimy **wagę dania**, nie sumę składników: jeśli przepis ma podaną
+     * wagę po ugotowaniu, to ona jest tym, co faktycznie nakładasz na talerz.
+     */
+    fun portionWeight(recipe: Recipe): Double? {
+        val n = recipe.portions ?: return null
+        if (n <= 0) return null
+        val weight = effectiveWeight(recipe)
+        if (weight <= 0.0) return null
+        return roundGram(weight / n)
     }
 }

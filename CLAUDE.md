@@ -117,6 +117,53 @@ Zasada naczelna doradcy: koszt milczenia jest wyższy niż koszt zbędnej propoz
 
 `PlateCalculator` rozróżnia dwa zastosowania, które łatwo pomylić: **wybierak** (`nextUp`/`nextDown`) musi dosięgnąć każdego osiągalnego ciężaru, a **propozycja** (`handyLadder`) preferuje progi wymagające najwyżej dwóch zmian talerzy. Zlanie ich w jedno odcina użytkownika od okrągłych liczb.
 
+### Jedzenie
+
+`GymBro/docs/kalorie.md` jest dla tej zakładki tym, czym `progresja.md` dla
+progresji: **źródłem prawdy dla liczb**, z wyraźnym oznaczeniem, co jest
+konwencją, a co wynikiem pomiaru. Zmieniając regułę, zmień i jego.
+
+**Węglowodany nie zawierają błonnika.** Tak podaje je etykieta europejska
+i tak zapisuje je Open Food Facts dla produktów z Europy. W Stanach `Total
+Carbohydrate` obejmuje błonnik, więc dane z tamtych źródeł trzeba przeliczyć.
+Energia ze składu to 4/4/9 **plus 2 kcal za gram błonnika**. Na tej konwencji
+wywracał się już i kod, i test - a służy teraz za sprawdzian poprawności
+wsadów masowych.
+
+Katalog produktów zbiera dane z trzech miejsc o ustalonej kolejności:
+
+| Plik | Co wnosi |
+|---|---|
+| `data/FoodSeed.kt` | zestaw podstawowy, 311 pozycji wpisanych ręcznie |
+| `data/FoodPack.kt` | paczka Open Food Facts, produkty z kodem kreskowym |
+| `data/ShopPack.kt` | tabele ze stron sklepów - towar sprzedawany na wagę |
+
+Trzeci istnieje dlatego, że Open Food Facts jest indeksowana kodami
+kreskowymi, a bułka z lady kodu nie ma. Pełna hierarchia źródeł i powody, dla
+których przy imporcie bywa odwrotna niż przy wyszukiwaniu, są w `kalorie.md`.
+
+**`FoodSeed.populate` jest idempotentne i rozszerzalne**, ale woła się
+wyłącznie z migracji. Dodanie pozycji albo porcji do zestawu wymaga więc
+nowej gałęzi w `onUpgrade` - bez niej zmiana zostaje w kodzie i nigdy nie
+dociera na telefon, a migracja wygląda na udaną.
+
+**Własne dania** (`recipe`, `nutrition/Recipes.kt`, `ui/MyMeals.kt`) są
+przeliczane na zwykły wiersz katalogu ze źródłem `RECIPE`. Dzięki temu
+wpisanie dania do dziennika jest tym samym, co wpisanie jogurtu, i nie ma
+drugiej ścieżki do utrzymania. „Danie" to celowo inne słowo niż „posiłek" -
+posiłek to pora dnia (Śniadanie, Obiad), danie to złożony produkt.
+
+**Wydatek liczy się z bilansu energii**, nie z wzoru, gdy tylko jest z czego:
+regresja liniowa po ważeniach z 56 dni, mieszana z oszacowaniem ze wzoru
+odwrotnie proporcjonalnie do wariancji. Ważenie raz w tygodniu wyklucza
+średnią kroczącą po dniach - progi wejścia i niepewność pomiaru opisuje
+`kalorie.md`, rozdział 3.
+
+**Klawiatura podnosi się tu sama** i zasłania dolne kilkaset pikseli. Każdy
+ekran z polem tekstowym musi to uwzględniać: przyciski idą nad pole albo
+dostają `imePadding()`. Trzy razy okazało się, że przycisk kończący robotę
+jest niewidoczny dokładnie wtedy, gdy się go potrzebuje.
+
 ### Baza
 
 `data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 23. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.

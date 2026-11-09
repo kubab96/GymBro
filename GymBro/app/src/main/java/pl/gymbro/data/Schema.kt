@@ -39,7 +39,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 21 - zestaw rozszerzony o pieczywo z wlasnego wypieku
          * 22 - pieczywo Biedronki z oficjalnych wartosci
          */
-        const val VERSION = 23
+        const val VERSION = 24
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -70,6 +70,24 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          */
         private val V20_STATEMENTS = listOf(
             "ALTER TABLE exercise ADD COLUMN weight_step REAL"
+        )
+
+        /**
+         * Na ile porcji dzieli się danie.
+         *
+         * Zastępuje w interfejsie wagę po ugotowaniu: łatwiej powiedzieć
+         * „z tego garnka wychodzą cztery obiady" niż zważyć gotowe danie.
+         * Porcja to waga składników podzielona przez tę liczbę i trafia do
+         * katalogu jako `food.serving_g`, czyli jednostka „porcja" przy
+         * wpisywaniu.
+         *
+         * Kolumny `cooked_g` **nie usuwamy**. Przestała być wypełniana przez
+         * interfejs, ale przepisy zapisane wcześniej mają w niej prawdziwą
+         * liczbę i [Recipes.effectiveWeight] nadal ją honoruje. Skasowanie
+         * kolumny skasowałoby te dane.
+         */
+        private val V24_STATEMENTS = listOf(
+            "ALTER TABLE recipe ADD COLUMN portions INTEGER"
         )
 
         /**
@@ -625,6 +643,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V16_STATEMENTS.forEach { db.execSQL(it) }
         V19_STATEMENTS.forEach { db.execSQL(it) }
         V20_STATEMENTS.forEach { db.execSQL(it) }
+        V24_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -755,6 +774,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         // zostalyby w kodzie i nigdy nie dotarly na telefon.
         if (oldVersion < 23) {
             FoodSeed.populate(db)
+        }
+
+        if (oldVersion < 24) {
+            V24_STATEMENTS.forEach { db.execSQL(it) }
         }
     }
 }

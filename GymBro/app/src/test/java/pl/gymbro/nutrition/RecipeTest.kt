@@ -118,4 +118,43 @@ class RecipeTest {
         assertEquals(42L, Recipes.asFood(zWierszem)!!.id)
         assertEquals(0L, Recipes.asFood(przepis)!!.id)
     }
+
+    @Test
+    fun `porcja to waga dania podzielona przez liczbe porcji`() {
+        // 500 g po ugotowaniu na cztery obiady to 125 g na talerzu.
+        val naCztery = przepis.copy(portions = 4)
+        assertEquals(125.0, Recipes.portionWeight(naCztery)!!, 0.01)
+    }
+
+    @Test
+    fun `bez podzialu nie ma porcji`() {
+        // Null, a nie cale danie: "porcja rowna calemu garnkowi" to
+        // jednostka, ktora niczego nie upraszcza, a w wybieraku ilosci
+        // zajmuje miejsce obok pozycji "opakowanie", znaczacej to samo.
+        assertNull(Recipes.portionWeight(przepis))
+        assertNull(Recipes.portionWeight(przepis.copy(portions = 0)))
+        assertNull(Recipes.portionWeight(przepis.copy(portions = -2)))
+    }
+
+    @Test
+    fun `podzial liczy sie z wagi dania, nie z sumy skladnikow`() {
+        // Skladniki waza 300 g na surowo, danie 500 g po ugotowaniu.
+        // Na talerz nakladasz ugotowane, wiec dzielimy 500, nie 300.
+        val naDwie = przepis.copy(portions = 2)
+        assertEquals(250.0, Recipes.portionWeight(naDwie)!!, 0.01)
+
+        // Bez wagi po ugotowaniu zostaje suma skladnikow - salatka ani
+        // koktajl nie zmieniaja wagi.
+        val bezGotowania = przepis.copy(cookedG = null, portions = 2)
+        assertEquals(150.0, Recipes.portionWeight(bezGotowania)!!, 0.01)
+    }
+
+    @Test
+    fun `porcja trafia do wiersza katalogu jako gramatura porcji`() {
+        // Dzieki temu w wybieraku ilosci pojawia sie jednostka "porcja"
+        // i danie wpisuje sie jednym dotknieciem, bez liczenia gramow.
+        val naCztery = przepis.copy(portions = 4)
+        assertEquals(125.0, Recipes.asFood(naCztery)!!.servingG!!, 0.01)
+        assertNull(Recipes.asFood(przepis)!!.servingG)
+    }
 }

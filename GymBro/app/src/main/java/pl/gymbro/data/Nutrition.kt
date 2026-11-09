@@ -326,7 +326,27 @@ data class RecipeItem(
 data class Recipe(
     val id: Long = 0,
     val name: String,
+
+    /**
+     * Waga gotowego dania.
+     *
+     * Interfejs jej już nie pyta - zastąpiła ją [portions], bo łatwiej
+     * powiedzieć „wychodzą z tego cztery obiady" niż zważyć pełny garnek.
+     * Pole zostaje, bo przepisy zapisane wcześniej mają tu prawdziwą liczbę
+     * i [Recipes.effectiveWeight] nadal ją honoruje.
+     */
     val cookedG: Double? = null,
+
+    /**
+     * Na ile porcji dzieli się danie.
+     *
+     * Jedna porcja to waga dania podzielona przez tę liczbę i trafia do
+     * katalogu jako `serving_g`, czyli jednostka „porcja" przy wpisywaniu.
+     * `null` albo zero znaczy „nie dzielimy" - wtedy zostają gramy i całe
+     * danie jako opakowanie.
+     */
+    val portions: Int? = null,
+
     val note: String? = null,
     val foodId: Long? = null,
     val items: List<RecipeItem> = emptyList()

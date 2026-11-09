@@ -39,6 +39,8 @@ import kotlinx.coroutines.withContext
 import pl.gymbro.data.Food
 import pl.gymbro.data.FoodLogEntry
 import pl.gymbro.data.Meal
+import pl.gymbro.data.Nutrients
+import pl.gymbro.data.Recipe
 import pl.gymbro.data.TdeeMethod
 import pl.gymbro.data.todayEpochDay
 import pl.gymbro.net.Barcodes
@@ -83,6 +85,13 @@ fun FoodScreen() {
     var editing by remember { mutableStateOf<FoodLogEntry?>(null) }
     var newProduct by remember { mutableStateOf<NewProduct?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
+
+    // Wlasne posilki: lista i edytor. Dwa osobne stany, nie jeden, bo
+    // z edytora wraca sie do listy, a z listy do szukania - gdyby byl
+    // jeden, zamkniecie edytora wyrzucaloby az do dziennika.
+    var myMeals by remember { mutableStateOf(false) }
+    var editingRecipe by remember { mutableStateOf<Recipe?>(null) }
+    var recipeNew by remember { mutableStateOf(false) }
 
     suspend fun reload() {
         today = withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
@@ -143,6 +152,59 @@ fun FoodScreen() {
         }
     }
 
+    /**
+     * Skanowanie **składnika dania**, nie wpisu do dziennika.
+     *
+     * Różni się od [handleCode] końcem: tam odczytany produkt otwiera okno
+     * porcji i ląduje w dzienniku, a tutaj ma po prostu wrócić do edytora
+     * dania. Dlatego zwraca produkt, zamiast ustawiać stan ekranu.
+     *
+     * Produktu, którego nie ma ani lokalnie, ani w Open Food Facts, **nie
+     * otwieramy tu do wpisania ręcznego**. Formularz nowego produktu
+     * prowadzi do dziennika i wyprowadziłby z edytora w połowie składania
+     * dania. Zostaje komunikat i szukanie po nazwie - rzadki przypadek
+     * kosztuje jedno przejście więcej, zamiast gubić całą robotę.
+     */
+    suspend fun scanIngredient(): Food? {
+        val wynik = Barcodes.scan(context)
+        val code = when (wynik) {
+            is Barcodes.Scan.Code -> wynik.value
+            // Zamkniecie skanera to decyzja, nie usterka - bez komunikatu.
+            Barcodes.Scan.Cancelled -> return null
+            is Barcodes.Scan.Failed -> { status = wynik.reason; return null }
+        }
+
+        // Offline najpierw, tak samo jak przy wpisie do dziennika.
+        withContext(Dispatchers.IO) { repos.foods.byBarcode(code) }?.let {
+            status = null
+            return it
+        }
+
+        status = "Szukam w Open Food Facts…"
+        return when (val lookup = withContext(Dispatchers.IO) { OpenFoodFacts.fetch(code) }) {
+            is OpenFoodFacts.Lookup.Found -> {
+                val id = withContext(Dispatchers.IO) { repos.foods.upsertFromSource(lookup.food) }
+                status = null
+                withContext(Dispatchers.IO) { repos.foods.byId(id) }
+            }
+
+            OpenFoodFacts.Lookup.NotFound -> {
+                status = "Nie ma tego kodu w Open Food Facts - poszukaj po nazwie."
+                null
+            }
+
+            is OpenFoodFacts.Lookup.Incomplete -> {
+                status = "W Open Food Facts brakuje danych: ${lookup.reason}."
+                null
+            }
+
+            is OpenFoodFacts.Lookup.Failed -> {
+                status = "${lookup.reason}. Poszukaj po nazwie."
+                null
+            }
+        }
+    }
+
     fun scan(meal: Meal) {
         scope.launch {
             when (val wynik = Barcodes.scan(context)) {
@@ -164,12 +226,63 @@ fun FoodScreen() {
     // szukanie - tak jak każda inna zakładka zwija się do widoku głównego.
     TabReselectHandler {
         searchFor = null
+        myMeals = false
+        recipeNew = false
+        editingRecipe = null
         day = todayEpochDay()
     }
-    ScreenBackHandler(enabled = searchFor != null) { searchFor = null }
+    // Wstecz cofa o JEDEN ekran, nie do dziennika. Edytor wraca do listy
+    // posilkow, lista do szukania, szukanie do dnia - inaczej pomylkowe
+    // wejscie w edytor kosztowaloby przejscie calej drogi od nowa.
+    val gdzies = searchFor != null || myMeals || recipeNew || editingRecipe != null
+    ScreenBackHandler(enabled = gdzies) {
+        when {
+            recipeNew || editingRecipe != null -> { recipeNew = false; editingRecipe = null }
+            myMeals -> myMeals = false
+            else -> searchFor = null
+        }
+    }
 
     val meal = searchFor
-    if (meal != null) {
+    if (recipeNew || editingRecipe != null) {
+        MealEditorView(
+            repos = repos,
+            startFrom = editingRecipe,
+            status = status,
+            onScan = { Busy.track { scanIngredient() } },
+            onSave = { recipe ->
+                scope.launch {
+                    Busy.track {
+                        withContext(Dispatchers.IO) { repos.recipes.save(recipe) }
+                        recipeNew = false
+                        editingRecipe = null
+                        status = "Zapisano: ${recipe.name}."
+                        // Przepis jest wierszem katalogu, wiec zmiana moze
+                        // dotknac wpisow juz widocznych w dzienniku.
+                        Refresh.bump()
+                    }
+                }
+            },
+            onDelete = { id ->
+                scope.launch {
+                    Busy.track {
+                        withContext(Dispatchers.IO) { repos.recipes.delete(id) }
+                        recipeNew = false
+                        editingRecipe = null
+                        status = "Danie usunięte."
+                        Refresh.bump()
+                    }
+                }
+            },
+            onBack = { recipeNew = false; editingRecipe = null }
+        )
+    } else if (myMeals) {
+        MyMealsView(
+            repos = repos,
+            onEdit = { r -> if (r == null) recipeNew = true else editingRecipe = r },
+            onBack = { myMeals = false }
+        )
+    } else if (meal != null) {
         FoodSearchView(
             meal = meal,
             repos = repos,
@@ -179,6 +292,7 @@ fun FoodScreen() {
             onPick = { food -> scope.launch { openPortion(food, meal) } },
             onScan = { scan(meal) },
             onQuickAdd = { quickAddTo = meal },
+            onMyMeals = { myMeals = true },
             onBack = { searchFor = null }
         )
     } else {
@@ -187,9 +301,7 @@ fun FoodScreen() {
             day = day,
             status = status,
             onDay = { day = it; status = null },
-            onScan = { m -> status = null; scan(m) },
             onAdd = { m -> status = null; searchFor = m },
-            onQuickAdd = { m -> status = null; quickAddTo = m },
             onEntry = { editing = it }
         )
     }
@@ -302,9 +414,7 @@ private fun DayView(
     day: Long,
     status: String?,
     onDay: (Long) -> Unit,
-    onScan: (Meal) -> Unit,
     onAdd: (Meal) -> Unit,
-    onQuickAdd: (Meal) -> Unit,
     onEntry: (FoodLogEntry) -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
@@ -329,32 +439,15 @@ private fun DayView(
 
         SummaryCard(today)
 
-        Spacer(Modifier.height(10.dp))
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Skanowanie pierwsze i wypełnione: w sklepie to jedyna droga,
-            // która nie wymaga wiedzy, jak producent nazwał produkt.
-            //
-            // Posiłek podstawiany z godziny, nie stały. O ósmej rano chodzi
-            // o śniadanie i wybieranie go z listy przy każdym wpisie byłoby
-            // dokładnie tym dodatkowym dotknięciem, którego tu unikamy.
-            Button(
-                onClick = { onScan(defaultMeal()) },
-                modifier = Modifier.weight(1f)
-            ) { Text("Skanuj") }
-            OutlinedButton(
-                onClick = { onAdd(defaultMeal()) },
-                modifier = Modifier.weight(1f)
-            ) { Text("Szukaj") }
-            OutlinedButton(
-                onClick = { onQuickAdd(defaultMeal()) },
-                modifier = Modifier.weight(1f)
-            ) { Text("Wpisz") }
-        }
-
+        // Tu nie ma przyciskow dodawania - i to jest zmiana wzgledem
+        // pierwszej wersji, nie przeoczenie.
+        //
+        // Stal tu rzad "Skanuj / Szukaj / Wpisz", ktory zgadywal posilek
+        // z godziny. Zgadywanie bylo w porzadku o osmej rano, ale o
+        // jedenastej juz nie, a poprawianie go po fakcie kosztuje wiecej
+        // niz jedno dotkniecie zaoszczedzone na wejsciu. Teraz droga jest
+        // jedna: dotknij posilku, do ktorego dopisujesz. Skanowanie
+        // i wpisywanie czeka tam, na gorze ekranu szukania.
         status?.let {
             Text(
                 it,
@@ -375,7 +468,7 @@ private fun DayView(
                 item(key = "posilek-${meal.name}") {
                     MealHeader(
                         meal = meal,
-                        kcal = today?.summary?.byMeal?.get(meal)?.kcal,
+                        suma = today?.summary?.byMeal?.get(meal),
                         onAdd = { onAdd(meal) }
                     )
                 }
@@ -423,15 +516,24 @@ private fun EntryRow(entry: FoodLogEntry, onClick: () -> Unit) {
 }
 
 /**
- * Nagłówek posiłku z sumą kalorii.
+ * Nagłówek posiłku z sumą kalorii i makro.
  *
  * Cały wiersz jest przyciskiem dodawania, nie tylko znak plus: posiłek bez
  * wpisów ma po sobie kilkadziesiąt pikseli wysokości, a celowanie w ikonę
  * wielkości paznokcia kciukiem jednej ręki jest dokładnie tym, czego ten
  * ekran ma nie wymagać.
+ *
+ * Makro pod nazwą, nie obok kalorii: linijka „Obiad · 820 kcal · B 45 · W 70
+ * · T 30" nie mieści się na szerokości telefonu i obcina się w losowym
+ * miejscu. Pod spodem, mniejszą czcionką, mieści się zawsze.
+ *
+ * Pusty posiłek dostaje sam plus. Wypisywanie mu „0 kcal · B 0 · W 0 · T 0"
+ * byłoby czterema liczbami, które nic nie mówią, w miejscu, gdzie całą
+ * treścią jest zaproszenie do dotknięcia.
  */
 @Composable
-private fun MealHeader(meal: Meal, kcal: Double?, onAdd: () -> Unit) {
+private fun MealHeader(meal: Meal, suma: Nutrients?, onAdd: () -> Unit) {
+    val pusty = suma == null || suma.kcal <= 0.0
     Row(
         Modifier
             .fillMaxWidth()
@@ -440,11 +542,24 @@ private fun MealHeader(meal: Meal, kcal: Double?, onAdd: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(meal.label, style = MaterialTheme.typography.titleMedium)
+        Column(Modifier.weight(1f)) {
+            Text(meal.label, style = MaterialTheme.typography.titleMedium)
+            if (!pusty) {
+                Text(
+                    "B %.0f · W %.0f · T %.0f".format(
+                        suma!!.proteinG,
+                        suma.carbsG,
+                        suma.fatG
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         Text(
-            if (kcal == null || kcal <= 0.0) "+" else "%.0f kcal".format(kcal),
+            if (pusty) "+" else "%.0f kcal".format(suma!!.kcal),
             style = MaterialTheme.typography.bodyMedium,
-            color = if (kcal == null || kcal <= 0.0) {
+            color = if (pusty) {
                 MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant
@@ -617,21 +732,12 @@ private fun wpisy(n: Int): String = when {
     else -> "wpisów"
 }
 
-/**
- * Posiłek, do którego najprawdopodobniej dopisujesz.
- *
- * Godziny są konwencją, nie badaniem - ale każda konwencja jest tu lepsza
- * od stałej wartości, bo trafia w kilku przypadkach z pięciu, a pomyłkę
- * poprawia się jednym dotknięciem w nagłówek właściwego posiłku.
- */
-private fun defaultMeal(): Meal = when (java.time.LocalTime.now().hour) {
-    in 0..9 -> Meal.BREAKFAST
-    in 10..11 -> Meal.SECOND_BREAKFAST
-    in 12..15 -> Meal.LUNCH
-    in 16..17 -> Meal.AFTERNOON
-    in 18..21 -> Meal.DINNER
-    else -> Meal.SNACKS
-}
+// Bylo tu defaultMeal(): posilek zgadywany z godziny, pod przyciski
+// "Skanuj / Szukaj / Wpisz" stojace nad lista. Przyciski przeniosly sie do
+// wnetrza posilku, wiec nie ma juz czego zgadywac - dopisujesz tam, gdzie
+// dotknales. Zgadywanie bylo zreszta slabsze, niz wygladalo: trafialo
+// o osmej rano i mylilo sie o jedenastej, a poprawka kosztowala wiecej niz
+// jedno dotkniecie, ktore mialo oszczedzic.
 
 private fun dayLabel(day: Long): String {
     val dzis = todayEpochDay()

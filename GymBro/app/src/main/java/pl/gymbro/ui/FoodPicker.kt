@@ -66,6 +66,7 @@ internal fun FoodSearchView(
     onPick: (Food) -> Unit,
     onScan: () -> Unit,
     onQuickAdd: () -> Unit,
+    onMyMeals: () -> Unit,
     onBack: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -103,6 +104,33 @@ internal fun FoodSearchView(
         ) {
             Text(meal.label, style = MaterialTheme.typography.headlineSmall)
             TextButton(onClick = onBack) { Text("Zamknij") }
+        }
+
+        // Dwa wyjścia na WIERZCHU, nad polem szukania.
+        //
+        // Stały niżej, pod listą wyników, i wyglądało to porządnie - do
+        // momentu wejścia na ekran. Klawiatura podnosi się tu sama i zasłania
+        // dolne kilkaset pikseli, więc oba przyciski były niewidoczne przez
+        // cały czas, kiedy się ich potrzebuje. Zrzut z telefonu nie zostawiał
+        // tu wątpliwości: pod listą produktów zaczynała się od razu
+        // klawiatura.
+        //
+        // Produkt, którego nie ma w katalogu, jest najczęstszym powodem
+        // porzucenia dziennika - te przyciski nie mogą się chować ani za
+        // brakiem wyników, ani za klawiaturą.
+        Row(
+            Modifier.fillMaxWidth().padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(onClick = onScan, modifier = Modifier.weight(1f)) { Text("Skanuj") }
+            OutlinedButton(
+                onClick = onMyMeals,
+                modifier = Modifier.weight(1f)
+            ) { Text("Dania") }
+            OutlinedButton(
+                onClick = onQuickAdd,
+                modifier = Modifier.weight(1f)
+            ) { Text("Kalorie") }
         }
 
         // Kursor w polu od razu po wejściu.
@@ -148,19 +176,6 @@ internal fun FoodSearchView(
             }
         }
 
-        // Dwa wyjścia, zawsze widoczne. Produkt, którego nie ma w katalogu,
-        // jest najczęstszym powodem porzucenia dziennika - i dlatego te
-        // przyciski nie chowają się za brakiem wyników.
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Button(onClick = onScan, modifier = Modifier.weight(1f)) { Text("Skanuj") }
-            OutlinedButton(
-                onClick = onQuickAdd,
-                modifier = Modifier.weight(1f)
-            ) { Text("Same kalorie") }
-        }
     }
 }
 

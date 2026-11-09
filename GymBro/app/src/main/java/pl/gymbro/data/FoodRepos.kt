@@ -512,6 +512,7 @@ class RecipeRepository(context: Context) {
         id = c.long("id"),
         name = c.str("name"),
         cookedG = c.dblOrNull("cooked_g"),
+        portions = c.longOrNull("portions")?.toInt(),
         note = c.strOrNull("note"),
         foodId = c.longOrNull("food_id")
     )
@@ -586,6 +587,11 @@ class RecipeRepository(context: Context) {
                     ContentValues().apply {
                         put("name", recipe.name)
                         putOrNull("cooked_g", recipe.cookedG)
+                        if (recipe.portions != null && recipe.portions > 0) {
+                            put("portions", recipe.portions)
+                        } else {
+                            putNull("portions")
+                        }
                         if (recipe.note.isNullOrBlank()) putNull("note")
                         else put("note", recipe.note)
                     },
@@ -597,6 +603,11 @@ class RecipeRepository(context: Context) {
                 write.insert("recipe", null, ContentValues().apply {
                     put("name", recipe.name)
                     putOrNull("cooked_g", recipe.cookedG)
+                    if (recipe.portions != null && recipe.portions > 0) {
+                        put("portions", recipe.portions)
+                    } else {
+                        putNull("portions")
+                    }
                     if (recipe.note.isNullOrBlank()) putNull("note")
                     else put("note", recipe.note)
                 })
