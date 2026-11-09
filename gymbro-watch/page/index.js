@@ -31,6 +31,10 @@ const HEART = 0xff7a7a
 const FLASH_SET_MS = 320
 const FLASH_REST_MS = 320
 const FLASH_DONE_MS = 900
+// Kolory blysku - tlo licznika serii, ciemne, zeby napis zostal czytelny.
+const FLASH_SET = 0x0b4a42
+const FLASH_REST = 0x1d3a66
+const FLASH_DONE = 0x1f6a46
 
 // Strefy tętna. Progi liczy telefon z rocznika (wzór Tanaki), tu są same
 // kolory: chłodne na lekkim wysiłku, ciepłe przy progu, czerwień u sufitu.
@@ -162,6 +166,19 @@ const STALE_AFTER_MS = 8 * 3600000
 const ZAPIS_MS = 350
 // Ile czeka uzbrojony przycisk kasowania, zanim sam sie wycofa.
 const FIX_CONFIRM_MS = 4000
+// Ile po ostatniej serii planu czekamy na zapas, zanim pokaze sie
+// podsumowanie. Wybor zapasu przechodzi do podsumowania od razu.
+const KONIEC_MS = 4000
+// Zapis do pamieci czeka, az palec da spokoj. 350 ms po kliknieciu to
+// akurat chwila, w ktorej przychodzi nastepne - plus, minus, zapas po serii -
+// i wtedy to ono czekalo na zapis pliku.
+const CISZA_MS = 1200
+// Ile polecen z kolejki leci jedna paczka. Po treningu bez lacznosci w kolejce
+// stoi ich kilkadziesiat, a kazda runda przez Bluetooth to sekunda.
+const PACZKA = 15
+// Ile numerow potwierdzonych serii pamietamy - tyle, ile da sie jeszcze
+// poprawic albo opisac zapasem z ekranu, ktory je pokazuje.
+const ACKED_MAX = 40
 
 // Rząd przycisków zapasu powtórzeń. Mieści się w okręgu na tej wysokości.
 const RIR_X0 = 88
@@ -174,9 +191,6 @@ const RIR_GAP = 8
 const BURN_MAX_GAP_MS = 30000
 
 const BUZZ_GUARD_MS = 1200
-
-const SLIDE_MS = 240
-const SLIDE_FPS = 60
 
 /**
  * Pilot treningu.
@@ -217,7 +231,6 @@ Page({
     kcal: 0,
     message: null,
     built: false,
-    pending: {},
     wasComplete: false,
     firstState: true,
     units: null,
@@ -252,7 +265,16 @@ Page({
     // Znacznik sesji zalozonej tutaj, bez telefonu. null, gdy sesja jest
     // telefonu albo gdy ten juz nadal jej swoj numer.
     localId: null,
-    startedAt: 0
+    startedAt: 0,
+    // Numery serii nadane przez telefon, po znaczniku polecenia SET. Z tego
+    // zapas i poprawka trafiaja w te serie, ktora pokazuje ekran, nawet gdy
+    // zegarek poznal jej numer dopiero po fakcie.
+    acked: {},
+    // Ile polecen czekalo w kolejce ostatnio. Z tego bierze sie pojedyncza
+    // wibracja w chwili, gdy wszystko wreszcie dojechalo do telefonu.
+    syncWas: 0,
+    // Czy ostatnia kolejka doszla do konca - stad napis 'Wyslane'.
+    syncDone: false
   },
 
   onInit() {
@@ -304,10 +326,22 @@ Page({
   rememberUnits() {
     if (!this.store) return
     try {
-      this.store.setItem(UNITS_KEY, JSON.stringify({
+      const tekst = JSON.stringify({
         program: this.state.program,
-        units: this.state.units
-      }))
+        units: this.state.units,
+        // Wspolczynniki spalania i progi tetna lezaly dotad wylacznie w
+        // zapisie sesji, a ten jest czyszczony na koncu treningu. Nastepny
+        // trening bez lacznosci zaczynal wiec bez nich i kalorie staly na
+        // kresce przez cale godziny. Licza sie dla kazdej sesji, nie dla
+        // jednej, wiec ich miejsce jest tutaj.
+        burn: this.state.burn,
+        zones: this.state.zones
+      })
+      // Lista jednostek niesie plany z drabinkami - kilkanascie kilobajtow.
+      // Odswiezana co chwile na ekranie wyboru, zapisywala sie za kazdym
+      // razem do pliku, choc prawie zawsze byla ta sama.
+      if (tekst === this.store.getItem(UNITS_KEY)) return
+      this.store.setItem(UNITS_KEY, tekst)
     } catch (e) {
       this.store = null
     }
@@ -327,6 +361,8 @@ Page({
     if (!units.length) return false
     this.state.program = (zapis && zapis.program) || ''
     this.state.units = units
+    if (!this.state.burn && zapis.burn && zapis.burn.k1) this.state.burn = zapis.burn
+    if (!this.state.zones && zapis.zones && zapis.zones.max) this.state.zones = zapis.zones
     const kolejna = units.filter((u) => u.next)[0]
     if (kolejna) this.state.nextUnit = kolejna.name
     return true
@@ -364,15 +400,56 @@ Page({
     try {
       const raw = this.store.getItem(OUTBOX_KEY)
       const lista = raw ? JSON.parse(raw) : []
-      // Polecenia starsze niz doba treningowa odpadaja. Telefon i tak
-      // zamknalby juz tamta sesje, a dosylanie ich tylko zaklamuje historie.
+      // Zalegla kolejka NIE jest wyrzucana. Wczesniej odpadalo z niej
+      // wszystko starsze niz osiem godzin i wlasnie tak przepadl caly
+      // trening: telefon lezal bez lacznosci, a nad ranem zegarek wyrzucil
+      // jedyny zapis tamtych serii. Baza na telefonie jest jedyna kopia
+      // historii, wiec zaleglosc dojezdza niezaleznie od tego, ile czekala.
+      //
+      // Zostaje tylko jedno: trening bez zakonczenia, ktory lezy w kolejce
+      // od osmiu godzin, jest treningiem porzuconym. Dopisujemy mu koniec
+      // na godzinie ostatniego polecenia - dokladnie tak, jak robi to
+      // telefon z porzucona sesja - bo inaczej dojechalby jako trwajacy
+      // i zaslonilby ekran nastepnego dnia.
       const teraz = Date.now()
-      const swieze = (lista || []).filter(
-        (x) => !x.at || teraz - x.at < STALE_AFTER_MS
-      )
-      if (swieze.length) this.state.outbox = swieze.concat(this.state.outbox || [])
-      if (swieze.length !== (lista || []).length) this.rememberOutbox()
+      let kolejka = lista || []
+      const najstarsze = kolejka.length ? (kolejka[0].at || teraz) : teraz
+      const maKoniec = kolejka.some((x) => x.m === 'FINISH')
+      const maStart = kolejka.some((x) => x.m === 'START')
+      if (kolejka.length && !maKoniec && maStart &&
+        teraz - najstarsze >= STALE_AFTER_MS) {
+        const ostatnie = kolejka[kolejka.length - 1]
+        const koniec = {
+          m: 'FINISH',
+          p: { endedAt: ostatnie.at || najstarsze },
+          cid: 'late-' + najstarsze,
+          at: ostatnie.at || najstarsze
+        }
+        if (ostatnie.p && ostatnie.p.sid) koniec.p.sid = ostatnie.p.sid
+        koniec.p.cid = koniec.cid
+        kolejka = kolejka.concat([koniec])
+      }
+      // Bez powtorek. Kolejka lezala dotad takze w zapisie sesji i po kazdym
+      // zgasnieciu ekranu oba zapisy skladaly sie w jeden - dwa razy dluzszy.
+      // Bez lacznosci rosla tak przy kazdym opuszczeniu nadgarstka: dwadziescia
+      // serii robilo sie tysiacem polecen, zapis pliku trwal coraz dluzej,
+      // przyciski zaczynaly sie kleic, a na koncu zegarek ubijal aplikacje.
+      const razem = this.bezPowtorek(kolejka.concat(this.state.outbox || []))
+      this.state.outbox = razem
+      if (razem.length !== (lista || []).length) this.rememberOutbox()
     } catch (e) {}
+  },
+
+  /** Kolejka bez polecen o tym samym znaczniku - zostaje pierwsze. */
+  bezPowtorek(lista) {
+    const byly = {}
+    return (lista || []).filter((x) => {
+      if (!x || !x.m) return false
+      if (!x.cid) return true
+      if (byly[x.cid]) return false
+      byly[x.cid] = true
+      return true
+    })
   },
 
   /**
@@ -382,23 +459,32 @@ Page({
    * niesie drabinki ciezarow. Zmieniaja sie wolno, wiec nie maja czego
    * szukac przy kazdym nacisnieciu przycisku.
    *
-   * Plan trafia tu tylko dla sesji zalozonej na zegarku - telefon jeszcze
-   * o niej nie wie, wiec nie ma jej skad odtworzyc poza wlasna pamiecia.
+   * Plan trafia tu dla kazdej sesji, nie tylko zalozonej na zegarku. Trening
+   * z numerem od telefonu po zgasnieciu ekranu bez lacznosci nie mial skad
+   * wrocic - zegarek pokazywal wybor jednostki w srodku treningu, a nowy
+   * start z tego ekranu zakladal drugi trening obok trwajacego.
    */
   rememberHeavy() {
+    this.ciezkieBrudne = false
     if (!this.store || !this.state.sessionId) return
     try {
       this.store.setItem(HEAVY_KEY, JSON.stringify({
         sessionId: this.state.sessionId,
         hrLog: this.state.hrLog,
-        data: this.state.localId ? this.state.data : null
+        data: this.state.data
       }))
     } catch (e) {
       this.store = null
     }
   },
 
-  restoreHeavy(sessionId) {
+  /** Prosba o zapis planu i tetna - za chwile, w ciszy, razem z reszta. */
+  rememberHeavyLater() {
+    this.ciezkieBrudne = true
+    this.planujZapis()
+  },
+
+  restoreHeavy(sessionId, zDanymi) {
     if (!this.store || !sessionId) return
     let zapis = null
     try {
@@ -409,7 +495,20 @@ Page({
     }
     if (!zapis || zapis.sessionId !== sessionId) return
     this.state.hrLog = zapis.hrLog || []
-    if (this.state.localId && zapis.data) this.state.data = zapis.data
+    if (zDanymi && zapis.data && zapis.data.exercises) this.state.data = zapis.data
+  },
+
+  /** Czy w pamieci lezy plan tej sesji - bez niego nie ma czego pokazac. */
+  maPlan(sessionId) {
+    if (!this.store || !sessionId) return false
+    try {
+      const raw = this.store.getItem(HEAVY_KEY)
+      const zapis = raw ? JSON.parse(raw) : null
+      return !!(zapis && zapis.sessionId === sessionId && zapis.data &&
+        (zapis.data.exercises || []).length)
+    } catch (e) {
+      return false
+    }
   },
 
   /**
@@ -424,7 +523,7 @@ Page({
     this.planujZapis()
   },
 
-  /** Zapis za chwilę, i nigdy w trakcie przejścia między ekranami. */
+  /** Zapis za chwilę, i nigdy pod palcem. */
   planujZapis() {
     if (this.pamiecTimer) return
     this.pamiecTimer = setTimeout(() => {
@@ -434,12 +533,24 @@ Page({
         return
       }
       if (this.pamiecBrudna) this.rememberNow()
+      if (this.ciezkieBrudne) this.rememberHeavy()
     }, ZAPIS_MS)
   },
 
-  /** Czy coś się właśnie animuje i nie wolno mu zabierać wątku. */
+  /**
+   * Czy palec wlasnie pracuje i nie wolno mu zabierac watku.
+   *
+   * Dotad liczylo sie tylko to, czy cos sie animuje. Ale zapis pliku
+   * puszczony 350 ms po kliknieciu trafial akurat w nastepne klikniecie -
+   * drugi plus, zapas zaraz po serii - i to ono czekalo, az plik sie zapisze.
+   */
   zajeteRysowaniem() {
-    return !!(this.slideDone || this.flashTimer)
+    return !!(this.ostatniDotyk && Date.now() - this.ostatniDotyk < CISZA_MS)
+  },
+
+  /** Slad, ze palec cos zrobil - od tej chwili liczy sie cisza. */
+  dotyk() {
+    this.ostatniDotyk = Date.now()
   },
 
   rememberNow() {
@@ -462,12 +573,14 @@ Page({
         // stały aż do następnej odpowiedzi. Z telefonem w szatni: cały trening.
         burn: this.state.burn,
         kcalSeen: this.state.kcalSeen,
+        // Kolejki tu nie ma. Leżała dotąd i tutaj, i pod własnym kluczem,
+        // a po restarcie obie kopie się sumowały - patrz [restoreOutbox].
+        // Serie niepotwierdzone wynikają z kolejki, więc też ich tu nie ma.
+        acked: this.state.acked,
         // Pytanie o zapas dotyczy serii sprzed chwili. Przerwa przeżywa
         // zgaszenie ekranu, więc pytanie musi przeżyć razem z nią.
         rirFor: this.state.rirFor,
         wasComplete: this.state.wasComplete,
-        maPlan: !!this.state.localId,
-        outbox: this.state.outbox,
         pausedLocal: this.state.pausedLocal,
         localId: this.state.localId,
         startedAt: this.state.startedAt,
@@ -480,10 +593,13 @@ Page({
   },
 
   /**
-   * Powrót do treningu założonego na zegarku, wyłącznie z własnej pamięci.
+   * Powrót do treningu wyłącznie z własnej pamięci, bez pytania telefonu.
    *
-   * Zwykłe [restore] potrzebuje numeru sesji od telefonu, więc bez łączności
-   * nie ma czego dopasować. Tutaj numer jest nasz własny i leży obok reszty.
+   * Dotąd tylko dla treningu założonego na zegarku. Trening, który zdążył
+   * dostać numer od telefonu, po zgaśnięciu ekranu bez łączności nie wracał:
+   * zegarek czekał osiem sekund na odpowiedź, a potem pokazywał wybór
+   * jednostki - w środku treningu. Start z tego ekranu zakładał drugi trening
+   * obok trwającego i serie rozjeżdżały się między nimi.
    */
   restoreLocal() {
     if (!this.store) return false
@@ -494,18 +610,20 @@ Page({
     } catch (e) {
       return false
     }
-    if (!zapis || !zapis.localId || !zapis.sessionId) return false
+    if (!zapis || !zapis.sessionId) return false
     // Trening sprzed wielu godzin to trening zapomniany, nie przerwany.
     // Wskrzeszony pokazywal sie jako "wczesniej rozpoczety" i wysylal
     // polecenia do sesji, ktorej telefon juz dawno nie ma.
     const start = zapis.startedAt || 0
     if (!start || Date.now() - start > STALE_AFTER_MS) {
-      this.forget()
+      if (zapis.localId || start) this.forget()
       return false
     }
+    // Bez planu nie ma czego pokazać. Zapis sprzed tej zmiany nie trzymał
+    // planu dla treningu z numerem od telefonu - wtedy zostaje telefon.
+    if (!this.maPlan(zapis.sessionId)) return false
     this.state.sessionId = zapis.sessionId
-    if (!this.restore(zapis.sessionId)) return false
-    // Bez planu nie ma czego pokazać, a telefon o tej sesji nie wie.
+    if (!this.restore(zapis.sessionId, true)) return false
     const lista = (this.state.data && this.state.data.exercises) || []
     if (!lista.length) return false
     this.state.firstState = false
@@ -518,7 +636,7 @@ Page({
   },
 
   /** Odtworzenie stanu, o ile dotyczy tej samej sesji co odpowiedź telefonu. */
-  restore(sessionId) {
+  restore(sessionId, zPlanem) {
     if (!this.store || !sessionId) return false
     let zapis = null
     try {
@@ -537,25 +655,33 @@ Page({
     this.state.hrMax = zapis.hrMax || 0
     this.state.kcalBase = zapis.kcalBase === undefined ? null : zapis.kcalBase
     this.state.burnKcal = zapis.burnKcal || 0
-    this.state.burn = (zapis.burn && zapis.burn.k1) ? zapis.burn : null
+    // Tylko dodaje, nigdy nie zabiera: wspolczynniki moga pochodzic z zapisu
+    // jednostek, ktory jest trwalszy od zapisu sesji.
+    if (zapis.burn && zapis.burn.k1) this.state.burn = zapis.burn
     this.state.kcalSeen = !!zapis.kcalSeen
+    this.state.acked = zapis.acked || {}
     this.state.rirFor = zapis.rirFor || null
     this.state.wasComplete = !!zapis.wasComplete
-    // Dokładamy, zamiast podmieniać: po restarcie bez łączności zdążyły
-    // już powstać nowe polecenia, a te z pamięci są od nich starsze.
-    this.state.outbox = (zapis.outbox || []).concat(this.state.outbox || [])
+    // Kolejka z zapisu sesji (wersje sprzed tej zmiany) tylko wtedy, gdy
+    // wlasnej nie ma. Obie byly kopia tego samego, a zsumowane podwajaly
+    // kolejke przy kazdym restarcie - patrz [restoreOutbox].
+    if (zapis.outbox && zapis.outbox.length && !(this.state.outbox || []).length) {
+      this.state.outbox = this.bezPowtorek(zapis.outbox)
+      this.zmienione()
+    }
     this.state.localId = zapis.localId || null
     this.state.startedAt = zapis.startedAt || 0
-    this.restoreHeavy(sessionId)
+    this.restoreHeavy(sessionId, zPlanem)
     const p = zapis.pausedLocal
     this.state.pausedLocal = (p === true || p === false) ? p : null
     // Czas treningu po restarcie. Gdy wstrzymanie jeszcze nie doszło do
-    // telefonu, jego sekundy są nieaktualne. Przy sesji założonej na
-    // zegarku telefon nie zna ich wcale, więc nasze są jedyne.
-    if (this.state.pausedLocal !== null || this.state.localId) {
+    // telefonu, jego sekundy są nieaktualne. Przy sesji odtwarzanej z własnej
+    // pamięci telefon nie odezwał się wcale, więc nasze są jedyne.
+    if (this.state.pausedLocal !== null || this.state.localId || zPlanem) {
       this.state.sessionSec = zapis.sessionSec || 0
       this.state.sessionAt = zapis.sessionAt || Date.now()
     }
+    this.zmienione()
     return true
   },
 
@@ -592,20 +718,24 @@ Page({
   build() {
     // To, co nie dojechalo przed zgasnieciem ekranu, czeka w pamieci.
     this.restoreOutbox()
+    // Zaleglosc z pamieci tez liczy sie jako "cos czeka": bez tego wibracja
+    // po dojechaniu kolejki nalezala sie tylko temu, kto zdazyl zobaczyc, jak
+    // rosnie - a przy zaleglosci z nocy nikt tego nie widzial.
+    this.state.syncWas = this.czeka()
     onGesture({
       callback: (event) => {
+        this.dotyk()
         const view = this.state.view
         const col = COLUMN.indexOf(view)
 
-        // Pion przewija karuzelę. Zasłona ucieka w stronę ruchu, więc nowa
-        // strona wjeżdża z tej strony, z której przyszedł palec.
+        // Pion przewija karuzelę.
         if (col >= 0 && !this.state.message) {
           if (event === GESTURE_UP && col < COLUMN.length - 1) {
-            this.showView(COLUMN[col + 1], -1, 'y')
+            this.showView(COLUMN[col + 1])
             return true
           }
           if (event === GESTURE_DOWN && col > 0) {
-            this.showView(COLUMN[col - 1], 1, 'y')
+            this.showView(COLUMN[col - 1])
             return true
           }
           // Pod głównym ekranem leży dziennik serii tego ćwiczenia.
@@ -613,7 +743,7 @@ Page({
             // Zawsze od pierwszej serii: wejście w dziennik to pytanie
             // "co dzisiaj zrobiłem", a nie powrót tam, gdzie się skończyło.
             this.state.logAt = 0
-            this.showView(VIEW_LOG, 1, 'y')
+            this.showView(VIEW_LOG)
             return true
           }
         }
@@ -624,7 +754,7 @@ Page({
         // ale wyjścia już nikt nie sprawdzał i ekran był pułapką.
         if (!this.state.message) {
           if (event === GESTURE_UP && view === VIEW_LOG) {
-            this.showView(VIEW_SETS, -1, 'y')
+            this.showView(VIEW_SETS)
             return true
           }
           // W dół kolejne serie, a gdy wszystkie się mieszczą - nic.
@@ -636,60 +766,60 @@ Page({
           // doraźny, a nie miejsce w nawigacji.
           if (view === VIEW_FIX) {
             if (event === GESTURE_RIGHT) {
-              this.showView(VIEW_SETS, 1)
+              this.showView(VIEW_SETS)
               return true
             }
-            this.showView(VIEW_LOG, event === GESTURE_DOWN ? 1 : -1, 'y')
+            this.showView(VIEW_LOG)
             return true
           }
           if (event === GESTURE_RIGHT && view === VIEW_LOG) {
-            this.showView(VIEW_SETS, 1)
+            this.showView(VIEW_SETS)
             return true
           }
         }
 
         if (event === GESTURE_LEFT && view === VIEW_SETS) {
-          this.showView(VIEW_EDIT, -1)
+          this.showView(VIEW_EDIT)
           return true
         }
         if (event === GESTURE_LEFT && view === VIEW_CONTROL) {
-          this.showView(VIEW_SETS, -1)
+          this.showView(VIEW_SETS)
           return true
         }
         // Z podsumowania w górę na listę pominiętych - ale tylko wtedy,
         // gdy jest co pokazywać, żeby gest nie prowadził w pustkę.
         if (event === GESTURE_UP && view === VIEW_DONE && this.gaps().sets > 0) {
-          this.showView(VIEW_GAPS, -1, 'y')
+          this.showView(VIEW_GAPS)
           return true
         }
         // Tonaż leży pod podsumowaniem, braki nad nim.
         if (event === GESTURE_DOWN && view === VIEW_DONE && this.tonRows().length) {
-          this.showView(VIEW_TONS, 1, 'y')
+          this.showView(VIEW_TONS)
           return true
         }
         if (event === GESTURE_UP && view === VIEW_TONS) {
-          this.showView(VIEW_DONE, -1, 'y')
+          this.showView(VIEW_DONE)
           return true
         }
         if (event === GESTURE_DOWN && view === VIEW_GAPS) {
-          this.showView(VIEW_DONE, 1, 'y')
+          this.showView(VIEW_DONE)
           return true
         }
         if (event === GESTURE_RIGHT && (view === VIEW_EDIT || view === VIEW_DONE || view === VIEW_GAPS)) {
-          this.showView(VIEW_SETS, 1)
+          this.showView(VIEW_SETS)
           return true
         }
         // W prawo z głównego ekranu wychodziło z aplikacji. Teraz jest tam
         // sterowanie treningiem, tak jak w natywnym treningu siłowym.
         if (event === GESTURE_RIGHT && view === VIEW_SETS) {
-          this.showView(VIEW_CONTROL, 1)
+          this.showView(VIEW_CONTROL)
           return true
         }
         // Z ekranu czasu i tętna w prawo wracamy na serie. Wcześniej gest
         // wracał bez obsługi, a wtedy system robi swoje - czyli wychodzi
         // z aplikacji w środku treningu.
         if (event === GESTURE_RIGHT && col > 0) {
-          this.showView(VIEW_SETS, 1)
+          this.showView(VIEW_SETS)
           return true
         }
         return false
@@ -707,6 +837,7 @@ Page({
       callback: (key, keyEvent) => {
         if (keyEvent !== KEY_EVENT_CLICK) return false
         if (key === KEY_HOME || key === KEY_BACK || key === KEY_SELECT) return false
+        this.dotyk()
         this.sideButton()
         return true
       }
@@ -717,21 +848,25 @@ Page({
     this.buildWidgets()
     this.startClock()
 
-    // Trening założony na zegarku wraca z własnej pamięci, bez pytania
-    // telefonu - po to ma własny znacznik. Zgaśnięcie ekranu ubija
+    // Trening wraca z własnej pamięci, bez pytania telefonu. Zgaśnięcie ekranu ubija
     // mini-aplikację przy każdym opuszczeniu nadgarstka, więc to nie jest
     // przypadek brzegowy, tylko zwykły bieg rzeczy. Czekanie na telefon
     // znaczyłoby, że bez niego trening ginie po pierwszym zgaśnięciu.
-    if (this.restoreLocal()) {
+    const wrocil = this.restoreLocal()
+    if (wrocil) {
       this.state.view = VIEW_SETS
       this.state.message = null
       this.applyVisibility()
       this.paint()
       this.scheduleDrain(0)
+      // Ekran zgasl w tych kilku sekundach miedzy ostatnia seria planu
+      // a podsumowaniem. Podsumowanie nalezy sie nadal.
+      if (!this.state.wasComplete && this.localComplete()) this.zaplanujKoniec()
     } else {
       this.setMessage('Łączę z telefonem...')
     }
-    this.send('STATE', {}, true)
+    // Po powrocie z pamieci zegarek wie, gdzie stoi - telefon nie przestawia.
+    this.send('STATE', {}, !wrocil)
   },
 
   onDestroy() {
@@ -742,8 +877,8 @@ Page({
     offGesture()
     offKey()
     if (this.clockTimer) clearTimeout(this.clockTimer)
-    if (this.slideTimer) clearTimeout(this.slideTimer)
     if (this.nameTimer) clearTimeout(this.nameTimer)
+    if (this.koniecTimer) clearTimeout(this.koniecTimer)
     if (this.flashTimer) clearTimeout(this.flashTimer)
     this.nameRun = -1
     if (this.heart && this.onHeart) this.heart.offCurrentChange(this.onHeart)
@@ -752,7 +887,6 @@ Page({
       try { this.vibrator.stop() } catch (e) {}
     }
     try { resetDropWristScreenOff() } catch (e) {}
-    this.remember()
     resetPageBrightTime()
   },
 
@@ -919,16 +1053,19 @@ Page({
       this.tickCount = (this.tickCount || 0) + 1
       // Kalorie same z siebie nie przychodzą - czujnik odpytujemy.
       if (this.tickCount % 10 === 0) this.readCalorie()
-      if (this.tickCount % 15 === 0) this.rememberNow()
+      // Zapis stanu z zegara tylko przez kolejke zapisow, czyli w ciszy.
+      // Dotad szedl wprost co piętnaście sekund, a tetno i plan co pol
+      // minuty - niezaleznie od tego, czy palec akurat cos naciskal.
+      if (this.tickCount % 30 === 0 && this.state.sessionId) this.remember()
+      if (this.tickCount % 60 === 0 && this.state.sessionId) this.rememberHeavyLater()
       // Na ekranie wyboru odswiezamy liste jednostek. Plan zmienia sie na
       // telefonie - skasowany trening przestawia kolejnosc - a zegarek
-      // pokazywal to, co zapamietal przy ostatnim polaczeniu.
-      if (this.tickCount % 30 === 0 && this.state.view === VIEW_START &&
+      // pokazywal to, co zapamietal przy ostatnim polaczeniu. Co dwie
+      // minuty, nie co pol: odpowiedz to kilkanascie kilobajtow.
+      if (this.tickCount % 120 === 0 && this.state.view === VIEW_START &&
         !this.state.message) {
         this.askUnits()
       }
-      // Tetno i plan rzadziej: to one sa ciezkie.
-      if (this.tickCount % 30 === 0) this.rememberHeavy()
       // Zegar tylko pilnuje, żeby kolejka miała umówioną próbę. Samo
       // ponawianie chodzi własnym rytmem, z rosnącym odstępem.
       if (this.tickCount % 5 === 0 && (this.state.outbox || []).length) {
@@ -1010,7 +1147,7 @@ Page({
       }
     }
     this.setText(this.w.timer, value)
-    this.w.timer.setProperty(hmUI.prop.MORE, { color: resting ? AMBER : ACCENT })
+    this.kolor(this.w.timer, resting ? AMBER : ACCENT)
   },
 
   // ---- Budowa, raz -------------------------------------------------------
@@ -1041,7 +1178,7 @@ Page({
     }
     const widget = hmUI.createWidget(
       hmUI.widget.BUTTON,
-      Object.assign({ click_func: onClick }, props)
+      Object.assign({ click_func: () => { this.dotyk(); onClick() } }, props)
     )
     widget.props = props
     return widget
@@ -1052,13 +1189,20 @@ Page({
    *
    * Przycisk wymaga, żeby przy `setProperty` podać razem z nową wartością
    * także `x`, `y`, `w` i `h` - bez nich zmiana nie dochodzi. Kolor
-   * tekstu nazywa się tu `color`. Wysyłamy więc za każdym razem komplet, co
-   * przy okazji wymusza przerysowanie: po przejściu zasłona zostawiała
-   * przyciski obcięte, bo system nie odmalowywał ich sam.
+   * tekstu nazywa się tu `color`. Wysyłamy więc za każdym razem komplet.
    */
   setBtn(widget, changes) {
     if (!widget || !widget.props) return
-    for (const key in changes) widget.props[key] = changes[key]
+    // Bez zmiany - bez zapisu. Komplet wlasciwosci szedl dotad przy kazdym
+    // malowaniu, a zapis przycisku to jego przerysowanie od nowa.
+    let zmiana = false
+    for (const key in changes) {
+      if (widget.props[key] !== changes[key]) {
+        widget.props[key] = changes[key]
+        zmiana = true
+      }
+    }
+    if (!zmiana) return
     widget.setProperty(hmUI.prop.MORE, widget.props)
   },
 
@@ -1144,6 +1288,10 @@ Page({
     w.statKcal = this.text(80, 278, 320, 62, 46, FG, hmUI.text_style.NONE)
     w.statKcalLabel = this.text(100, 340, 280, 24, 17, DIM, hmUI.text_style.NONE)
     w.statVolume = this.text(70, 372, 340, 28, 19, DIM, hmUI.text_style.NONE)
+    // Stan synchronizacji. Ekran czasu jest tym, na ktory zaglada sie
+    // w przerwie, wiec tu ma stac odpowiedz na pytanie "czy to w ogole
+    // dojezdza do telefonu".
+    w.statSync = this.text(70, 404, 340, 26, 17, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: tętno ----
     w.heartLabel = this.text(140, 68, 200, 34, 24, DIM, hmUI.text_style.NONE)
@@ -1274,7 +1422,7 @@ Page({
     w.ctrlState = this.text(90, 118, 300, 32, 21, DIM, hmUI.text_style.NONE)
     w.ctrlPause = this.button(100, 156, 280, 78, 27, 'WSTRZYMAJ', GREY, () => { this.togglePause() })
     w.ctrlSkip = this.button(100, 244, 280, 78, 27, 'POMIŃ ĆWICZENIE', GREY, () => { this.skipExercise() })
-    w.ctrlEnd = this.button(100, 332, 280, 78, 27, 'KONIEC', GREEN, () => { this.showView(VIEW_DONE, -1) })
+    w.ctrlEnd = this.button(100, 332, 280, 78, 27, 'KONIEC', GREEN, () => { this.showView(VIEW_DONE) })
     w.ctrlHint = this.text(110, 416, 260, 36, 19, DIM)
 
     // ---- Widok: start treningu ----
@@ -1285,18 +1433,6 @@ Page({
       btn.setProperty(hmUI.prop.VISIBLE, false)
       w.units.push(btn)
     }
-
-    // Błysk potwierdzenia leży pod zasłoną przejścia, ale nad treścią.
-    w.flash = hmUI.createWidget(hmUI.widget.FILL_RECT, {
-      x: 0, y: 0, w: DEVICE_WIDTH, h: DEVICE_HEIGHT, color: ACCENT
-    })
-    w.flash.setProperty(hmUI.prop.VISIBLE, false)
-
-    // Zasłona przejścia powstaje ostatnia, żeby leżała nad całą resztą.
-    w.slide = hmUI.createWidget(hmUI.widget.FILL_RECT, {
-      x: 0, y: 0, w: DEVICE_WIDTH, h: DEVICE_HEIGHT, color: 0x000000
-    })
-    w.slide.setProperty(hmUI.prop.VISIBLE, false)
 
     this.w = w
     this.state.built = true
@@ -1321,6 +1457,13 @@ Page({
     widget.setProperty(hmUI.prop.VISIBLE, chciane)
   },
 
+  /** Kolor napisu - tak samo, tylko gdy się zmienia. */
+  kolor(widget, color) {
+    if (!widget || widget.barwa === color) return
+    widget.barwa = color
+    widget.setProperty(hmUI.prop.MORE, { color: color })
+  },
+
   /** Napis - tak samo, tylko gdy się zmienia. */
   setText(widget, value) {
     if (!widget) return
@@ -1330,158 +1473,39 @@ Page({
     widget.setProperty(hmUI.prop.MORE, { text: tekst })
   },
 
-  showView(view, dir, axis) {
+  /**
+   * Zmiana ekranu - od razu, bez animacji.
+   *
+   * Byla tu czarna zaslona zjezdzajaca z ekranu w szescdziesieciu klatkach
+   * na sekunde. Pelnoekranowy prostokat w ruchu to przerysowanie calej
+   * tarczy w kazdej klatce, a po nim jeszcze odbudowa wszystkich przyciskow -
+   * cwierc sekundy, w ktorej palec nie byl slyszany. Przy kilku przejsciach
+   * na serie to wlasnie bylo czuc jako lag.
+   */
+  showView(view) {
     this.state.view = view
     this.applyVisibility()
     this.paint()
-    this.slide(dir || -1, axis)
     if (view === VIEW_DONE || view === VIEW_CONTROL) this.send('STATE', {}, false)
   },
 
   /**
-   * Przejście: czarna zasłona zjeżdża z ekranu w stronę ruchu.
+   * Potwierdzenie kolorem: tlo licznika serii na chwile zmienia barwe.
    *
-   * Rusza się jedna płachta, a nowa treść odsłania się spod niej -
-   * przesuwanie wszystkich widgetów naraz zamuliłoby zegarek.
-   *
-   * Samą płachtę animuje system przez `prop.ANIM`, nie pętla na
-   * `setTimeout`. Tamta robiła siedem skoków po jednej siódmej ekranu
-   * i to właśnie wyglądało jak kilka klatek na sekundę: każdy krok
-   * czekał na kolejne wywołanie JS. Teraz liczbę klatek wybiera system,
-   * a wygładzenie `easeout` wypuszcza treść spod zasłony od razu.
+   * Byl tu blysk na caly ekran, gasnacy w animacji przezroczystosci. Ten sam
+   * problem co z zaslona przejscia: kazda klatka to cala tarcza od nowa,
+   * a dluzszy blysk trwal prawie sekunde - akurat wtedy, gdy przychodzi
+   * kolejne klikniecie. Kolor wciaz mowi, co weszlo, a kosztuje dwa zapisy.
    */
-  slide(dir, axis) {
-    const panel = this.w && this.w.slide
-    if (!panel) return
-
-    // Poprzednie przejście domykamy od razu, zamiast zostawiać je w locie.
-    // Dwie animacje na jednym widgecie to stan, którego nikt nie kontroluje.
-    this.endSlide()
-
-    const vertical = axis === 'y'
-    const span = vertical ? DEVICE_HEIGHT : DEVICE_WIDTH
-    const bieg = (this.slideGen || 0) + 1
-    this.slideGen = bieg
-
-    // Sprzątanie po tym konkretnym przejeździe. Wywołanie zwrotne animacji
-    // wyprzedzonej przez następną przychodzi spóźnione, już w trakcie tamtej,
-    // i wcześniej zdejmowało wtedy bezpiecznik, który nie był jego. Gdy do
-    // tego wywołanie zwrotne tej następnej nie przyszło - a przy podmienionej
-    // animacji to się zdarza - nie zostawało nic, co zdjęłoby zasłonę
-    // i odbudowało przyciski. Stąd pół czarnego ekranu po szybkim machnięciu.
-    const done = () => {
-      if (this.slideGen !== bieg) return
-      this.endSlide()
-    }
-
-    this.slideDone = () => {
-      if (this.slideTimer) {
-        clearTimeout(this.slideTimer)
-        this.slideTimer = null
-      }
-      this.slideDone = null
-      panel.setProperty(hmUI.prop.VISIBLE, false)
-      // Zasłona wraca na miejsce, a nie tam, gdzie zastał ją koniec animacji.
-      panel.setProperty(hmUI.prop.MORE, {
-        x: 0, y: 0, w: DEVICE_WIDTH, h: DEVICE_HEIGHT, color: 0x000000
-      })
-      // Napisy wracają same, przyciski nie - po zasłonie zostawały obcięte.
-      this.visibleButtons().forEach((btn) => this.setBtn(btn, {}))
-    }
-
-    panel.setProperty(hmUI.prop.MORE, {
-      x: 0, y: 0, w: DEVICE_WIDTH, h: DEVICE_HEIGHT, color: 0x000000
-    })
-    panel.setProperty(hmUI.prop.VISIBLE, true)
-
-    // Bezpiecznik ustawiamy PRZED animacją. Gdy wywołanie zwrotne przychodzi
-    // od razu, ustawiony po niej zegar nie miałby już czego sprzątać i wypalał
-    // się później w cudze przejście.
-    this.slideTimer = setTimeout(done, SLIDE_MS + 60)
-
-    try {
-      panel.setProperty(hmUI.prop.ANIM, {
-        anim_steps: [{
-          anim_prop: vertical ? hmUI.prop.Y : hmUI.prop.X,
-          anim_from: 0,
-          anim_to: dir * span,
-          anim_rate: 'easeout',
-          anim_duration: SLIDE_MS,
-          anim_offset: 0
-        }],
-        anim_fps: SLIDE_FPS,
-        anim_auto_start: 1,
-        anim_auto_destroy: 1,
-        anim_repeat: 0,
-        anim_complete_func: done
-      })
-    } catch (e) {
-      done()
-      return
-    }
-
-  },
-
-  /** Domknięcie trwającego przejścia: zasłona znika, przyciski wracają. */
-  endSlide() {
-    const sprzatanie = this.slideDone
-    if (sprzatanie) sprzatanie()
-  },
-
-  /**
-   * Błysk na cały ekran, znikający sam.
-   *
-   * Potwierdzenie w nadgarstku mówi "weszło", ale nie mówi "co" - a seria,
-   * koniec przerwy i domknięcie całego ćwiczenia to trzy różne rzeczy.
-   * Kolor rozróżnia je bez czytania, a przezroczystość gaśnie sama, więc
-   * nic nie zasłania ekranu dłużej niż chwilę.
-   *
-   * Animuje to system przez `prop.ANIM`; pętla w JS dawałaby skokowe
-   * gaśnięcie i zabierała czas akurat wtedy, gdy ekran ma być żywy.
-   */
-  flash(color, ms, alpha) {
-    const panel = this.w && this.w.flash
-    if (!panel) return
+  flash(color, ms) {
+    const btn = this.w && this.w.count
+    if (!btn) return
     if (this.flashTimer) clearTimeout(this.flashTimer)
-
-    const zdejmij = () => {
-      if (this.flashTimer) {
-        clearTimeout(this.flashTimer)
-        this.flashTimer = null
-      }
-      panel.setProperty(hmUI.prop.VISIBLE, false)
-    }
-
-    panel.setProperty(hmUI.prop.MORE, {
-      x: 0, y: 0, w: DEVICE_WIDTH, h: DEVICE_HEIGHT, color: color
-    })
-    panel.setProperty(hmUI.prop.VISIBLE, true)
-
-    // Bezpiecznik ustawiamy przed animacją - tak jak przy zasłonie.
-    // Ustawiony po niej zostawał na zawsze, gdy wywołanie zwrotne
-    // przychodziło od razu: błysk był już zdjęty, a zegar nadal wisiał
-    // i wyglądało to tak, jakby coś się cały czas animowało.
-    this.flashTimer = setTimeout(zdejmij, ms + 60)
-
-    try {
-      panel.setProperty(hmUI.prop.ANIM, {
-        anim_steps: [{
-          anim_prop: hmUI.prop.ALPHA,
-          anim_from: alpha,
-          anim_to: 0,
-          anim_rate: 'easeout',
-          anim_duration: ms,
-          anim_offset: 0
-        }],
-        anim_fps: SLIDE_FPS,
-        anim_auto_start: 1,
-        anim_auto_destroy: 1,
-        anim_repeat: 0,
-        anim_complete_func: zdejmij
-      })
-    } catch (e) {
-      zdejmij()
-    }
+    this.setBtn(btn, { normal_color: color })
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null
+      this.setBtn(btn, { normal_color: 0x000000 })
+    }, ms)
   },
 
   setMessage(text) {
@@ -1518,7 +1542,7 @@ Page({
     ;[w.prev, w.next].forEach((x) => this.setVisible(x, sets && !pytamy))
     w.rirRow.forEach((x) => this.setVisible(x, pytamy))
     ;[w.statTime, w.statTimeLabel, w.statSets, w.statSetsLabel,
-      w.statKcal, w.statKcalLabel, w.statVolume]
+      w.statKcal, w.statKcalLabel, w.statVolume, w.statSync]
       .forEach((x) => this.setVisible(x, stats))
     ;[w.heartLabel, w.heartValue, w.heartRange]
       .forEach((x) => this.setVisible(x, heart))
@@ -1560,21 +1584,192 @@ Page({
     return list[this.state.index] || null
   },
 
-  shownDone(ex) {
-    return ex.done + (this.state.pending[ex.id] || 0)
+  /**
+   * Trening tak, jak go widac na zegarku: stan od telefonu plus wszystko,
+   * co jeszcze czeka w kolejce.
+   *
+   * Dotad liczba serii brala sie z osobnego licznika niepotwierdzonych,
+   * a dziennik serii - wylacznie z odpowiedzi telefonu. Te dwie rzeczy
+   * rozjezdzaly sie przy kazdym opoznieniu: ekran cwiczenia mowil
+   * "zrobione 3 z 3", a dziennik pokazywal dwie serie, bez zapasu podanego
+   * do drugiej, a przy innych cwiczeniach - nic. Poprawka serii wracala do
+   * starych liczb, bo dziennik czekal na telefon.
+   *
+   * Teraz jedno i drugie wynika z tego samego: z ostatniego stanu telefonu
+   * i z polecen, ktore jeszcze do niego nie doszly. Liczone raz na zmiane
+   * stanu albo kolejki, nie przy kazdym malowaniu.
+   */
+  nakladka() {
+    const data = this.state.data
+    const outbox = this.state.outbox || []
+    const n = this.nakl
+    if (n && n.d === data && n.o === outbox && n.v === (this.wersja || 0)) return n
+
+    const ex = {}
+    ;((data && data.exercises) || []).forEach((e) => {
+      ex[e.id] = {
+        done: e.done || 0,
+        entries: (e.entries || []).map((w) => ({
+          id: w.id, ref: w.ref, weight: w.weight, reps: w.reps,
+          rir: w.rir === undefined || w.rir === null ? -1 : w.rir,
+          warmup: !!w.warmup
+        }))
+      }
+    })
+    const sid = this.state.sessionId
+    outbox.forEach((poz) => {
+      const p = poz.p || {}
+      // Zaleglosc z innego treningu nie nalezy do tego, ktory widac.
+      if (p.sid && sid && String(p.sid) !== String(sid)) return
+      this.nalozOp(ex, poz.m, p, poz.cid, null, true)
+    })
+
+    let sets = 0
+    let reps = 0
+    let ton = 0
+    for (const id in ex) {
+      ex[id].entries.forEach((w) => {
+        if (w.warmup) return
+        sets += 1
+        reps += w.reps || 0
+        ton += (w.weight || 0) * (w.reps || 0)
+      })
+    }
+    const wynik = {
+      d: data, o: outbox, v: this.wersja || 0, ex: ex,
+      totals: {
+        sets: sets, reps: reps, tonnage: ton,
+        complete: !!(data && data.totals && data.totals.complete)
+      }
+    }
+    this.nakl = wynik
+    return wynik
   },
 
+  /** Kolejka albo stan zmienione w miejscu - widok trzeba policzyc od nowa. */
+  zmienione() {
+    this.wersja = (this.wersja || 0) + 1
+  },
+
+  /**
+   * Jedno polecenie nalozone na serie cwiczen.
+   *
+   * Ta sama funkcja liczy widok z kolejki i wpisuje do stanu polecenia juz
+   * potwierdzone - dzieki temu seria wyglada tak samo przed wyslaniem i po.
+   *
+   * @param ex mapa id cwiczenia -> { done, entries }
+   * @param setId numer od telefonu, gdy polecenie SET jest juz potwierdzone
+   * @param czeka czy seria jeszcze nie doszla - wiersz dziennika to pokazuje
+   */
+  nalozOp(ex, m, p, cid, setId, czeka) {
+    const znajdz = () => {
+      for (const id in ex) {
+        const lista = ex[id].entries
+        for (let i = 0; i < lista.length; i++) {
+          const w = lista[i]
+          if ((p.setId && w.id === p.setId) || (p.ref && w.ref === p.ref)) {
+            return { e: ex[id], i: i }
+          }
+        }
+      }
+      return null
+    }
+    if (m === 'SET') {
+      const e = ex[p.exerciseId]
+      if (!e) return
+      const w = {
+        weight: p.weight, reps: p.reps,
+        rir: p.rir === undefined || p.rir === null ? -1 : p.rir,
+        warmup: false
+      }
+      if (setId) w.id = setId
+      else w.ref = cid
+      if (czeka) w.czeka = true
+      e.entries.push(w)
+      e.done += 1
+      return
+    }
+    if (m === 'EDIT') {
+      const f = znajdz()
+      if (!f) return
+      const w = f.e.entries[f.i]
+      if (p.weight !== undefined) w.weight = p.weight
+      if (p.reps !== undefined) w.reps = p.reps
+      if (p.rir !== undefined) w.rir = p.rir
+      return
+    }
+    if (m === 'RIR') {
+      let f = znajdz()
+      if (!f) {
+        // Starszy zapis bez wskazania serii - telefon wezmie ostatnia.
+        const e = ex[p.exerciseId]
+        if (!e || !e.entries.length) return
+        f = { e: e, i: e.entries.length - 1 }
+      }
+      f.e.entries[f.i].rir = p.rir === undefined ? -1 : p.rir
+      return
+    }
+    if (m === 'DELETE') {
+      const f = znajdz()
+      if (!f) return
+      f.e.entries.splice(f.i, 1)
+      f.e.done = Math.max(0, f.e.done - 1)
+      return
+    }
+    if (m === 'UNDO') {
+      const e = ex[p.exerciseId]
+      if (!e || !e.entries.length) return
+      e.entries.pop()
+      e.done = Math.max(0, e.done - 1)
+    }
+  },
+
+  /**
+   * Potwierdzone polecenie wpisane na stale do stanu.
+   *
+   * Odpowiedz telefonu nie zawsze nadaje sie do pokazania - zaleglosc
+   * z innego treningu, odpowiedz bez stanu. Polecenie znika jednak z kolejki
+   * i bez tego wpisu seria znikalaby tez z ekranu, az do nastepnej odpowiedzi.
+   */
+  wpiszPotwierdzone(poz, setId) {
+    const data = this.state.data
+    if (!data || !data.exercises) return
+    const p = poz.p || {}
+    if (p.sid && this.state.sessionId && String(p.sid) !== String(this.state.sessionId)) return
+    const ex = {}
+    data.exercises.forEach((e) => {
+      if (!e.entries) e.entries = []
+      ex[e.id] = e
+    })
+    this.nalozOp(ex, poz.m, p, poz.cid, setId, false)
+    this.zmienione()
+  },
+
+  /** Serie cwiczenia, z tymi jeszcze w kolejce. */
+  shownDone(ex) {
+    const e = this.nakladka().ex[ex.id]
+    return e ? e.done : (ex.done || 0)
+  },
+
+  /**
+   * Ile polecen zmieniajacych serie tego treningu czeka na telefon.
+   * Kolor licznika mowi, czy to, co widac, juz jest w bazie.
+   */
   pendingCount() {
+    const sid = this.state.sessionId
     let n = 0
-    for (const id in this.state.pending) n += Math.abs(this.state.pending[id])
+    ;(this.state.outbox || []).forEach((x) => {
+      if (x.m !== 'SET' && x.m !== 'DELETE' && x.m !== 'UNDO') return
+      if (x.p && x.p.sid && sid && String(x.p.sid) !== String(sid)) return
+      n += 1
+    })
     return n
   },
 
-  bump(exerciseId, delta) {
-    const now = this.state.pending[exerciseId] || 0
-    const next = now + delta
-    if (next === 0) delete this.state.pending[exerciseId]
-    else this.state.pending[exerciseId] = next
+  /** Czy w kolejce czeka cokolwiek dla tej sesji. */
+  czekaDla(sid) {
+    if (!sid) return false
+    return (this.state.outbox || []).some((x) => x.p && String(x.p.sid) === String(sid))
   },
 
   isSkipped(id) {
@@ -1633,7 +1828,7 @@ Page({
     if (!ex) return
     if (this.isSkipped(ex.id)) {
       delete this.state.skipped[ex.id]
-      this.showView(VIEW_SETS, -1)
+      this.showView(VIEW_SETS)
       return
     }
     this.state.skipped[ex.id] = true
@@ -1641,7 +1836,7 @@ Page({
     this.remember()
     this.state.phase = PHASE_SET
     this.state.phaseSince = Date.now()
-    this.showView(this.localComplete() ? VIEW_DONE : VIEW_SETS, -1)
+    this.showView(this.localComplete() ? VIEW_DONE : VIEW_SETS)
   },
 
   /**
@@ -1670,15 +1865,173 @@ Page({
    * a cztery pola trafia się kciukiem bez patrzenia.
    */
   setRir(value) {
-    const id = this.state.rirFor
-    if (!id) return
+    const r = this.state.rirFor
+    if (!r) return
     this.buzz()
     this.state.rirFor = null
     this.applyVisibility()
     this.paintSets()
-    // Bez numeru serii: telefon sam wie, która była ostatnia w tym ćwiczeniu.
-    // Dzięki temu pytanie działa też wtedy, gdy telefonu nie ma w zasięgu.
-    this.queue('RIR', { exerciseId: id, rir: value })
+    this.remember()
+    // Zapis sprzed tej zmiany trzymal tu sam numer cwiczenia.
+    if (typeof r !== 'object') {
+      this.queue('RIR', { exerciseId: r, rir: value })
+      return
+    }
+    this.opiszSerie(r.ref, r.ex, { rir: value })
+    // Zapas do ostatniej serii planu - to byla ostatnia rzecz przed koncem.
+    if (this.koniecTimer) this.pokazKoniec()
+  },
+
+  /**
+   * Koniec planu, rozpoznany na zegarku.
+   *
+   * Podsumowanie pokazywala dotad wylacznie odpowiedz telefonu na ostatnia
+   * serie. Z telefonem w szatni ta odpowiedz nie przychodzila wcale - ostatnia
+   * seria ostatniego cwiczenia nie konczyla treningu i ekran stal na serii.
+   * Zegarek wie sam, ze plan jest zrobiony: liczy serie z kolejki.
+   *
+   * Nie od razu: po ostatniej serii pada jeszcze pytanie o zapas. Wybor
+   * zapasu albo kilka sekund ciszy - i wtedy podsumowanie.
+   */
+  zaplanujKoniec() {
+    if (this.koniecTimer) clearTimeout(this.koniecTimer)
+    this.koniecTimer = setTimeout(() => this.pokazKoniec(), KONIEC_MS)
+  },
+
+  pokazKoniec() {
+    if (this.koniecTimer) {
+      clearTimeout(this.koniecTimer)
+      this.koniecTimer = null
+    }
+    if (this.state.wasComplete || !this.localComplete()) return
+    // Podsumowanie wskakuje tylko w miejsce ekranow treningu - z dziennika
+    // czy poprawki nie wyrywamy, tam sie wlasnie cos robi.
+    if (COLUMN.indexOf(this.state.view) < 0 || this.state.message) return
+    this.state.wasComplete = true
+    this.remember()
+    this.showView(VIEW_DONE)
+  },
+
+  /**
+   * Zmiana serii wskazanej znacznikiem polecenia, ktore ja zalozylo.
+   *
+   * Seria, ktora jeszcze nie wyszla z zegarka, dostaje zmiane wprost
+   * w swoim poleceniu - bez osobnego polecenia i bez zgadywania, ktora to.
+   * Wczesniej zapas lecial jako "dla ostatniej serii cwiczenia" i gdy
+   * w kolejce czekalo kilka serii, trafial w zla - albo w nic.
+   *
+   * Seria juz wyslana dostaje polecenie z jej numerem, a gdy numeru jeszcze
+   * nie znamy - ze znacznikiem, ktory telefon sam zamieni na numer.
+   */
+  opiszSerie(ref, exerciseId, zmiany) {
+    const poz = this.czekajacaSeria(ref)
+    if (poz) {
+      for (const k in zmiany) poz.p[k] = zmiany[k]
+      this.zmienione()
+      this.rememberOutbox()
+      return
+    }
+    const setId = this.state.acked[ref]
+    const p = Object.assign({ exerciseId: exerciseId }, zmiany)
+    if (setId) p.setId = setId
+    else p.ref = ref
+    this.queue(zmiany.weight !== undefined || zmiany.reps !== undefined ? 'EDIT' : 'RIR', p)
+  },
+
+  /**
+   * Polecenie SET o tym znaczniku, o ile jeszcze ani razu nie wyszlo.
+   *
+   * Tylko takie wolno zmieniac w miejscu. Wyslane moglo juz zostac wykonane
+   * bez odpowiedzi - ponowione trafiloby wtedy na telefonie w pamiec powtorek
+   * i zmiana przepadlaby po cichu.
+   */
+  czekajacaSeria(ref) {
+    if (!ref) return null
+    const lista = this.state.outbox || []
+    for (let i = 0; i < lista.length; i++) {
+      const x = lista[i]
+      if (x.m === 'SET' && x.cid === ref) return x.s ? null : x
+    }
+    return null
+  },
+
+  /**
+   * Sumy do pokazania - z tego samego widoku co serie i dziennik.
+   *
+   * Licza sie z wpisow, nie z liczb przyslanych przez telefon, bo tamte
+   * dotycza tylko tego, co juz dojechalo.
+   */
+  sumy() {
+    return this.nakladka().totals
+  },
+
+  /**
+   * Przepisanie kolejki na numer, ktory nadal telefon.
+   *
+   * Polecenia wyslane przed polaczeniem niosa nasz wlasny znacznik sesji.
+   * Od chwili, gdy telefon nada jej numer, to ta sama sesja - bez tego
+   * reszta kolejki wygladala jak zaleglosc z innego treningu i jej
+   * odpowiedzi przestawaly odswiezac ekran.
+   */
+  przepiszKolejke(stary, nowy) {
+    if (!stary || !nowy) return
+    let zmiana = false
+    ;(this.state.outbox || []).forEach((x) => {
+      if (x.p && x.p.sid === stary) { x.p.sid = String(nowy); zmiana = true }
+    })
+    if (zmiana) { this.zmienione(); this.rememberOutbox() }
+  },
+
+  /** Ile polecen czeka na telefon. */
+  czeka() {
+    return (this.state.outbox || []).length
+  },
+
+  /**
+   * Jedna linijka o tym, co jeszcze nie dojechalo.
+   *
+   * Dotad nie bylo tego nigdzie: kolejka pracowala w ciszy, a jedynym
+   * znakiem byla zolta godzina, ktora mowi o braku odpowiedzi, nie
+   * o zaleglosci. Trening mogl wiec lezec w zegarku cala noc i nic na
+   * ekranie tego nie zdradzalo.
+   */
+  syncText() {
+    const n = this.czeka()
+    if (!n) return this.state.syncDone ? 'Wysłane do telefonu' : 'Nic do wysłania'
+    const co = n === 1 ? '1 rzecz' : n + ' rzeczy'
+    return (this.state.offline ? 'Czeka ' : 'Wysyłam ') + co
+  },
+
+  paintSync() {
+    const w = this.w
+    if (!w || !w.statSync) return
+    const n = this.czeka()
+    this.setText(w.statSync, this.syncText())
+    this.kolor(w.statSync, n ? (this.state.offline ? AMBER : PENDING) : DIM)
+  },
+
+  /**
+   * Zmiana dlugosci kolejki - jedyne miejsce, ktore o niej mowi na glos.
+   *
+   * Opustoszenie kolejki to wydarzenie: wlasnie wtedy trening jest juz
+   * w bazie na telefonie i mozna odlozyc zegarek. Dlatego jedna wibracja,
+   * tylko przy przejsciu z "cos czeka" na "nic nie czeka".
+   */
+  zmianaKolejki() {
+    const n = this.czeka()
+    const bylo = this.state.syncWas || 0
+    this.state.syncWas = n
+    if (bylo && !n) {
+      this.state.syncDone = true
+      this.buzz()
+    }
+    if (n) this.state.syncDone = false
+    const view = this.state.view
+    if (this.state.built && !this.state.message) {
+      if (view === VIEW_STATS) this.paintSync()
+      else if (view === VIEW_START) this.paintStart()
+      else if (view === VIEW_DONE) this.paintDone()
+    }
   },
 
   /** Serie policzone lokalnie, razem z tymi jeszcze niepotwierdzonymi. */
@@ -1829,6 +2182,11 @@ Page({
 
     const zawroc = () => {
       if (this.nameRun !== bieg) return
+      // Jeden przejazd tam i z powrotem, potem nazwa stoi od poczatku.
+      // Chodzila dotad w kolko przez caly czas cwiczenia - a dluga nazwa
+      // to kazde cwiczenie z hantlami na lawce - i animacja w tle zjadala
+      // klatki, ktorych potrzebowaly przyciski.
+      if (kierunek > 0 || this.state.view !== VIEW_SETS) return
       this.nameTimer = setTimeout(() => {
         if (this.nameRun !== bieg) return
         this.slideName(nadmiar, -kierunek)
@@ -1864,15 +2222,14 @@ Page({
     const paused = !!data.paused
     this.setText(w.statTime, this.clock(this.sessionSeconds()))
     this.setText(w.statTimeLabel, paused ? 'Wstrzymany' : 'Czas treningu')
-    w.statTimeLabel.setProperty(hmUI.prop.MORE, { color: paused ? AMBER : DIM })
+    this.kolor(w.statTimeLabel, paused ? AMBER : DIM)
     this.setText(w.statSets, String(this.shownTotalSets()))
     this.setText(w.statSetsLabel, 'Serie')
     this.setText(w.statKcal, this.kcalText())
     this.setText(w.statKcalLabel, this.state.kcalFail ? 'Kalorie - brak zgody' : 'Kalorie')
-    w.statKcalLabel.setProperty(hmUI.prop.MORE, {
-      color: this.state.kcalFail ? AMBER : DIM
-    })
-    this.setText(w.statVolume, Math.round(totals.tonnage || 0) + ' kg objętości')
+    this.kolor(w.statKcalLabel, this.state.kcalFail ? AMBER : DIM)
+    this.setText(w.statVolume, Math.round(this.sumy().tonnage || 0) + ' kg objętości')
+    this.paintSync()
   },
 
   /**
@@ -1929,13 +2286,16 @@ Page({
     if (!widac || this.state.message) return
     const value = this.state.hr > 0 ? String(this.state.hr) : '--'
     const kolor = this.hrColor(this.state.hr)
+    // Tetno przychodzi co sekunde przez caly trening. Kolor i polozenie
+    // serca pisaly sie przy kazdym odczycie - trzy zapisy do widgetow
+    // na sekunde, prawie zawsze z ta sama wartoscia.
     this.setText(this.w.hr, value)
-    this.w.hr.setProperty(hmUI.prop.MORE, { color: kolor })
-    this.w.hrIcon.setProperty(hmUI.prop.MORE, { color: kolor })
+    this.kolor(this.w.hr, kolor)
+    this.kolor(this.w.hrIcon, kolor)
     this.placeHeart(value)
     if (this.state.view === VIEW_HEART) {
       this.setText(this.w.heartValue, value)
-      this.w.heartValue.setProperty(hmUI.prop.MORE, { color: kolor })
+      this.kolor(this.w.heartValue, kolor)
       this.setText(this.w.heartLabel, this.hrZoneName(this.state.hr) || 'Tętno')
     }
   },
@@ -1949,6 +2309,8 @@ Page({
    * krawędzi, zamiast przesuwać liczbę ze środka.
    */
   placeHeart(value) {
+    if (this.w.hrIcon.cyfr === value.length) return
+    this.w.hrIcon.cyfr = value.length
     const half = (value.length * HR_DIGIT_W) / 2
     const right = Math.round(DEVICE_WIDTH / 2 - half - HR_GAP)
     this.w.hrIcon.setProperty(hmUI.prop.MORE, {
@@ -1968,7 +2330,7 @@ Page({
     const log = this.state.hrLog
     this.setText(w.heartLabel, this.hrZoneName(this.state.hr) || 'Tętno')
     this.setText(w.heartValue, this.state.hr > 0 ? this.state.hr : '--')
-    w.heartValue.setProperty(hmUI.prop.MORE, { color: this.hrColor(this.state.hr) })
+    this.kolor(w.heartValue, this.hrColor(this.state.hr))
 
     if (!log.length) {
       this.setText(w.heartRange, 'zbieram pomiary...')
@@ -2027,19 +2389,25 @@ Page({
     const totals = data.totals || {}
     this.setText(w.doneTitle, 'Podsumowanie')
     this.setText(w.doneTime, this.clock(this.sessionSeconds()))
-    this.setText(w.doneSets, (totals.sets || 0) + ' serii,  ' + (totals.reps || 0) + ' powt.')
+    const sumy = this.sumy()
+    this.setText(w.doneSets, (sumy.sets || 0) + ' serii,  ' + (sumy.reps || 0) + ' powt.')
     this.setText(w.doneSkip, this.gapsText())
     const g = this.gaps()
     this.setText(w.doneMore, g.sets ? 'w górę: co pominięte' : '')
     this.setText(
       w.doneTon,
-      Math.round(totals.tonnage || 0) + ' kg,  ' + this.kcalText() + ' kcal'
+      Math.round(sumy.tonnage || 0) + ' kg,  ' + this.kcalText() + ' kcal'
     )
     this.setText(w.doneHint, this.tonRows().length ? 'w dół: tonaż po ćwiczeniach' : 'w prawo: wróć do serii')
+    // Po treningu to jedyny moment, w ktorym widac, czy cokolwiek zostalo
+    // do wyslania. Wczesniej nie bylo tego nigdzie i trening lezal
+    // w kolejce bez sladu na ekranie.
+    const czeka = this.czeka()
     this.setText(
       w.doneNext,
-      this.state.nextUnit ? 'następny: ' + this.state.nextUnit : ''
+      czeka ? this.syncText() : (this.state.nextUnit ? 'następny: ' + this.state.nextUnit : '')
     )
+    this.kolor(w.doneNext, czeka ? AMBER : DIM)
   },
 
   /** Nazwy na ekran braków, z ogonem "i jeszcze N", gdy się nie mieszczą. */
@@ -2073,13 +2441,15 @@ Page({
     this.state.phase = PHASE_SET
     this.state.phaseSince = Date.now()
     this.remember()
-    this.showView(VIEW_SETS, 1, 'y')
+    this.showView(VIEW_SETS)
   },
 
   /** Zapisane serie bieżącego ćwiczenia, od pierwszej. */
   logRows() {
     const ex = this.current()
-    return (ex && ex.entries) || []
+    if (!ex) return []
+    const e = this.nakladka().ex[ex.id]
+    return (e && e.entries) || []
   },
 
   /**
@@ -2152,12 +2522,12 @@ Page({
     // Zapas z dziennika; -1 znaczy "nie podano" i tak też wraca na ekran.
     const zapas = (wpis.rir === undefined || wpis.rir === null) ? -1 : wpis.rir
     this.state.fix = {
-      id: wpis.id, nr: this.logFrom() + i + 1,
+      id: wpis.id, ref: wpis.ref, nr: this.logFrom() + i + 1,
       weight: wpis.weight, reps: wpis.reps, rir: zapas,
       exerciseId: (this.current() || {}).id
     }
     this.state.fixConfirm = false
-    this.showView(VIEW_FIX, -1, 'y')
+    this.showView(VIEW_FIX)
   },
 
   paintFix() {
@@ -2227,19 +2597,24 @@ Page({
     }
     this.state.fixConfirm = false
     this.buzz()
-    this.queue('DELETE', { setId: fix.id })
-    // Lokalnie od razu, żeby dziennik nie pokazywał skasowanej serii
-    // do czasu odpowiedzi telefonu.
-    const ex = this.current()
-    const wpisy = (ex && ex.entries) || []
-    for (let i = 0; i < wpisy.length; i++) {
-      if (wpisy[i].id === fix.id) {
-        wpisy.splice(i, 1)
-        break
-      }
+    // Seria, ktora jeszcze nie wyszla z zegarka, znika razem z poleceniem -
+    // telefon nigdy sie o niej nie dowie. Wyslana dostaje polecenie kasowania.
+    // Dziennik i licznik licza sie z kolejki, wiec seria znika z ekranu od razu.
+    const czeka = fix.ref ? this.czekajacaSeria(fix.ref) : null
+    if (czeka) {
+      this.state.outbox = (this.state.outbox || []).filter((x) =>
+        x !== czeka && !(x.p && x.p.ref === fix.ref))
+      this.rememberOutbox()
+      this.zmianaKolejki()
+    } else if (fix.id) {
+      this.queue('DELETE', { setId: fix.id })
+    } else if (fix.ref) {
+      const setId = this.state.acked[fix.ref]
+      this.queue('DELETE', setId ? { setId: setId } : { ref: fix.ref })
     }
-    this.bump(fix.exerciseId || (ex && ex.id), -1)
-    this.showView(VIEW_LOG, 1, 'y')
+    const r = this.state.rirFor
+    if (r && typeof r === 'object' && fix.ref && r.ref === fix.ref) this.state.rirFor = null
+    this.showView(VIEW_LOG)
   },
 
   fixStep(co, dir) {
@@ -2253,25 +2628,33 @@ Page({
     } else {
       if (!ex.hasWeight) return
       // Ta sama drabinka co przy zapisie - poprawka nie może wprowadzić
-      // ciężaru, którego nie da się złożyć z talerzy.
-      const zapamietany = this.state.weight
-      this.state.weight = fix.weight
-      this.stepWeight(dir)
-      fix.weight = this.state.weight
-      this.state.weight = zapamietany
+      // ciężaru, którego nie da się złożyć z talerzy. Bez ruszania ciężaru
+      // na nastepna serie: szlo to dotad przez ten sam przycisk co edycja,
+      // wiec poprawka starej serii przestawiala tez propozycje na nowa.
+      const nowa = this.krokCiezaru(ex, fix.weight, dir)
+      if (nowa === null) return
+      fix.weight = nowa
     }
     this.paintFix()
   },
 
+  /**
+   * Zapis poprawki - najpierw do kolejki, potem na ekran.
+   *
+   * Odwrotna kolejnosc to byl ten blad, w ktorym poprawka "wracala do
+   * poprzedniego stanu": dziennik malowal sie od razu, ze starych liczb
+   * z ostatniej odpowiedzi telefonu, i stal tak, dopoki poprawka nie
+   * dojechala - bez lacznosci do konca treningu.
+   */
   saveFix() {
     const fix = this.state.fix
     if (!fix) return
     this.state.fixConfirm = false
     this.buzz()
-    this.showView(VIEW_LOG, 1, 'y')
-    this.queue('EDIT', {
-      setId: fix.id, weight: fix.weight, reps: fix.reps, rir: fix.rir
-    })
+    const zmiany = { weight: fix.weight, reps: fix.reps, rir: fix.rir }
+    if (fix.id) this.queue('EDIT', Object.assign({ setId: fix.id }, zmiany))
+    else if (fix.ref) this.opiszSerie(fix.ref, fix.exerciseId, zmiany)
+    this.showView(VIEW_LOG)
   },
 
   /**
@@ -2286,8 +2669,12 @@ Page({
   tonRows() {
     const lista = (this.state.data && this.state.data.exercises) || []
     const out = []
+    const widok = this.nakladka().ex
     lista.forEach((ex) => {
-      const wpisy = (ex.entries || []).filter((e) => !e.warmup)
+      // Z widoku, nie z samej odpowiedzi telefonu: bez lacznosci telefon
+      // nie przysyla nic, a serie i tak sa - czekaja w kolejce.
+      const e = widok[ex.id]
+      const wpisy = ((e && e.entries) || []).filter((w) => !w.warmup)
       if (!wpisy.length) return
       const ton = wpisy.reduce((suma, e) => suma + e.weight * e.reps, 0)
       out.push({ name: ex.name, sets: wpisy.length, ton: Math.round(ton) })
@@ -2369,7 +2756,13 @@ Page({
   paintStart() {
     const w = this.w
     const units = this.state.units || []
-    this.setText(w.startTitle, this.state.program || 'Wybierz jednostkę')
+    // Zaleglosc wyprzedza nazwe programu: po treningu to wazniejsza
+    // wiadomosc niz to, jak nazywa sie plan.
+    const czeka = this.czeka()
+    this.setText(w.startTitle, czeka
+      ? this.syncText()
+      : (this.state.program || 'Wybierz jednostkę'))
+    this.kolor(w.startTitle, czeka ? AMBER : DIM)
     // Jednostka, która wypada w rotacji, jest podświetlona - po treningu
     // nie trzeba pamiętać, na czym się skończyło.
     units.slice(0, w.units.length).forEach((unit, i) => {
@@ -2403,15 +2796,15 @@ Page({
       return
     }
     if (view === VIEW_LOG) {
-      this.showView(VIEW_SETS, -1, 'y')
+      this.showView(VIEW_SETS)
       return
     }
     if (view === VIEW_GAPS) {
-      this.showView(VIEW_DONE, 1, 'y')
+      this.showView(VIEW_DONE)
       return
     }
     if (view === VIEW_DONE || view === VIEW_CONTROL) {
-      this.showView(VIEW_SETS, view === VIEW_CONTROL ? -1 : 1)
+      this.showView(VIEW_SETS)
       return
     }
     this.press()
@@ -2433,17 +2826,24 @@ Page({
     if (view === VIEW_EDIT) {
       // Z edycji zawsze zapis, nawet w trakcie przerwy. Po to się tam wchodzi:
       // ustawić ciężar i powtórzenia serii, która właśnie idzie do dziennika.
-      this.showView(VIEW_SETS, 1)
+      this.showView(VIEW_SETS)
       this.saveSet()
       return
     }
-    if (view !== VIEW_SETS) this.showView(VIEW_SETS, 1, 'y')
+    if (view !== VIEW_SETS) this.showView(VIEW_SETS)
 
+    // Plan zrobiony i czeka na podsumowanie - przycisk go nie odwleka,
+    // tylko je pokazuje. Nowa seria po koncu planu i tak zaczyna sie
+    // z podsumowania jednym gestem.
+    if (this.koniecTimer && view === VIEW_SETS) {
+      this.pokazKoniec()
+      return
+    }
     if (this.state.phase === PHASE_REST) {
       // Start serii też szarpie: to sygnał "bierz sztangę", tak samo
       // potrzebny bez patrzenia na ekran jak potwierdzenie zapisu.
       this.buzz()
-      this.flash(ACCENT, FLASH_REST_MS, 110)
+      this.flash(FLASH_REST, FLASH_REST_MS)
       this.state.phase = PHASE_SET
       this.state.phaseSince = Date.now()
       // Rząd zapasu znika razem z przerwą, a strzałki wracają na miejsce.
@@ -2477,10 +2877,14 @@ Page({
 
     // Seria na pominiętym ćwiczeniu znaczy, że jednak je robisz.
     if (this.isSkipped(id)) delete this.state.skipped[id]
-    this.bump(id, 1)
+    // Najpierw do kolejki: licznik, dziennik i sumy licza sie z niej.
+    const cid = this.queue('SET', {
+      exerciseId: id, weight: weight, reps: reps, doneAt: now
+    })
+    const domkniete = this.shownDone(ex) >= ex.sets
     // Przeskok na kolejne ćwiczenie robimy sami, bez czekania na telefon -
     // inaczej szybkie klikanie pozwalało dobić 4/3 i 5/3.
-    if (this.shownDone(ex) >= ex.sets) this.advance()
+    if (domkniete) this.advance()
 
     this.state.phase = PHASE_REST
     this.state.phaseSince = now
@@ -2493,7 +2897,7 @@ Page({
     this.state.editedFor = null
     // O zapas pytamy dla tej serii, nie dla ćwiczenia, na które za chwilę
     // przeskoczy ekran po domknięciu poprzedniego.
-    this.state.rirFor = id
+    this.state.rirFor = { ex: id, ref: cid }
     this.remember()
 
     // Rząd zapasu pojawia się tutaj, a nie dopiero po odpowiedzi telefonu.
@@ -2506,12 +2910,9 @@ Page({
 
     // Domknięcie całego ćwiczenia dostaje osobny, dłuższy i zielony błysk -
     // to inny rodzaj wydarzenia niż kolejna seria i ma się tak czuć.
-    if (this.shownDone(ex) >= ex.sets) this.flash(0x1f8a5a, FLASH_DONE_MS, 170)
-    else this.flash(PENDING, FLASH_SET_MS, 120)
-
-    this.queue('SET', {
-      exerciseId: id, weight: weight, reps: reps, doneAt: Date.now()
-    }, id, -1)
+    if (domkniete && !this.state.wasComplete && this.localComplete()) this.zaplanujKoniec()
+    if (domkniete) this.flash(FLASH_DONE, FLASH_DONE_MS)
+    else this.flash(FLASH_SET, FLASH_SET_MS)
   },
 
   /**
@@ -2567,22 +2968,29 @@ Page({
   stepWeight(dir) {
     const ex = this.current()
     if (!ex || !ex.hasWeight) return
+    const nowa = this.krokCiezaru(ex, this.state.weight, dir)
+    if (nowa === null) return
+    this.state.weight = nowa
+    this.state.editedFor = ex.id
+    this.paintEdit()
+  },
 
-    // Po progach, które naprawdę istnieją na tej siłowni. Dodawanie
-    // stałego kroku policzonego raz lądowało pomiędzy nimi - przy hantlach
-    // nie dawało się ustawić okrągłych dwudziestu kilogramów, choć taki
-    // hantel stoi na stojaku.
+  /**
+   * Nastepny ciezar od podanego, po progach, ktore naprawde istnieja na tej
+   * silowni. Zwraca null, gdy dalej nie ma czego zalozyc albo zdjac.
+   *
+   * Dodawanie stalego kroku policzonego raz ladowalo pomiedzy progami -
+   * przy hantlach nie dawalo sie ustawic okraglych dwudziestu kilogramow,
+   * choc taki hantel stoi na stojaku.
+   */
+  krokCiezaru(ex, waga, dir) {
     const drabinka = ex.ladder
     if (!drabinka || !drabinka.length) {
-      const next = this.state.weight + dir * (ex.step || 2.5)
-      if (next < 0) return
-      this.state.weight = Math.round(next * 100) / 100
-      this.state.editedFor = ex.id
-      this.paintEdit()
-      return
+      const next = waga + dir * (ex.step || 2.5)
+      if (next < 0) return null
+      return Math.round(next * 100) / 100
     }
 
-    const waga = this.state.weight
     const dol = drabinka[0]
     const gora = drabinka[drabinka.length - 1]
 
@@ -2592,16 +3000,13 @@ Page({
     if (waga < dol - 0.01 || waga > gora + 0.01) {
       const ponizej = waga < dol
       const twarde = ponizej ? (dir < 0 && ex.atMin) : (dir > 0 && ex.atMax)
-      if (twarde) return
+      if (twarde) return null
       const krok = this.edgeGap(drabinka, ponizej ? -1 : 1) || ex.step || 2.5
       let next = waga + dir * krok
       if (ponizej && dir > 0 && next > dol) next = dol
       if (!ponizej && dir < 0 && next < gora) next = gora
-      if (next <= 0) return
-      this.state.weight = Math.round(next * 100) / 100
-      this.state.editedFor = ex.id
-      this.paintEdit()
-      return
+      if (next <= 0) return null
+      return Math.round(next * 100) / 100
     }
 
     let i = this.nearestRung(drabinka, waga)
@@ -2611,23 +3016,18 @@ Page({
     else if (dir > 0 && drabinka[i] < waga) i += 1
     else if (dir < 0 && drabinka[i] > waga) i -= 1
 
-    if (i >= 0 && i < drabinka.length) {
-      this.state.weight = drabinka[i]
-    } else {
-      // Koniec listy to nie koniec siłowni. Telefon mówi osobno, czy to
-      // prawdziwa granica sprzętu - wtedy stoimy - czy tylko kraniec
-      // okienka, które przysłał; wtedy idziemy dalej krokiem z brzegu.
-      // Bez tego nie dało się zejść do rozgrzewkowych serii na gryfie.
-      const twarde = i < 0 ? ex.atMin : ex.atMax
-      if (twarde) return
-      const krok = this.edgeGap(drabinka, dir) || ex.step || 2.5
-      const next = waga + dir * krok
-      if (next <= 0) return
-      this.state.weight = Math.round(next * 100) / 100
-    }
+    if (i >= 0 && i < drabinka.length) return drabinka[i]
 
-    this.state.editedFor = ex.id
-    this.paintEdit()
+    // Koniec listy to nie koniec siłowni. Telefon mówi osobno, czy to
+    // prawdziwa granica sprzętu - wtedy stoimy - czy tylko kraniec
+    // okienka, które przysłał; wtedy idziemy dalej krokiem z brzegu.
+    // Bez tego nie dało się zejść do rozgrzewkowych serii na gryfie.
+    const twarde = i < 0 ? ex.atMin : ex.atMax
+    if (twarde) return null
+    const krok = this.edgeGap(drabinka, dir) || ex.step || 2.5
+    const next = waga + dir * krok
+    if (next <= 0) return null
+    return Math.round(next * 100) / 100
   },
 
   /** Odstęp między dwoma ostatnimi progami po tej stronie drabinki. */
@@ -2655,13 +3055,19 @@ Page({
    */
   finishWorkout() {
     this.buzz()
+    if (this.koniecTimer) { clearTimeout(this.koniecTimer); this.koniecTimer = null }
     // Od tej chwili wszystko, co wyszło wcześniej, jest nieaktualne.
     this.nowyBieg()
     this.queue('FINISH', { endedAt: Date.now() })
+    // Zakonczenie do pliku od razu, nie za chwile. Gdy aplikacja ginie
+    // w tej chwili - a zegarek potrafil ja ubic wlasnie przy koncu treningu -
+    // odlozony zapis nie zdazyl, zapis sesji byl juz skasowany i trening
+    // na telefonie trwal dalej. Po powrocie zegarek widzial go jako swiezy.
+    this.rememberOutboxNow()
     this.state.localId = null
     this.state.sessionId = null
     this.state.data = null
-    this.state.pending = {}
+    this.state.acked = {}
     this.state.wasComplete = false
     this.state.firstState = true
     this.state.skipped = {}
@@ -2671,6 +3077,7 @@ Page({
     this.state.pausedLocal = null
     this.state.hrMin = 0
     this.state.hrMax = 0
+    this.state.startedAt = 0
     this.forget()
     this.state.view = VIEW_START
     this.applyVisibility()
@@ -2705,6 +3112,8 @@ Page({
       .then((reply) => {
         if (this.bierzBieg() !== bieg) return
         const data = (reply && reply.data) || reply || {}
+        // Awaria po drodze - tak samo jak cisza: plan z pamieci.
+        if (data.retry) throw TIMEOUT
         const units = data.units || []
         if (!units.length) {
           this.setMessage('Brak jednostek w programie')
@@ -2712,6 +3121,12 @@ Page({
         }
         this.state.program = data.program || ''
         this.state.units = units
+        // Wspolczynniki spalania i progi tetna jada razem z jednostkami,
+        // nie tylko ze stanem treningu. Stan przychodzi dopiero wtedy, gdy
+        // trening trwa - a kalorie maja liczyc sie od pierwszej serii, takze
+        // w treningu zaczetym bez lacznosci.
+        if (data.burn && data.burn.k1) this.state.burn = data.burn
+        if (data.hrZones && data.hrZones.max) this.state.zones = data.hrZones
         const kolejna = units.filter((u) => u.next)[0]
         if (kolejna) this.state.nextUnit = kolejna.name
         this.rememberUnits()
@@ -2742,6 +3157,7 @@ Page({
     if (!unit) return
     // Nowy trening - odpowiedzi dotyczące poprzedniego już nie wchodzą.
     this.nowyBieg()
+    if (this.koniecTimer) { clearTimeout(this.koniecTimer); this.koniecTimer = null }
     this.state.view = VIEW_SETS
     this.state.phase = PHASE_SET
     this.state.phaseSince = Date.now()
@@ -2751,6 +3167,7 @@ Page({
     this.state.kcal = 0
     this.state.burnKcal = 0
     this.state.burnAt = 0
+    this.state.acked = {}
     this.readCalorie()
 
     // Sesje zaklada zegarek, a telefon ja tylko dopisuje, gdy uslyszy.
@@ -2761,7 +3178,7 @@ Page({
       // Pamiec sprzed tej zmiany albo starszy telefon - nie ma z czego
       // zbudowac jednostki u siebie, wiec po staremu, z czekaniem.
       this.setMessage('Zaczynam ' + unit.name + '...')
-      this.queue('START', { planId: unit.id }, null, 0, true)
+      this.queue('START', { planId: unit.id }, true)
       return
     }
 
@@ -2772,7 +3189,6 @@ Page({
     this.state.sessionSec = 0
     this.state.sessionAt = Date.now()
     this.state.pausedLocal = null
-    this.state.pending = {}
     this.state.wasComplete = false
     this.state.firstState = false
     this.state.index = 0
@@ -2795,11 +3211,13 @@ Page({
     this.state.message = null
     this.applyVisibility()
     this.paint()
-    this.remember()
-    this.rememberHeavy()
     this.queue('START', {
       planId: unit.id, localId: znacznik, startedAt: this.state.startedAt
     })
+    // Poczatek treningu tez od razu do pliku - z tego samego powodu co koniec.
+    this.rememberOutboxNow()
+    this.rememberNow()
+    this.rememberHeavy()
   },
 
   /**
@@ -2852,7 +3270,7 @@ Page({
    * zna swój stan sam. Wcześniej każde takie polecenie szło wprost, więc
    * zerwana łączność gasiła ekran w środku serii i gubiła to, co zrobione.
    */
-  queue(method, params, settleId, settleDelta, follow) {
+  queue(method, params, follow) {
     // Znacznik polecenia. Odpowiedź potrafi zginąć po tym, jak telefon już
     // ją wykonał - wtedy ponowienie zapisałoby tę samą serię drugi raz.
     // Telefon pamięta ostatnie znaczniki i powtórkę pomija.
@@ -2866,12 +3284,13 @@ Page({
     // Tylko start jednostki podaza za telefonem: on wie, od ktorego
     // cwiczenia zaczac. Przy reszcie to zegarek wie lepiej, gdzie stoi.
     if (follow === true) poz.f = true
-    if (settleId) { poz.id = settleId; poz.d = settleDelta }
     this.state.outbox = (this.state.outbox || []).concat([poz])
     // Sam stan treningu zapisuje ten, kto go zmienil - tutaj wystarczy
     // kolejka. Dwa zapisy na jedno nacisniecie to dwa razy za duzo.
     this.rememberOutbox()
+    this.zmianaKolejki()
     this.scheduleDrain(0)
+    return cid
   },
 
   /**
@@ -2888,73 +3307,164 @@ Page({
     if (this.draining || this.drainTimer) return
     this.drainTimer = setTimeout(() => {
       this.drainTimer = null
-      // Rozmowa z telefonem w trakcie przejścia zjadałaby te same klatki
-      // co zapis do pliku. Przejście trwa ćwierć sekundy, poczeka.
-      if (this.zajeteRysowaniem()) {
-        this.scheduleDrain(ZAPIS_MS)
-        return
-      }
       this.drain()
     }, za || 0)
   },
 
-  /** Wysyłka kolejki, po jednym, w kolejności nadania. */
+  /**
+   * Wysyłka kolejki w kolejności nadania - paczkami, gdy telefon to umie.
+   *
+   * Trzy rodzaje odpowiedzi i każdy znaczy co innego:
+   *
+   * - wykonane: polecenie znika z kolejki,
+   * - odmowa telefonu (`reject`): to jedno polecenie nie ma szans przejść,
+   *   więc też znika - ale tylko ono,
+   * - awaria po drodze (`retry`, brak odpowiedzi): polecenie zostaje.
+   *
+   * Dotąd ostatnie dwa wyglądały tak samo. Każdy błąd wyrzucał polecenie,
+   * a "brak trwającego treningu" - całą kolejkę. Wystarczyło, że GymBro na
+   * telefonie akurat nie słuchał, i serie znikały jedna po drugiej, choć
+   * zegarek pokazywał je jako zrobione.
+   */
   drain() {
     if (this.draining) return
     const kolejka = this.state.outbox || []
     if (!kolejka.length) {
       this.drainWait = 0
       this.setOffline(false)
+      this.zmianaKolejki()
       return
     }
     this.draining = true
-    const poz = kolejka[0]
+    // Cos czeka - choc paczka moze oproznic kolejke jednym zadaniem, jedna
+    // wibracja po dojechaniu wszystkiego nadal sie nalezy.
+    if (!this.state.syncWas) this.state.syncWas = kolejka.length
     const bieg = this.bierzBieg()
-    this.ask(poz.m, poz.p)
+    const paczka = kolejka.slice(0, this.bezPaczek ? 1 : PACZKA)
+    // Start w paczce znaczy, ze telefon dopiero pozna ten trening - stan
+    // na koniec musi byc pelny, z drabinkami, bo innego jeszcze nie mamy.
+    const pelny = paczka.some((x) => x.m === 'START')
+    paczka.forEach((x) => { x.s = 1 })
+    const pojedyncze = paczka.length === 1
+    const prosba = pojedyncze
+      ? this.ask(paczka[0].m, pelny ? paczka[0].p : Object.assign({ lite: 1 }, paczka[0].p))
+      : this.ask('BATCH', {
+        lite: pelny ? 0 : 1,
+        items: paczka.map((x) => ({ m: x.m, p: x.p }))
+      })
+    prosba
       .then((reply) => {
         this.draining = false
         const data = (reply && reply.data) || reply || {}
-        this.state.outbox = (this.state.outbox || []).slice(1)
-        if (poz.id) this.bump(poz.id, poz.d)
-        this.rememberOutbox()
-        this.remember()
-        if (data.error) {
-          // Odmowa dotycząca nieistniejącej już sesji znaczy, że cała
-          // reszta kolejki też jest do niej - nie ma czego dosyłać.
-          // Pokazywanie tego jako błędu tylko myliło: to nie awaria,
-          // tylko zaległość po treningu, którego dawno nie ma.
-          if (data.stale || /trwaj[aą]cego treningu/.test(String(data.error))) {
-            this.state.outbox = []
-            this.rememberOutbox()
-            this.setOffline(false)
-            return
-          }
-          // Telefon odmówił z innego powodu. Powtarzanie tego w kółko
-          // niczego nie zmieni, ale gaszenie trwającego treningu nie pomoże.
-          if (this.state.data && this.state.data.active) this.setOffline(true)
-          else this.setMessage(data.error)
+        if (data.retry) {
+          this.niePoszlo()
           return
         }
-        this.drainWait = 0
-        this.setOffline(false)
-        // Polecenie doszło, ale trening zdążył się skończyć - stan z tej
-        // odpowiedzi dotyczy już czegoś innego.
-        if (this.bierzBieg() !== bieg) {
-          if ((this.state.outbox || []).length) this.scheduleDrain(0)
+        let wyniki
+        let stan
+        if (pojedyncze) {
+          wyniki = [data.error ? { error: data.error } : { ok: true, setId: data.setId }]
+          stan = data.error ? null : data
+        } else if (data.results) {
+          wyniki = data.results
+          stan = data.state || null
+        } else if (data.reject || /nieznan/.test(String(data.error || ''))) {
+          // Telefon sprzed tej zmiany nie zna paczek - po jednym, jak dawniej.
+          this.bezPaczek = true
+          this.scheduleDrain(0)
+          return
+        } else {
+          this.niePoszlo()
           return
         }
-        this.apply(data, poz.f === true)
-        if ((this.state.outbox || []).length) this.scheduleDrain(0)
+        this.przyjmij(paczka.slice(0, wyniki.length), wyniki, stan, bieg)
       })
       .catch(() => {
         this.draining = false
-        this.setOffline(true)
-        // Telefon milczy - pytamy rzadziej, zamiast dobijać się w kółko.
-        this.drainWait = Math.min(
-          Math.max(DRAIN_MIN_MS, (this.drainWait || 0) * 2), DRAIN_MAX_MS
-        )
-        this.scheduleDrain(this.drainWait)
+        this.niePoszlo()
       })
+  },
+
+  /** Telefon milczy - pytamy rzadziej, zamiast dobijać się w kółko. */
+  niePoszlo() {
+    this.setOffline(true)
+    this.drainWait = Math.min(
+      Math.max(DRAIN_MIN_MS, (this.drainWait || 0) * 2), DRAIN_MAX_MS
+    )
+    this.scheduleDrain(this.drainWait)
+  },
+
+  /** Wyniki od telefonu: kolejka krótsza, stan aktualny. */
+  przyjmij(zalatwione, wyniki, stan, bieg) {
+    const usun = {}
+    zalatwione.forEach((poz, i) => {
+      usun[poz.cid] = true
+      const wynik = wyniki[i] || {}
+      if (!wynik.ok) {
+        // Odmowa dotyczy tego jednego polecenia. Reszta kolejki leci dalej.
+        this.state.odrzucone = (this.state.odrzucone || 0) + 1
+        return
+      }
+      let setId = wynik.setId || 0
+      if (poz.m === 'SET') {
+        // Telefon sprzed tej zmiany nie podaje numeru - wtedy to ostatnia
+        // seria tego ćwiczenia w stanie, który właśnie przyszedł.
+        if (!setId && stan) setId = this.ostatniaSeria(stan, poz.p.exerciseId)
+        if (setId) this.potwierdzSerie(poz.cid, setId)
+      }
+      this.wpiszPotwierdzone(poz, setId)
+    })
+    this.state.outbox = (this.state.outbox || []).filter((x) => !usun[x.cid])
+    this.rememberOutbox()
+    this.zmianaKolejki()
+    this.remember()
+    this.drainWait = 0
+    this.setOffline(false)
+
+    const ostatnie = zalatwione[zalatwione.length - 1]
+    const dalej = () => {
+      if ((this.state.outbox || []).length) this.scheduleDrain(0)
+    }
+    // Polecenie doszło, ale trening zdążył się skończyć albo zacząć nowy -
+    // stan z tej odpowiedzi dotyczy już czegoś innego.
+    if (!stan || this.bierzBieg() !== bieg) return dalej()
+    // Zaleglosc z innej sesji: dojezdza wczorajszy trening, a na ekranie
+    // stoi dzisiejszy. Odpowiedz opisuje nie to, co widac, wiec wolno jej
+    // zapisac historie, ale nie przestawic ekranu.
+    const sid = ostatnie && ostatnie.p && ostatnie.p.sid
+    if (sid && String(this.state.sessionId || '') !== String(sid)) return dalej()
+    this.apply(stan, !!(ostatnie && ostatnie.f === true))
+    dalej()
+  },
+
+  /** Numer najnowszej serii ćwiczenia w stanie od telefonu. */
+  ostatniaSeria(stan, exerciseId) {
+    const ex = ((stan && stan.exercises) || []).filter((e) => e.id === exerciseId)[0]
+    const wpisy = (ex && ex.entries) || []
+    let max = 0
+    wpisy.forEach((w) => { if (w.id > max) max = w.id })
+    return max
+  },
+
+  /**
+   * Seria dostała numer. Polecenia, które czekają na nią po znaczniku,
+   * dostają go wprost - wtedy dojdą także do telefonu, który w międzyczasie
+   * zapomniał znaczniki, bo na przykład się zrestartował.
+   */
+  potwierdzSerie(cid, setId) {
+    const acked = this.state.acked || {}
+    acked[cid] = setId
+    const klucze = Object.keys(acked)
+    if (klucze.length > ACKED_MAX) {
+      klucze.slice(0, klucze.length - ACKED_MAX).forEach((k) => { delete acked[k] })
+    }
+    this.state.acked = acked
+    ;(this.state.outbox || []).forEach((x) => {
+      if (x.p && x.p.ref === cid) {
+        x.p.setId = setId
+        delete x.p.ref
+      }
+    })
   },
 
   /**
@@ -2968,7 +3478,11 @@ Page({
     if (this.state.offline === !!czy) return
     this.state.offline = !!czy
     if (this.w && this.w.clock) {
-      this.w.clock.setProperty(hmUI.prop.MORE, { color: czy ? AMBER : DIM })
+      this.kolor(this.w.clock, czy ? AMBER : DIM)
+    }
+    if (this.state.built && !this.state.message) {
+      if (this.state.view === VIEW_STATS) this.paintSync()
+      else if (this.state.view === VIEW_START) this.paintStart()
     }
   },
 
@@ -2988,23 +3502,25 @@ Page({
     this.sesjaGen = (this.sesjaGen || 0) + 1
   },
 
-  send(method, params, follow, settleId, settleDelta) {
+  send(method, params, follow) {
     const bieg = this.bierzBieg()
     this.ask(method, params)
       .then((reply) => {
         const data = (reply && reply.data) || reply || {}
-        if (settleId) this.bump(settleId, settleDelta)
+        // Awaria po drodze to to samo co brak odpowiedzi.
+        if (data.retry) throw TIMEOUT
         // Odpowiedź dotyczy treningu, którego już nie ma.
         if (this.bierzBieg() !== bieg) return
 
         if (data.error) {
+          // W trakcie treningu odmowa nie zabiera ekranu - trening idzie dalej.
+          if (this.state.data && this.state.data.active) return
           this.setMessage(data.error)
           return
         }
         this.apply(data, follow === true)
       })
       .catch((e) => {
-        if (settleId) this.bump(settleId, settleDelta)
         // Przy trwającym treningu nie zabieramy ekranu. Jedna nieudana
         // odpowiedź nie znaczy, że nie wiadomo, co się dzieje.
         if (this.state.data && this.state.data.active) {
@@ -3027,16 +3543,26 @@ Page({
   },
 
   apply(data, follow) {
-    this.state.data = data
+    // Zaleglosc dopisana na telefonie od razu jako zamknieta - bez stanu.
+    if (!data || data.backfill) return
     if (!data.active) {
+      // Telefon nie zna trwajacego treningu. Gdy zegarek ma swoj, a w kolejce
+      // czeka cos dla niego - START, ktory go dopiero zalozy, albo FINISH -
+      // telefon po prostu jeszcze nie wie. Taka odpowiedz konczyla dotad
+      // trening na zegarku w polowie serii.
+      if (this.state.sessionId && this.czekaDla(this.state.sessionId)) return
+      this.state.data = data
       // Czyścimy ślady po zakończonym treningu, żeby kolejny zaczynał się
       // od zera także bez zamykania aplikacji.
-      this.state.pending = {}
       this.state.wasComplete = false
       this.state.firstState = true
       this.state.skipped = {}
       this.state.index = 0
       this.state.sessionId = null
+      this.state.localId = null
+      this.state.startedAt = 0
+      this.state.acked = {}
+      this.state.rirFor = null
       this.state.editedFor = null
       if (data.next && data.next.name) this.state.nextUnit = data.next.name
       this.state.hrMin = 0
@@ -3054,6 +3580,36 @@ Page({
       return
     }
 
+    // Czyj to trening. Telefon pokazuje ten, ktory u niego trwa - a to nie
+    // zawsze nasz. Trening zaczety na zegarku, ktorego START jeszcze nie
+    // dojechal albo dojechal jako zaleglosc, ma na telefonie inny numer
+    // niz trening, ktory tam akurat trwa. Przyjecie tamtego za swoj
+    // przerzucalo zegarek na stary trening - i jego serie szly tam.
+    const sid = data.sessionId || null
+    if (this.state.sessionId && this.state.sessionId !== sid) {
+      if (this.state.localId) {
+        if (data.localId !== undefined && data.localId !== this.state.localId) return
+      } else if (this.czekaDla(this.state.sessionId)) {
+        return
+      }
+    }
+
+    // Odpowiedz bez drabinek i reszty stalych rzeczy - dokladamy je
+    // z poprzedniego stanu tego samego cwiczenia.
+    const prev = this.state.data
+    const byla = this.current()
+    const poId = {}
+    ;((prev && prev.exercises) || []).forEach((e) => { poId[e.id] = e })
+    data.exercises = list.map((e) => (poId[e.id] ? Object.assign({}, poId[e.id], e) : e))
+    if (prev) {
+      ;['hrZones', 'burn', 'next', 'plan'].forEach((k) => {
+        if (data[k] === undefined && prev[k] !== undefined) data[k] = prev[k]
+      })
+    }
+    this.state.data = data
+    this.zmienione()
+    this.rememberHeavyLater()
+
     // Telefon dogonił to, co ustawiliśmy na zegarku - od tej chwili znowu
     // on jest źródłem. Dopóki nie dogonił, jego sekundy są nieaktualne.
     if (this.state.pausedLocal !== null && !!data.paused === this.state.pausedLocal) {
@@ -3063,8 +3619,19 @@ Page({
       this.state.sessionSec = data.elapsedSec || 0
       this.state.sessionAt = Date.now()
     }
-    this.state.zones = data.hrZones && data.hrZones.max ? data.hrZones : null
-    this.state.burn = data.burn && data.burn.k1 ? data.burn : null
+    // Odpowiedz, ktora ich nie niesie - a taka jest kazda odpowiedz na
+    // zakonczenie treningu - nie moze ich zabierac. Wyzerowane tutaj,
+    // znikaly na cale nastepne treningi i kalorie staly na kresce.
+    if (data.hrZones && data.hrZones.max) this.state.zones = data.hrZones
+    if (data.burn && data.burn.k1) {
+      const stare = this.state.burn
+      this.state.burn = data.burn
+      // Do zapisu jednostek, bo ten przezywa koniec treningu. Tylko przy
+      // zmianie: zapis do pamieci trwalej to zapis do pliku.
+      if (!stare || stare.k0 !== data.burn.k0 || stare.k1 !== data.burn.k1) {
+        this.rememberUnits()
+      }
+    }
     // Nastepna jednostka jedzie w kazdej odpowiedzi, nie tylko przy
     // zakonczeniu: trening zamkniety na telefonie nie daje zegarkowi
     // odpowiedzi z FINISH, wiec podsumowanie pokazywalo wartosc sprzed sesji.
@@ -3074,23 +3641,41 @@ Page({
     // może dotyczyć treningu, który trwa od godziny. Odtwarzamy wtedy to,
     // co o nim wiemy, i nie dajemy telefonowi przestawić nas na początek
     // planu - on zna tylko zapisane serie, nie to, gdzie staliśmy.
-    const sid = data.sessionId || null
+    let trzymaj = true
     if (this.state.sessionId !== sid) {
       // Nasza sesja wlasnie dostala numer od telefonu. To wciaz ta sama
       // sesja, wiec nie wolno zaczynac od poczatku planu: zegarek wie,
       // na ktorym cwiczeniu stoi, telefon dopiero sie tego uczy.
       const nasza = !!this.state.localId
+      const staryZnacznik = this.state.localId
       this.state.sessionId = sid
       if (nasza) {
         this.state.localId = null
         follow = false
+        this.przepiszKolejke(staryZnacznik, sid)
         this.remember()
-      } else if (this.state.firstState && this.restore(sid)) {
+      } else if (this.state.firstState && this.restore(sid, false)) {
         follow = false
       } else {
         this.state.skipped = {}
         this.state.index = 0
+        trzymaj = false
       }
+      // Godzina startu do pilnowania osmiu godzin - z czasu, ktory podaje
+      // telefon, bo trening zaczety tam nie ma jej na zegarku.
+      if (!this.state.startedAt) {
+        this.state.startedAt = Date.now() - (data.elapsedSec || 0) * 1000
+      }
+      this.remember()
+    }
+
+    // Na tym samym cwiczeniu, nie na tym samym miejscu listy. Gdy kolejnosc
+    // w odpowiedzi rozni sie od tej na zegarku - plan zmieniony na telefonie,
+    // plan z pamieci sprzed zmiany - ten sam numer pozycji wskazywal inne
+    // cwiczenie, a serie zapisywaly sie pod cudza nazwa.
+    if (trzymaj && byla && !follow) {
+      const i = data.exercises.findIndex((e) => e.id === byla.id)
+      if (i >= 0) this.state.index = i
     }
 
     const settled = this.pendingCount() === 0
@@ -3099,7 +3684,7 @@ Page({
     }
     if (this.state.index >= list.length) this.state.index = list.length - 1
 
-    const ex = list[this.state.index]
+    const ex = data.exercises[this.state.index]
     // Propozycja telefonu tylko wtedy, gdy sam niczego nie ustawiłeś.
     // Wcześniej każda odpowiedź kasowała ręcznie wybrany ciężar: wpisane
     // 19.8 wracało do 20 przy pierwszym lepszym odświeżeniu stanu.
@@ -3115,13 +3700,22 @@ Page({
     // w trening, który już ma plan wykonany, witało ekranem podsumowania -
     // a to właśnie wyglądało jak podsumowanie na dzień dobry.
     const justCompleted = complete && !this.state.wasComplete && !this.state.firstState
+    // Pytanie o zapas do ostatniej serii jeszcze wisi - podsumowanie pokaze
+    // zegarek sam, po odpowiedzi albo po chwili. Odpowiedz telefonu zabierala
+    // je dotad sprzed palca w pol sekundy.
+    if (justCompleted && settled && this.koniecTimer) {
+      this.state.firstState = false
+      this.applyVisibility()
+      this.paint()
+      return
+    }
     if (settled) {
       this.state.wasComplete = complete
       this.state.firstState = false
     }
 
     if (justCompleted && settled && COLUMN.indexOf(this.state.view) >= 0) {
-      this.showView(VIEW_DONE, -1)
+      this.showView(VIEW_DONE)
       return
     }
     this.applyVisibility()

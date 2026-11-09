@@ -29,24 +29,33 @@ const call = async (path, method, payload) => {
   }
 
   const response = await fetch(options)
+  const status = (response && response.status) || 0
 
   // Zly token znaczy, ze telefon slucha, ale nas nie zna - zwykle po
   // przeinstalowaniu aplikacji, bo token rodzi sie na nowo. To zupelnie co
   // innego niz brak polaczenia i wymaga czego innego, wiec mowimy to wprost.
-  if (response && response.status === 401) {
-    return { error: 'Zly token - sprawdz go w Profilu' }
+  if (status === 401) {
+    return { error: 'Zly token - sprawdz go w Profilu', retry: true }
   }
 
   // Odpowiedź bywa już obiektem, a bywa tekstem - zależnie od wersji systemu.
-  const body = response && response.body
+  let body = response && response.body
   if (typeof body === 'string') {
     try {
-      return JSON.parse(body)
+      body = JSON.parse(body)
     } catch (e) {
-      return { error: 'zla odpowiedz' }
+      return { error: 'zla odpowiedz', retry: true }
     }
   }
-  return body || {}
+  body = body || {}
+  // Dwa rodzaje bledu i zegarek musi je odroznic. Odmowa telefonu (4xx)
+  // dotyczy tego jednego polecenia - nie ma po co go ponawiac. Wszystko
+  // inne to awaria po drodze i polecenie ma czekac w kolejce. Wczesniej
+  // obie wygladaly tak samo, wiec zegarek wyrzucal z kolejki serie za
+  // kazdym razem, gdy GymBro na telefonie akurat nie sluchal.
+  if (status >= 500) return Object.assign({}, body, { error: body.error || 'blad telefonu', retry: true })
+  if (status >= 400 && body.error) body.reject = true
+  return body
 }
 
 const handle = async (ctx, request) => {
@@ -86,14 +95,21 @@ const handle = async (ctx, request) => {
       case 'START':
         data = await call('/start', 'POST', request.params)
         break
+      // Te trzy szly dotad z pustym cialem. Telefon nie dostawal wiec ani
+      // znacznika polecenia, ani sesji, ani godziny zakonczenia - trening
+      // zamkniety bez lacznosci konczyl sie o godzinie synchronizacji,
+      // a ponowione zakonczenie moglo zamknac cudzy trening.
       case 'PAUSE':
-        data = await call('/pause', 'POST', {})
+        data = await call('/pause', 'POST', request.params)
         break
       case 'RESUME':
-        data = await call('/resume', 'POST', {})
+        data = await call('/resume', 'POST', request.params)
         break
       case 'FINISH':
-        data = await call('/finish', 'POST', {})
+        data = await call('/finish', 'POST', request.params)
+        break
+      case 'BATCH':
+        data = await call('/batch', 'POST', request.params)
         break
       default:
         data = { error: 'nieznane zadanie' }
@@ -104,7 +120,8 @@ const handle = async (ctx, request) => {
     // pilota nie stoi - po restarcie telefonu albo gdy system ubił proces.
     // Zegarek musi dostać odpowiedź, inaczej wisi na obietnicy, a sam napis
     // "brak połączenia" niczego nie podpowiada, więc mówimy co zrobić.
-    ctx.response({ data: { error: 'Otwórz GymBro na telefonie' } })
+    // Z flaga ponowienia: polecenie zostaje w kolejce zegarka.
+    ctx.response({ data: { error: 'Otwórz GymBro na telefonie', retry: true } })
   }
 }
 

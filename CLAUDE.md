@@ -44,7 +44,7 @@ Demon Gradle'a zostaje w tle po buildzie i **trzyma uchwyty do katalogu projektu
 
 ```sh
 cd gymbro-watch
-node tools/check.js          # 377 sprawdzen, bez zegarka
+node tools/check.js          # 453 sprawdzenia, bez zegarka
 zeus build
 zeus preview -t "Amazfit Balance"
 ```
@@ -98,7 +98,17 @@ Zegarek działa, gdy telefon jest wyłączony albo poza zasięgiem:
 - **kolejka wyjściowa** w `@zos/storage` z ponawianiem od 5 s z podwajaniem do 2 min
 - każde polecenie ma `cid`; telefon trzyma LRU ostatnich 200 w pamięci
 - sesja założona na zegarku ma `local_id` z unikalnym indeksem częściowym w bazie - to **trwała** ochrona przed duplikatem, gdy telefon odpowie po restarcie
-- po 8 godzinach (`STALE_AFTER_MS`, ta sama granica po obu stronach) zaległe polecenia są nieaktualne i lecą do kosza, bo telefon i tak zamknął sesję na ostatniej serii
+- **zaległa kolejka nigdy nie jest wyrzucana** - baza na telefonie to jedyna kopia historii, więc trening dojeżdża choćby po dobie. Po 8 godzinach (`STALE_AFTER_MS`, ta sama granica po obu stronach) kolejce bez `FINISH` dopisywane jest zakończenie na godzinie ostatniego polecenia, żeby zaległy trening nie dojechał jako trwający
+- zaległy `START` ze znacznikiem zegarka telefon dopisuje **od razu zamkniętym** (`startClosed`) i rutuje do niego dalsze polecenia po `sid`: inaczej `active()` kasował właśnie założoną sesję jako porzuconą i cały trening przepadał z błędem „brak trwającego treningu"
+- współczynniki spalania leżą w zapisie **jednostek**, nie sesji - ten drugi ginie na koniec treningu i dlatego kalorie stały na zerze przez cały trening bez telefonu
+- stan kolejki widać na zegarku: na wyborze jednostki, na ekranie czasu i w podsumowaniu, a jedna wibracja mówi, że wszystko dojechało
+- **kolejka leży wyłącznie pod `gymbro-outbox`**, nigdy w zapisie sesji. Dwie kopie sumowały się przy każdym restarcie strony i bez łączności kolejka podwajała się przy każdym opuszczeniu nadgarstka (zmierzone: 3 polecenia → 24 po trzech restartach) - stąd lagi i ubita aplikacja przy końcu treningu
+- **licznik serii, dziennik i sumy liczą się z jednego widoku** (`nakladka()`): ostatni stan od telefonu plus polecenia, które jeszcze czekają. Nie ma osobnego licznika niepotwierdzonych - rozjeżdżał się z dziennikiem
+- trening wraca po restarcie z własnej pamięci (plan w `gymbro-session-big`) także wtedy, gdy ma już numer od telefonu - inaczej bez łączności zegarek pokazywał wybór jednostki w środku treningu
+- zapas i poprawka serii, której numeru zegarek jeszcze nie zna, wskazują ją znacznikiem polecenia SET (`ref`); telefon zamienia go na numer (`seen` pamięta `cid → setId`). Seria jeszcze niewysłana dostaje zmianę wprost w swoim poleceniu
+- trzy rodzaje odpowiedzi: wykonane, odmowa (`reject`, 4xx - wypada tylko to polecenie) i awaria po drodze (`retry` - polecenie zostaje). Ustala je usługa towarzysząca; wcześniej każdy błąd wyrzucał polecenie z kolejki
+- zaległość leci paczkami (`BATCH` → `/batch`, do 15 poleceń) z lekkim stanem bez drabinek (`lite`); zegarek dokleja drabinki z poprzedniego stanu. Telefon bez `/batch` dostaje polecenia po jednym
+- START z zegarka zamyka trening, który jeszcze trwa na telefonie (`closeAbandoned`), zamiast odpowiadać 409 - odmowa kończyła się tym, że serie nowego treningu szły do starego. Stan od telefonu niesie `localId`, po którym zegarek poznaje, czy to jego trening
 
 ### Progresja
 
@@ -199,6 +209,8 @@ Gałąź domyślna to `master`, zdalne `origin` to `github.com/kubab96/GymBro`.
 **Token pilota.** `gymbro-watch/utils/config/link.js` jest w `.gitignore` - paruje konkretny zegarek z konkretnym telefonem. Wzór: `link.example.js`, wartość: GymBro → Profil → Pilot na zegarku. Bez tego pliku paczka się zbuduje, ale telefon odrzuci każde żądanie z 401.
 
 **Baza to jedyna kopia historii treningów.** Nie ma eksportu. `GymBro/kopie/` trzyma ręczne kopie ściągnięte z telefonu i jest poza repozytorium. Przed czymkolwiek, co dotyka danych, zrób kopię.
+
+**Na zegarku nic się nie animuje poza nazwą ćwiczenia** (raz tam i z powrotem). Pełnoekranowa zasłona przejścia i błysk w 60 klatkach były ćwierć sekundy głuchoty na palec przy każdej zmianie ekranu. Zapis do pamięci czeka na 1,2 s ciszy po ostatnim dotyku (`CISZA_MS`); tylko START i FINISH idą do pliku od razu.
 
 **Mierz, nie dedukuj.** Lagi przycisków na zegarku dwa razy „naprawiono" bez pomiaru i dwa razy wróciły. Przyczyny okazały się trzy naraz: animacja nazwy chodząca bez przerwy, operacja na pamięci w ścieżce kliknięcia i 134 zapisy do widgetów przy przejściu, z których 110 nic nie zmieniało. `tools/check.js` liczy zapisy i zapisy do pamięci - używaj tego. Po naprawie cofnij poprawkę i sprawdź, czy test faktycznie pada.
 

@@ -488,6 +488,28 @@ class SessionRepository(context: Context) {
         })
 
     /**
+     * Trening dopisany po fakcie, od razu zamkniety.
+     *
+     * Zegarek potrafi lezec z niewyslana kolejka pol dnia - telefon bywa
+     * wyladowany albo aplikacja Zepp ubita. Taka sesja dojezdza z godzina
+     * sprzed wielu godzin, a [active] uznaje ja wtedy za porzucona i kasuje,
+     * zanim dojada jej serie. Dopisana od razu z czasem zakonczenia nigdy
+     * nie jest "trwajaca", wiec nikt jej nie sprzata, a FINISH z kolejki
+     * poprawia godzine na te prawdziwa.
+     */
+    fun startClosed(
+        planId: Long?,
+        at: Long,
+        localId: String? = null
+    ): Long =
+        db.writable.insert("session", null, ContentValues().apply {
+            if (planId != null) put("plan_id", planId) else putNull("plan_id")
+            put("started_at", at)
+            put("ended_at", at)
+            if (localId != null) put("local_id", localId) else putNull("local_id")
+        })
+
+    /**
      * Ostatni zakonczony trening, dla ktorego nie policzono jeszcze propozycji.
      *
      * Tylko ostatni: starsze i tak sa nieaktualne, a wskrzeszanie propozycji
@@ -504,6 +526,12 @@ class SessionRepository(context: Context) {
             "session", ContentValues().apply { put("advised", 1) },
             "id = ?", arrayOf(id.toString())
         )
+
+    /** Sesja po numerze - takze zamknieta. */
+    fun sessionById(id: Long): Session? =
+        db.readableDatabase.rawQuery(
+            "SELECT * FROM session WHERE id = ? LIMIT 1", arrayOf(id.toString())
+        ).mapAll(::sessionFrom).firstOrNull()
 
     /** Sesja o znaczniku z zegarka - niezaleznie od tego, czy jeszcze trwa. */
     fun byLocalId(localId: String): Session? =
@@ -524,6 +552,18 @@ class SessionRepository(context: Context) {
 
     private fun discard(id: Long): Int =
         db.writable.delete("session", "id = ?", arrayOf(id.toString()))
+
+    /**
+     * Domkniecie treningu, ktory ustepuje nowemu - tak samo jak porzuconego.
+     *
+     * Pusty znika, a ten z seriami konczy sie na ostatniej z nich. Zegarek
+     * zaczyna nowy trening tylko wtedy, gdy uwaza, ze zaden nie trwa - a
+     * odmowa znaczyla, ze serie nowego dopisywaly sie do starego.
+     */
+    fun closeAbandoned(id: Long, now: Long = System.currentTimeMillis()) {
+        val last = lastSetAt(id)
+        if (last == null) discard(id) else finish(id, minOf(last, now))
+    }
 
     /**
      * Trwający trening - albo nic, jeśli poprzedni został porzucony.

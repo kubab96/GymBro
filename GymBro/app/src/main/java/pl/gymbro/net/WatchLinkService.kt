@@ -57,7 +57,15 @@ class WatchLinkService : Service() {
         if (server == null) {
             val token = tokenOf(this)
             val handler = WatchApi(this).also { api = it }
-            handler.onChanged = { reason -> Changes.bump(reason) }
+            handler.onChanged = { reason ->
+                Changes.bump(reason)
+                // Powiadomienie mowi, kiedy zegarek ostatnio cokolwiek zapisal.
+                // Dotad stalo na "Zegarek moze zapisywac serie" przez caly
+                // trening, wiec po stronie telefonu nie bylo zadnego sladu, czy
+                // synchronizacja sie dzieje - a to pierwsze miejsce, w ktore
+                // zaglada sie po treningu bez lacznosci.
+                pokazOstatni()
+            }
             val srv = LocalServer(PORT) { request ->
                 if (request.token != token) {
                     Log.i(TAG, "odrzucone zadanie: zly token")
@@ -84,6 +92,27 @@ class WatchLinkService : Service() {
         api = null
         super.onDestroy()
     }
+
+    /**
+     * Odswiezenie powiadomienia, nie czesciej niz raz na pol minuty.
+     *
+     * Przy szybkim dosylaniu zaleglej kolejki polecenia ida jedno za drugim
+     * i kazde odrysowanie powiadomienia byloby praca na nic - godzina i tak
+     * zmienia sie raz na minute.
+     */
+    private fun pokazOstatni() {
+        val teraz = System.currentTimeMillis()
+        if (teraz - ostatnieOdswiezenie < 30_000) return
+        ostatnieOdswiezenie = teraz
+        val godzina = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(teraz))
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIFICATION_ID, notification("Ostatni zapis z zegarka: " + godzina))
+        }
+    }
+
+    private var ostatnieOdswiezenie = 0L
 
     private fun notification(text: String): Notification {
         val manager = getSystemService(NotificationManager::class.java)

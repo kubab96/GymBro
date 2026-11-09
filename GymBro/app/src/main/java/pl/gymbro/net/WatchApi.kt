@@ -16,6 +16,7 @@ import pl.gymbro.gym.LiveSession
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.gym.ProgressionReview
 import pl.gymbro.gym.PlateCalculator
+import pl.gymbro.gym.StaleSession
 import pl.gymbro.gym.StepLadder
 
 /**
@@ -44,33 +45,156 @@ class WatchApi(context: Context) {
     var onChanged: ((String) -> Unit)? = null
 
     /**
-     * Znaczniki polecen, ktore juz wykonalismy.
+     * Znaczniki polecen, ktore juz wykonalismy - z numerem serii, ktora
+     * polecenie zalozylo (0, gdy nie zakladalo zadnej).
      *
-     * LinkedHashSet, bo liczy sie kolejnosc wstawiania: przy przepelnieniu
-     * wypada najstarszy. Zestaw zyje tyle, co usluga - po jej restarcie
-     * zegarek i tak zaczyna od pobrania stanu.
+     * Kolejnosc wstawiania ma znaczenie: przy przepelnieniu wypada najstarszy.
+     * Numer serii jest tu po to, zeby zegarek mogl poprawic albo opisac zapasem
+     * serie, ktorej numeru jeszcze nie poznal - wysyla wtedy znacznik polecenia
+     * (`ref`), a my zamieniamy go na numer. Bez tego zapas podany po serii,
+     * ktora jeszcze czekala w kolejce, trafial w "ostatnia serie cwiczenia",
+     * czyli w cudza, gdy w kolejce stalo ich kilka.
      */
-    private val seen = LinkedHashSet<String>()
+    private val seen = LinkedHashMap<String, Long>()
+
+    /**
+     * Ustawienia biezacej obslugi. Serwer obsluguje polaczenia po kolei,
+     * jednym watkiem, wiec dwa polecenia nigdy nie dziela tych pol naraz.
+     *
+     * [lekki] - odpowiedz bez drabinek ciezarow. Zegarek ma je z poczatku
+     * treningu, a w kazdej odpowiedzi na serie byly wiekszoscia ladunku -
+     * kilka kilobajtow przez Bluetooth przy kazdym nacisnieciu.
+     *
+     * [cichy] - bez stanu w ogole: polecenia z paczki dostaja jeden wspolny
+     * stan na koniec, zamiast liczyc go od nowa po kazdym.
+     */
+    private var lekki = false
+    private var cichy = false
+
+    /** Numer serii zalozonej przez biezace polecenie. */
+    private var nowaSeria = 0L
+
+    /**
+     * Sesja, do ktorej nalezy polecenie z zegarka.
+     *
+     * Zegarek dokleja do kazdego polecenia znacznik swojej sesji: nadany
+     * przez siebie albo numer od telefonu. Sesja bywa juz zamknieta - zalegle
+     * serie dojezdzaja po treningu - i wtedy tez ma je dostac.
+     *
+     * Znacznik zegarka, ktorego telefon nie zna, znaczy, ze START tej sesji
+     * nie dojechal. Wczesniej polecenie szlo wtedy do [active], czyli do
+     * jakiegokolwiek trwajacego treningu - i serie nowego treningu laczyly
+     * sie ze starym w jeden. Lepiej odmowic jednego polecenia niz pomieszac
+     * dwa treningi.
+     */
+    private fun sesja(body: JSONObject): pl.gymbro.data.Session? {
+        val sid = body.optString("sid").takeIf { it.isNotBlank() }
+            ?: return sessionRepo.active()
+        sessionRepo.byLocalId(sid)?.let { return it }
+        if (sid.all { it.isDigit() }) return sid.toLongOrNull()?.let { sessionRepo.sessionById(it) }
+        return null
+    }
+
+    /** Numer serii z polecenia: wprost albo przez znacznik polecenia, ktore ja zalozylo. */
+    private fun setIdOf(body: JSONObject): Long {
+        val wprost = body.optLong("setId")
+        if (wprost > 0) return wprost
+        val ref = body.optString("ref").takeIf { it.isNotBlank() } ?: return 0
+        return seen[ref] ?: 0
+    }
+
+    /** Odpowiedz na polecenie zmieniajace zapis. */
+    private fun stan(): JSONObject =
+        if (cichy) JSONObject().put("ok", true) else state(lekki)
 
     fun handle(request: LocalServer.Request): LocalServer.Response {
         val body = runCatching { JSONObject(request.body.ifBlank { "{}" }) }
             .getOrElse { JSONObject() }
+        if (request.method == "POST" && request.path == "/batch") return batch(body)
+        lekki = body.optInt("lite") == 1
+        cichy = false
+        return wykonaj(request.method, request.path, body)
+    }
 
+    /**
+     * Paczka polecen z kolejki zegarka, w kolejnosci nadania.
+     *
+     * Po treningu bez lacznosci w kolejce stoi kilkadziesiat polecen. Po
+     * jednym to kilkadziesiat rund przez Bluetooth, kazda z pelnym stanem
+     * w odpowiedzi - przez minute zegarek mielil odpowiedzi zamiast reagowac
+     * na palec. Paczka to jedna runda i jeden stan na koniec.
+     *
+     * Kazde polecenie przechodzi te sama droge co pojedyncze, z tym samym
+     * pilnowaniem powtorek. Wywrotka przerywa paczke: reszta wroci w nastepnej,
+     * a kolejnosc zostaje zachowana.
+     */
+    private fun batch(body: JSONObject): LocalServer.Response {
+        val items = body.optJSONArray("items")
+            ?: return LocalServer.Response.error(400, "brak polecen")
+        lekki = true
+        cichy = true
+        val results = JSONArray()
+        try {
+            for (i in 0 until items.length()) {
+                val item = items.optJSONObject(i) ?: break
+                val path = PATHS[item.optString("m")]
+                if (path == null) {
+                    results.put(JSONObject().put("error", "nieznane zadanie"))
+                    continue
+                }
+                val p = item.optJSONObject("p") ?: JSONObject()
+                val r = runCatching { wykonaj("POST", path, p) }.getOrNull() ?: break
+                if (r.status >= 500) break
+                val json = runCatching { JSONObject(r.json) }.getOrElse { JSONObject() }
+                if (r.status == 200) {
+                    val wynik = JSONObject().put("ok", true)
+                    if (json.optLong("setId") > 0) wynik.put("setId", json.optLong("setId"))
+                    results.put(wynik)
+                } else {
+                    results.put(JSONObject().put("error", json.optString("error", "odmowa")))
+                }
+            }
+        } finally {
+            cichy = false
+        }
+        lekki = body.optInt("lite") == 1
+        return LocalServer.Response.ok(
+            JSONObject().put("results", results).put("state", state(lekki)).toString()
+        )
+    }
+
+    private fun wykonaj(method: String, path: String, body: JSONObject): LocalServer.Response {
         // Zegarek numeruje polecenia zmieniajace zapis i ponawia je, dopoki
         // nie dostanie odpowiedzi. Odpowiedz potrafi zginac juz po wykonaniu -
         // bez tego sprawdzenia ponowienie dopisaloby te sama serie drugi raz,
         // a historii treningu nie ma skad odtworzyc.
         val cid = body.optString("cid").takeIf { it.isNotBlank() }
-        if (cid != null && request.method == "POST") {
-            if (!seen.add(cid)) return LocalServer.Response.ok(state().toString())
+        if (cid != null && method == "POST") {
+            seen[cid]?.let { seria ->
+                val st = stan()
+                if (seria > 0) st.put("setId", seria)
+                return LocalServer.Response.ok(st.toString())
+            }
+        }
+        nowaSeria = 0
+        val response = route(method, path, body)
+        // Znacznik zapamietujemy dopiero po udanym wykonaniu. Wczesniej
+        // trafial do pamieci przed nim, wiec odrzucony START ponowiony przez
+        // zegarek dostawal "w porzadku" ze stanem CUDZEGO treningu - i zegarek
+        // przyjmowal tamten trening za swoj.
+        if (cid != null && method == "POST" && response.status == 200) {
+            seen[cid] = nowaSeria
             while (seen.size > SEEN_MAX) {
-                val it = seen.iterator()
+                val it = seen.keys.iterator()
                 it.next()
                 it.remove()
             }
         }
+        return response
+    }
 
-        return when (request.method to request.path) {
+    private fun route(method: String, path: String, body: JSONObject): LocalServer.Response {
+        return when (method to path) {
             "GET" to "/state" -> LocalServer.Response.ok(state().toString())
             "GET" to "/units" -> LocalServer.Response.ok(units().toString())
 
@@ -83,30 +207,56 @@ class WatchApi(context: Context) {
                 val startedAt = body.optLong("startedAt")
                     .takeIf { it > 0 } ?: System.currentTimeMillis()
                 val juzJest = localId?.let { sessionRepo.byLocalId(it) }
+                // Trening sprzed wielu godzin to zaleglosc, nie nowy trening.
+                // Dopisujemy go od razu zamknietego, obok tego, co ewentualnie
+                // trwa teraz: odmowa znaczyla, ze kolejne polecenia z tamtej
+                // kolejki dopisywalyby sie do dzisiejszego treningu, a przy
+                // pustym telefonie - ze trening przepadal w calosci.
+                val zaleglosc = localId != null &&
+                    System.currentTimeMillis() - startedAt >= StaleSession.STALE_AFTER_MS
+                val trwa = sessionRepo.active()
+                // Trening, ktory trwa tu od pozniej niz ten zgloszony, jest
+                // nowszy - zgloszenie to zaleglosc, ktora dojechala dopiero teraz.
+                val starszy = localId != null && trwa != null && trwa.startedAt > startedAt
                 when {
-                    juzJest != null -> LocalServer.Response.ok(state().toString())
-                    sessionRepo.active() != null ->
+                    juzJest != null -> LocalServer.Response.ok(stan().toString())
+                    zaleglosc || starszy -> {
+                        sessionRepo.startClosed(
+                            body.optLong("planId").takeIf { it > 0 }, startedAt, localId
+                        )
+                        changed("other")
+                        LocalServer.Response.ok(
+                            JSONObject().put("backfill", true).toString()
+                        )
+                    }
+                    trwa != null && localId == null ->
                         LocalServer.Response.error(409, "trening juz trwa")
                     else -> {
+                        // Zegarek zaczyna trening tylko wtedy, gdy u siebie zadnego
+                        // nie ma - wiec ten, ktory tu jeszcze trwa, jest porzucony.
+                        // Odmowa (409) konczyla sie tym, ze serie nowego treningu
+                        // trafialy do starego: zegarek nie mial dokad ich wyslac
+                        // i przyjmowal stan tamtego treningu za swoj.
+                        trwa?.let { sessionRepo.closeAbandoned(it.id) }
                         sessionRepo.start(
                             body.optLong("planId").takeIf { it > 0 }, startedAt, localId
                         )
                         changed("other")
-                        LocalServer.Response.ok(state().toString())
+                        LocalServer.Response.ok(stan().toString())
                     }
                 }
             }
 
             "POST" to "/pause", "POST" to "/resume" -> {
-                val s = sessionRepo.active()
+                val s = sesja(body)
                     ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-                sessionRepo.setPaused(s.id, request.path == "/pause")
+                sessionRepo.setPaused(s.id, path == "/pause")
                 changed("pause")
-                LocalServer.Response.ok(state().toString())
+                LocalServer.Response.ok(stan().toString())
             }
 
             "POST" to "/finish" -> {
-                val s = sessionRepo.active()
+                val s = sesja(body)
                     ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
                 // Propozycje liczymy przed zamknieciem, bo potem sesja nie
                 // jest juz biezaca i nie ma z czego ich wyliczyc.
@@ -140,7 +290,7 @@ class WatchApi(context: Context) {
     // ---- Zapis ------------------------------------------------------------
 
     private fun addSet(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
         val exerciseId = body.optLong("exerciseId")
         if (exerciseId <= 0) return LocalServer.Response.error(400, "brak exerciseId")
@@ -156,21 +306,31 @@ class WatchApi(context: Context) {
         val weight = snap(exerciseId, requested, states)
         val reps = body.optInt("reps", st.nextReps).coerceAtLeast(1)
 
-        sessionRepo.addSet(
+        // Zapas moze przyjechac razem z seria: zegarek dokleja go do serii,
+        // ktora jeszcze czeka w kolejce, zamiast slac osobne polecenie.
+        val rir = if (body.has("rir")) body.optInt("rir", -1).takeIf { it >= 0 }?.coerceAtMost(10)
+        else null
+
+        val id = sessionRepo.addSet(
             SetEntry(
                 sessionId = session.id,
                 exerciseId = exerciseId,
                 setIndex = st.doneSets.size,
                 weightKg = weight,
                 reps = reps,
+                rir = rir,
                 // Seria zapisana bez lacznosci dojedzie pozniej, czasem
                 // duzo pozniej - liczy sie chwila, w ktorej ja zrobiles.
                 doneAt = body.optLong("doneAt").takeIf { it > 0 }
                     ?: System.currentTimeMillis()
             )
         )
+        nowaSeria = id
         changed("set")
-        return LocalServer.Response.ok(state().toString())
+        // Numer nowej serii wraca wprost. Zegarek zgadywal go dotad z "ostatniej
+        // serii cwiczenia" w stanie, a przy kilku seriach w kolejce to zgadywanie
+        // trafialo w cudza.
+        return LocalServer.Response.ok(stan().put("setId", id).toString())
     }
 
     /**
@@ -181,10 +341,10 @@ class WatchApi(context: Context) {
      * którego nie da się złożyć.
      */
     private fun editSet(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-        val setId = body.optLong("setId")
-        if (setId <= 0) return LocalServer.Response.error(400, "brak setId")
+        val setId = setIdOf(body)
+        if (setId <= 0) return LocalServer.Response.error(404, "nie ma takiej serii")
 
         val states = states(session) ?: return LocalServer.Response.error(404, "plan pusty")
         val st = states.firstOrNull { s -> s.doneSets.any { it.id == setId } }
@@ -208,52 +368,54 @@ class WatchApi(context: Context) {
 
         sessionRepo.updateSet(setId, weight, reps, rir)
         changed("set")
-        return LocalServer.Response.ok(state().toString())
+        return LocalServer.Response.ok(stan().toString())
     }
 
     /**
-     * Zapas powtorzen dla OSTATNIEJ serii cwiczenia.
+     * Zapas powtorzen dla wskazanej serii.
      *
-     * Bez numeru serii, celowo: zegarek pyta o zapas zaraz po zapisaniu
-     * serii, a wtedy jeszcze nie zna jej numeru - ten rodzi sie dopiero
-     * tutaj. Wczesniej musial poczekac na odpowiedz i dlatego pytanie
-     * pojawialo sie z opoznieniem; bez lacznosci nie pojawialo sie wcale.
+     * Zegarek pyta o zapas zaraz po serii, czesto zanim pozna jej numer -
+     * wskazuje ja wtedy znacznikiem polecenia, ktore ja zalozylo. Dopiero
+     * gdy i tego nie ma (starszy zegarek), zostaje ostatnia seria cwiczenia.
      */
     private fun setRir(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
         val exerciseId = body.optLong("exerciseId")
-        val last = sessionRepo.setsForExerciseInSession(session.id, exerciseId)
-            .lastOrNull()
+        val serie = sessionRepo.setsForExerciseInSession(session.id, exerciseId)
+        val wskazana = setIdOf(body).takeIf { it > 0 }?.let { id ->
+            sessionRepo.setsBySessionGrouped(session.id).values.flatten().firstOrNull { it.id == id }
+        }
+        val last = wskazana ?: serie.lastOrNull()
             ?: return LocalServer.Response.error(404, "nie ma takiej serii")
         val rir = body.optInt("rir", -1).takeIf { it >= 0 }?.coerceAtMost(10)
         sessionRepo.updateSet(last.id, last.weightKg, last.reps, rir)
         changed("set")
-        return LocalServer.Response.ok(state().toString())
+        return LocalServer.Response.ok(stan().toString())
     }
 
     /** Skasowanie jednej, wskazanej serii - z ekranu poprawki na zegarku. */
     private fun deleteSet(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-        val setId = body.optLong("setId")
+        val setId = setIdOf(body)
         val istnieje = sessionRepo.setsBySessionGrouped(session.id).values
             .flatten().any { it.id == setId }
         if (!istnieje) return LocalServer.Response.error(404, "nie ma takiej serii")
         sessionRepo.deleteSet(setId)
         changed("set")
-        return LocalServer.Response.ok(state().toString())
+        return LocalServer.Response.ok(stan().toString())
     }
 
     private fun undo(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
         val exerciseId = body.optLong("exerciseId")
         val last = sessionRepo.setsForExerciseInSession(session.id, exerciseId).lastOrNull()
             ?: return LocalServer.Response.error(404, "nie ma czego cofnac")
         sessionRepo.deleteSet(last.id)
         changed("set")
-        return LocalServer.Response.ok(state().toString())
+        return LocalServer.Response.ok(stan().toString())
     }
 
     /**
@@ -265,7 +427,7 @@ class WatchApi(context: Context) {
      * dokładnie po tych samych progach co na telefonie.
      */
     private fun nextWeight(body: JSONObject): LocalServer.Response {
-        val session = sessionRepo.active()
+        val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
         val exerciseId = body.optLong("exerciseId")
         val states = states(session) ?: return LocalServer.Response.error(404, "plan pusty")
@@ -310,10 +472,31 @@ class WatchApi(context: Context) {
      * sie zaczac trening bez telefonu - lacznie z drabinka ciezarow,
      * ktorej sam nie policzy, bo nie zna zawartosci silowni.
      */
-    private fun exercisesJson(states: List<LiveSession.ExerciseState>): JSONArray {
+    private fun exercisesJson(
+        states: List<LiveSession.ExerciseState>,
+        lite: Boolean = false
+    ): JSONArray {
         val inventory = gymRepo.inventory()
         val exercises = JSONArray()
         states.forEach { st ->
+            if (lite) {
+                // Bez drabinki i reszty rzeczy stalych w trakcie treningu -
+                // zegarek dokleja je sobie z poprzedniej odpowiedzi.
+                exercises.put(
+                    JSONObject()
+                        .put("id", st.item.exerciseId)
+                        .put("name", st.item.exerciseName)
+                        .put("done", st.doneSets.size)
+                        .put("sets", st.item.sets)
+                        .put("weight", round(st.nextWeight))
+                        .put("reps", st.nextReps)
+                        .put("entries", entries(st))
+                        .put("restSec", st.item.restSec)
+                        .put("hasWeight", st.item.hasTargetWeight)
+                        .put("unit", st.item.equipment.weightUnitLabel)
+                )
+                return@forEach
+            }
             // Krok ciężaru wyliczony tutaj, bo tylko telefon zna gryf i talerze.
             // Zegarek dodaje go sobie lokalnie, zamiast pytać przy każdym
             // naciśnięciu plusa - tamta droga przez Bluetooth była widocznie
@@ -352,7 +535,7 @@ class WatchApi(context: Context) {
         return exercises
     }
 
-    private fun state(): JSONObject {
+    private fun state(lite: Boolean = false): JSONObject {
         val session = sessionRepo.active() ?: return JSONObject().put("active", false)
         val states = states(session) ?: return JSONObject()
             .put("active", true)
@@ -360,7 +543,7 @@ class WatchApi(context: Context) {
             .put("exercises", JSONArray())
 
         val plan = session.planId?.let { id -> planRepo.plans().firstOrNull { it.id == id } }
-        val exercises = exercisesJson(states)
+        val exercises = exercisesJson(states, lite)
 
         // Liczby na podsumowanie. Zegarek ma pokazać to samo co telefon po
         // ostatniej serii, a sam ich nie policzy - zna tylko liczbę serii,
@@ -372,16 +555,19 @@ class WatchApi(context: Context) {
             .put("tonnage", round(done.sumOf { it.weightKg * it.reps }))
             .put("complete", states.isNotEmpty() && states.all { it.complete })
 
-        return JSONObject()
+        val out = JSONObject()
             .put("active", true)
             // Zegarek odrozni po tym powrot do tego samego treningu od nowego.
             // Jest ubijany przy zgaszeniu ekranu, wiec musi umiec sprawdzic,
             // czy stan, ktory ma zapisany u siebie, dotyczy jeszcze tej sesji.
             .put("sessionId", session.id)
+            // Znacznik zegarka, jesli trening zaczal sie tam. Po nim zegarek
+            // poznaje, czy stan dotyczy jego treningu, czy innego, ktory akurat
+            // trwa na telefonie - sam numer tego nie mowi, bo zegarek go nie zna,
+            // dopoki START nie dojedzie.
+            .put("localId", session.localId ?: "")
             .put("plan", plan?.name ?: "Trening")
-            .put("hrZones", hrZones())
             .put("next", nextUnit())
-            .put("burn", burn())
             .put("elapsedMin", session.elapsedMs() / 60_000)
             // Sekundy, bo zegarek dolicza sobie resztę lokalnie: odpowiedzi
             // przychodzą tylko przy akcjach, a zegar treningu ma tykać też
@@ -391,6 +577,8 @@ class WatchApi(context: Context) {
             .put("current", LiveSession.firstUnfinished(states))
             .put("totals", totals)
             .put("exercises", exercises)
+        if (!lite) out.put("hrZones", hrZones()).put("burn", burn())
+        return out
     }
 
     /**
@@ -501,6 +689,13 @@ class WatchApi(context: Context) {
         }
         return JSONObject()
             .put("program", program?.name ?: "")
+            // Wspolczynniki spalania i progi tetna jada takze tutaj, nie tylko
+            // ze stanem trwajacego treningu. Zegarek pyta o jednostki za kazdym
+            // razem na ekranie wyboru, wiec to jedyna odpowiedz, ktora dostaje
+            // PRZED pierwsza seria - a trening zaczety bez lacznosci nie dostanie
+            // potem zadnej. Bez nich kalorie staly na kresce caly trening.
+            .put("hrZones", hrZones())
+            .put("burn", burn())
             .put("units", array)
     }
 
@@ -615,6 +810,13 @@ class WatchApi(context: Context) {
     private fun changed(reason: String) = onChanged?.invoke(reason)
 
     private companion object {
+        /** Polecenia z kolejki zegarka i ich sciezki - dla paczki. */
+        val PATHS = mapOf(
+            "SET" to "/set", "RIR" to "/rir", "DELETE" to "/delete",
+            "UNDO" to "/undo", "EDIT" to "/edit", "START" to "/start",
+            "PAUSE" to "/pause", "RESUME" to "/resume", "FINISH" to "/finish"
+        )
+
         /** Ile ostatnich znacznikow polecen pamietamy. */
         const val SEEN_MAX = 200
 

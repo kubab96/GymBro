@@ -259,6 +259,7 @@ function makePhone() {
         elapsedSec: 600,
         paused: !!phone.paused,
         sessionId: 101,
+        localId: phone.lokalny || '',
         next: { id: 2, name: 'B - hantle' },
         hrZones: { max: 187, easy: 112, aerobic: 131, tempo: 150, anaerobic: 168 },
         current: current,
@@ -269,11 +270,49 @@ function makePhone() {
         exercises: exercises
       }
     },
+    // Telefon sprzed paczek: BATCH to dla niego nieznane zadanie.
+    starePaczki: false,
+    paczki: 0,
+    // Znaczniki polecen -> numer serii, ktora zalozyly. Jak w WatchApi.
+    serieZnacznikow: {},
+    setIdOf(params) {
+      if (params.setId) return params.setId
+      if (params.ref) return phone.serieZnacznikow[params.ref] || 0
+      return 0
+    },
     request(req) {
+      if (req.method === 'BATCH') {
+        if (phone.starePaczki) return { error: 'nieznana sciezka', reject: true }
+        phone.paczki += 1
+        const results = (req.params.items || []).map((it) => {
+          const r = phone.wykonaj({ method: it.m, params: it.p || {} })
+          if (r && r.error) return { error: r.error }
+          const w = { ok: true }
+          if (r && r.setId) w.setId = r.setId
+          return w
+        })
+        return { results: results, state: phone.state() }
+      }
+      return phone.wykonaj(req)
+    },
+    wykonaj(req) {
       const cid = req.params && req.params.cid
-      if (cid) {
-        if (phone.seen[cid]) return phone.state()
+      if (cid && phone.seen[cid]) {
+        const st = phone.state()
+        if (phone.serieZnacznikow[cid]) st.setId = phone.serieZnacznikow[cid]
+        return st
+      }
+      const wynik = phone.obsluz(req)
+      // Jak w WatchApi: znacznik zapamietany dopiero po udanym wykonaniu.
+      if (cid && !(wynik && wynik.error)) {
         phone.seen[cid] = true
+        if (wynik && wynik.setId) phone.serieZnacznikow[cid] = wynik.setId
+      }
+      return wynik
+    },
+    obsluz(req) {
+      if (req.params && String(req.params.sid || '').indexOf('w-obcy') === 0) {
+        return { error: 'brak trwajacego treningu', reject: true }
       }
       switch (req.method) {
         case 'STATE':
@@ -283,6 +322,8 @@ function makePhone() {
           // gdy telefonu nie ma w zasiegu.
           return {
             program: 'FBW',
+            hrZones: { max: 187, easy: 112, aerobic: 131, tempo: 150, anaerobic: 168 },
+            burn: { k0: -6.1, k1: 0.116 },
             units: [
               { id: 1, name: 'A - sztanga', exercises: 3, next: false, plan: phone.podglad() },
               { id: 2, name: 'B - hantle', exercises: 3, next: true, plan: phone.podglad() },
@@ -297,6 +338,7 @@ function makePhone() {
           if (lid && phone.localIds[lid]) return phone.state()
           if (lid) phone.localIds[lid] = true
           phone.active = true
+          phone.lokalny = lid || ''
           phone.done = {}
           phone.wpisy = {}
           phone.starty.push({
@@ -311,7 +353,7 @@ function makePhone() {
           phone.done[id] = (phone.done[id] || 0) + 1
           const wpis = {
             id: phone.kolejnyId++, weight: req.params.weight, reps: req.params.reps,
-            rir: undefined
+            rir: req.params.rir === undefined || req.params.rir < 0 ? undefined : req.params.rir
           }
           if (!phone.wpisy[id]) phone.wpisy[id] = []
           phone.wpisy[id].push(wpis)
@@ -319,10 +361,12 @@ function makePhone() {
             id: id, weight: wpis.weight, reps: wpis.reps,
             doneAt: req.params.doneAt || null
           })
-          return phone.state()
+          const st = phone.state()
+          st.setId = wpis.id
+          return st
         }
         case 'EDIT': {
-          const setId = req.params.setId
+          const setId = phone.setIdOf(req.params)
           let trafiony = null
           Object.keys(phone.wpisy).forEach((k) => {
             phone.wpisy[k].forEach((w) => { if (w.id === setId) trafiony = w })
@@ -342,14 +386,15 @@ function makePhone() {
           // robi to telefon. Zegarek pyta o zapas zanim pozna ten numer.
           const eid = req.params.exerciseId
           const lista = phone.wpisy[eid] || []
-          const ost = lista[lista.length - 1]
+          const wskazany = phone.setIdOf(req.params)
+          const ost = wskazany ? lista.filter((w) => w.id === wskazany)[0] : lista[lista.length - 1]
           if (!ost) return { error: 'nie ma takiej serii' }
           ost.rir = req.params.rir
           phone.log.push({ setId: ost.id, weight: ost.weight, reps: ost.reps, rir: ost.rir })
           return phone.state()
         }
         case 'DELETE': {
-          const sid = req.params.setId
+          const sid = phone.setIdOf(req.params)
           Object.keys(phone.wpisy).forEach((k) => {
             const i = phone.wpisy[k].findIndex((w) => w.id === sid)
             if (i < 0) return
@@ -394,7 +439,7 @@ function makePhone() {
  * A to przez niego przechodzi każde polecenie z zegarka i to tutaj łatwo
  * o literówkę, której nic nie widzi aż do siłowni.
  */
-function loadSide() {
+function loadSide(odpowiedz) {
   const file = path.join(__dirname, '..', 'app-side', 'index.js')
   const body = fs.readFileSync(file, 'utf8')
     .replace(/^import[\s\S]*?from '[^']+'\s*$/gm, '')
@@ -402,6 +447,7 @@ function loadSide() {
   const wyslane = []
   const fetchStub = async (options) => {
     wyslane.push(options)
+    if (odpowiedz) return odpowiedz(options)
     return { status: 200, body: JSON.stringify({ active: true }) }
   }
 
@@ -438,7 +484,9 @@ function loadSide() {
 }
 
 function loadPage(phone) {
-  const file = path.join(__dirname, '..', 'page', 'index.js')
+  // STRONA=sciezka pozwala puscic te same scenariusze na starej wersji
+  // strony - tak sprawdzamy, ze nowy test naprawde lapie stary blad.
+  const file = process.env.STRONA || path.join(__dirname, '..', 'page', 'index.js')
   const source = fs.readFileSync(file, 'utf8')
   const body = source
     .replace(/^import[\s\S]*?from '[^']+'\s*$/gm, '')
@@ -453,6 +501,11 @@ function loadPage(phone) {
       handlers.zadania = (handlers.zadania || 0) + 1
       // Glucha strona nie odpowiada ani bledem - obietnica wisi.
       if (phone.glucha) return new Promise(() => {})
+      // Zepp dziala, ale GymBro na telefonie nie slucha: usluga towarzyszaca
+      // odpowiada bledem, niczego nie wykonawszy.
+      if (phone.mostPadl) {
+        return Promise.resolve({ data: { error: 'Otwórz GymBro na telefonie', retry: true } })
+      }
       const wynik = phone.request(req)
       // Wykonane, ale odpowiedz nie wraca.
       if (phone.gubiOdpowiedz) return new Promise(() => {})
@@ -609,7 +662,7 @@ const GRUPY = {
   3: ['ctrlTime', 'ctrlState', 'ctrlPause', 'ctrlSkip', 'ctrlEnd', 'ctrlHint'],
   4: ['startTitle'],
   5: ['statTime', 'statTimeLabel', 'statSets', 'statSetsLabel', 'statKcal',
-    'statKcalLabel', 'statVolume'],
+    'statKcalLabel', 'statVolume', 'statSync'],
   6: ['heartLabel', 'heartValue', 'heartRange'],
   7: ['gapsTitle', 'gapsSub', 'gapsHint'],
   8: ['logTitle', 'logHint'],
@@ -623,7 +676,9 @@ function ekranCzysty(page) {
   const w = page.w
   const widok = page.state.view
   const bledy = []
-  if (w.slide.visible) bledy.push('zaslona przejscia zostala na wierzchu')
+  // Zaslony przejscia juz nie ma - zmiana ekranu jest natychmiastowa.
+  if (w.slide) bledy.push('wrocila zaslona przejscia')
+  if (w.flash) bledy.push('wrocil pelnoekranowy blysk')
   Object.keys(GRUPY).forEach((v) => {
     const chciane = Number(v) === widok && !page.state.message
     GRUPY[v].forEach((klucz) => {
@@ -666,6 +721,8 @@ async function main() {
   // musi dac mu dojsc do skutku, tak jak zrobi to prawdziwa petla zdarzen.
   const zapis = async () => {
     for (let i = 0; i < 4; i++) {
+      // Zapis czeka na cisze po ostatnim dotyku - tu ja odczekujemy.
+      jump(1500)
       // Dokladnie zegar odlozonego zapisu (ZAPIS_MS). Szerszy zakres lapal
       // tez bezpieczniki animacji i scenariusz konczyl przejscie sam,
       // zamiast sprawdzic, co sie dzieje w jego trakcie.
@@ -673,6 +730,13 @@ async function main() {
         .forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
     }
+  }
+
+  // Kilka sekund bez odpowiedzi na pytanie o zapas po ostatniej serii planu -
+  // wtedy zegarek sam przechodzi do podsumowania.
+  const poKoncu = async () => {
+    handlers.zegary.filter((z) => z.zywy && z.ms === 4000).forEach((z) => { z.zywy = false; z.fn() })
+    await flush(); await flush()
   }
 
   // Oproznienie kolejki. Wysylka nie dzieje sie w uchwycie klikniecia,
@@ -741,7 +805,11 @@ async function main() {
   }
   ok('plan wykonany', !!(page.state.data.totals && page.state.data.totals.complete))
   ok('szesc serii w dzienniku', phone.log.length === 6, 'jest ' + phone.log.length)
-  ok('pokazalo podsumowanie', page.state.view === VIEW.DONE, nazwa(page.state.view))
+  // Po ostatniej serii pada jeszcze pytanie o zapas - podsumowanie czeka.
+  ok('po ostatniej serii najpierw pytanie o zapas', page.state.view === VIEW.SETS &&
+    page.askingRir() === true, nazwa(page.state.view))
+  await poKoncu()
+  ok('a po chwili bez odpowiedzi podsumowanie', page.state.view === VIEW.DONE, nazwa(page.state.view))
 
   section('Dodatkowa seria po ukonczeniu planu')
   page.sideButton()
@@ -787,7 +855,9 @@ async function main() {
   page.state.index = 0
   while ((phone.done[1] || 0) < 2) await zapiszSerie(page)
   ok('plan uznany za wykonany mimo pominiecia', page.localComplete() === true)
-  ok('pokazalo podsumowanie', page.state.view === VIEW.DONE, nazwa(page.state.view))
+  // Wybor zapasu do ostatniej serii prowadzi do podsumowania od razu.
+  page.setRir(2)
+  ok('pokazalo podsumowanie zaraz po zapasie', page.state.view === VIEW.DONE, nazwa(page.state.view))
 
   section('Powrot do pominietego cwiczenia')
   page.sideButton()
@@ -849,6 +919,7 @@ async function main() {
   page.state.index = 2
   await zapiszSerie(page)
   await zapiszSerie(page)
+  await poKoncu()
   ok('po ostatniej serii ostatniego cwiczenia jest podsumowanie',
     page.state.view === VIEW.DONE, nazwa(page.state.view))
   ok('NIE cofnelo na niezrobione', page.state.index === 2, 'index ' + page.state.index)
@@ -1170,6 +1241,9 @@ async function main() {
   section('Kalorie trafiaja na ekran')
   // Gole `NaN` zamiast wypisania liczby przeszlo przez build bez slowa,
   // bo to poprawne wyrazenie. Tylko odczyt tego, co widac, to wykrywa.
+  // Czujnik rzadzi tylko wtedy, gdy nie znamy wspolczynnikow spalania -
+  // a te przychodza teraz razem z jednostkami, wiec tu trzeba je zdjac.
+  page.state.burn = null
   Calorie.wartosc = 1000
   page.state.kcalBase = null
   page.state.kcal = 0
@@ -1516,8 +1590,13 @@ async function main() {
   ok('nadal pytamy o zapas ostatniej serii', page.askingRir() === true)
   // Pytanie dotyczy cwiczenia, na ktorym zapisalismy serie - a nie tego,
   // na ktore ekran wlasnie przeskoczyl po domknieciu poprzedniego.
-  ok('i dotyczy cwiczenia z poprzedniej serii', page.state.rirFor === 1,
-    'rirFor ' + page.state.rirFor + ', index ' + page.state.index)
+  ok('i dotyczy cwiczenia z poprzedniej serii',
+    !!page.state.rirFor && page.state.rirFor.ex === 1,
+    'rirFor ' + JSON.stringify(page.state.rirFor) + ', index ' + page.state.index)
+  ok('i tej konkretnej serii, po znaczniku jej polecenia',
+    !!page.state.rirFor && (!!page.state.acked[page.state.rirFor.ref] ||
+      (page.state.outbox || []).some((x) => x.m === 'SET' && x.cid === page.state.rirFor.ref)),
+    JSON.stringify(page.state.rirFor))
 
   // 3. Ostatnia seria ostatniego cwiczenia ma dac podsumowanie.
   phone.reset()
@@ -1529,8 +1608,48 @@ async function main() {
     await zapiszSerie(page)
   }
   ok('caly plan zrobiony', phone.log.length === 6, phone.log.length + ' serii')
+  ok('ostatnia seria tez pyta o zapas, zanim przyjdzie podsumowanie',
+    page.state.view === VIEW.SETS && page.askingRir() === true, nazwa(page.state.view))
+  // Klawisz glowny w tej chwili nie zaczyna nowej serii - pokazuje koniec.
+  page.press()
   ok('po ostatniej serii jest podsumowanie', page.state.view === VIEW.DONE,
     nazwa(page.state.view))
+  ok('przycisk niczego nie dopisal', phone.log.length === 6, phone.log.length + ' serii')
+
+  section('Koniec planu bez telefonu')
+  // Zgloszone 09.11: "zakonczenie ostatniego cwiczenia nie konczy treningu".
+  // Podsumowanie pokazywala tylko odpowiedz telefonu, a z telefonem
+  // w szatni ta nie przychodzila wcale.
+  const naKoniec = async (zZapasem) => {
+    phone.reset()
+    phone.setGlucha(false)
+    page.state.outbox = []
+    page.askUnits()
+    await flush(); await flush()
+    phone.setGlucha(true)
+    page.startUnit(0)
+    await flush()
+    let straz = 0
+    while (!page.localComplete() && straz < 12) {
+      straz += 1
+      await zapiszSerie(page)
+    }
+    ok((zZapasem ? 'z zapasem' : 'bez zapasu') + ': plan zrobiony bez telefonu', page.localComplete(),
+      straz + ' serii')
+    if (zZapasem) page.setRir(1)
+    else await poKoncu()
+    ok((zZapasem ? 'z zapasem' : 'bez zapasu') + ': podsumowanie bez odpowiedzi telefonu',
+      page.state.view === VIEW.DONE, nazwa(page.state.view))
+    ok((zZapasem ? 'z zapasem' : 'bez zapasu') + ': podsumowanie liczy wszystkie serie',
+      (page.sumy().sets || 0) === 6, JSON.stringify(page.sumy()))
+    await cisza()
+    phone.setGlucha(false)
+    await osusz()
+  }
+  await naKoniec(true)
+  await naKoniec(false)
+  page.state.view = VIEW.SETS
+  page.applyVisibility()
 
   section('Powroty z ekranow bocznych i dolnych')
   phone.reset()
@@ -1565,44 +1684,45 @@ async function main() {
     return page.state.view === VIEW.SETS
   })(), nazwa(page.state.view))
 
-  section('Nic nie pisze do pamieci w trakcie przejscia')
-  // Zapis do pamieci trwalej to zapis do pliku. Odlozony z uchwytu
-  // klikniecia trafial prosto w pierwsze klatki animacji przejscia -
-  // zaslona stawala i przez chwile bylo widac czarny ekran. Ma poczekac,
-  // az przejscie sie skonczy; cwierc sekundy nikomu nie robi roznicy.
+  section('Nic nie pisze do pamieci pod palcem')
+  // Zapis do pamieci trwalej to zapis do pliku. Odlozony o 350 ms trafial
+  // akurat w nastepne klikniecie - drugi plus, zapas zaraz po serii - i to
+  // ono czekalo, az plik sie zapisze. Ma poczekac, az palec da spokoj.
   page.state.message = null
   page.state.rirFor = null
   page.state.view = VIEW.SETS
   page.applyVisibility()
   await zapis()
 
-  handlers.wolneAnimacje = true
-  page.showView(VIEW.STATS, -1, 'y')
-  ok('przejscie trwa', page.zajeteRysowaniem() === true)
+  page.dotyk()
+  ok('zaraz po dotyku jest zajete', page.zajeteRysowaniem() === true)
   LICZNIK.ile = 0
   page.remember()
   page.rememberOutbox()
+  for (let i = 0; i < 3; i++) {
+    jump(300)
+    handlers.zegary.filter((z) => z.zywy && z.ms === 350).forEach((z) => { z.zywy = false; z.fn() })
+    await flush()
+    page.dotyk()
+  }
+  ok('przy klikaniu co 300 ms nie zapisano nic', LICZNIK.ile === 0, LICZNIK.ile + ' zapisow')
   await zapis()
-  ok('w trakcie przejscia nie zapisano nic', LICZNIK.ile === 0,
-    LICZNIK.ile + ' zapisow')
+  ok('po chwili ciszy zapis wreszcie doszedl', LICZNIK.ile > 0, LICZNIK.ile + ' zapisow')
 
-  handlers.dokoncz()
-  await flush(); await flush()
-  ok('po przejsciu zaslona zeszla', page.zajeteRysowaniem() === false)
-  await zapis()
-  ok('i zapis wreszcie doszedl', LICZNIK.ile > 0, LICZNIK.ile + ' zapisow')
-  handlers.wolneAnimacje = false
-  handlers.dokoncz()
-
-  // Blysk zostawial po sobie zegar, ktory nigdy nie gasl - a wtedy
-  // aplikacja na zawsze uwazala, ze cos sie animuje, i nie zapisywala nic.
+  // Blysk to teraz kolor tla licznika na chwile, nie animacja na caly ekran.
   page.state.view = VIEW.SETS
   page.applyVisibility()
-  page.flash(0x1f8a5a, 200, 120)
-  await flush()
-  ok('blysk nie zostawia po sobie zegara', !page.flashTimer,
-    String(page.flashTimer))
-  ok('i nic sie juz nie animuje', page.zajeteRysowaniem() === false)
+  const zapisyLicznika = page.w.count.writes
+  page.flash(0x1f6a46, 200)
+  ok('blysk zmienia kolor licznika', page.w.count.attrs.normal_color === 0x1f6a46,
+    String(page.w.count.attrs.normal_color))
+  ok('blysk bez animacji', !page.w.count.anim)
+  handlers.zegary.filter((z) => z.zywy && z.ms === 200).forEach((z) => { z.zywy = false; z.fn() })
+  ok('i wraca do czerni sam', page.w.count.attrs.normal_color === 0x000000,
+    String(page.w.count.attrs.normal_color))
+  ok('blysk nie zostawia po sobie zegara', !page.flashTimer, String(page.flashTimer))
+  ok('kosztuje dwa zapisy licznika', page.w.count.writes - zapisyLicznika === 2,
+    (page.w.count.writes - zapisyLicznika) + ' zapisow')
 
   section('Przejscie miedzy ekranami ma byc tanie')
   // Kazdy zapis idzie do warstwy natywnej. Jedno przejscie robilo ich ponad
@@ -1654,7 +1774,6 @@ async function main() {
   page.state.view = VIEW.SETS
   page.applyVisibility()
   page.state.outbox = []
-  page.state.pending = {}
   page.drainWait = 0
   jump(3000)
   page.state.phase = 'set'
@@ -1830,7 +1949,6 @@ async function main() {
   page.state.message = null
   page.state.offline = false
   page.state.outbox = []
-  page.state.pending = {}
   page.state.view = VIEW.SETS
   page.state.index = 0
   page.applyVisibility()
@@ -1852,8 +1970,9 @@ async function main() {
   ok('po ponowieniu seria nadal jedna', (phone.done[cwDubel.id] || 0) === przedDubel + 1,
     przedDubel + ' -> ' + (phone.done[cwDubel.id] || 0))
   ok('kolejka opruzniona', (page.state.outbox || []).length === 0)
-  ok('zegarek rozliczyl swoj licznik', !page.state.pending[cwDubel.id],
-    JSON.stringify(page.state.pending))
+  ok('zegarek liczy te serie raz, nie dwa', page.shownDone(cwDubel) === przedDubel + 1,
+    przedDubel + ' -> ' + page.shownDone(cwDubel))
+  ok('i nic nie czeka', page.pendingCount() === 0, String(page.pendingCount()))
 
   section('Zapas pytany od razu po serii')
   // Pytanie o zapas wisialo na danych od telefonu: zegarek szukal zapisanej
@@ -1883,11 +2002,20 @@ async function main() {
   // Odpowiedz tez idzie bez telefonu - laduje w kolejce.
   page.w.rirRow[1].onClick()
   ok('po wyborze przestajemy pytac', page.askingRir() === false)
-  ok('zapas czeka w kolejce', (page.state.outbox || []).some((x) => x.m === 'RIR'),
-    JSON.stringify((page.state.outbox || []).map((x) => x.m)))
+  // Seria jeszcze nie wyszla, wiec zapas jedzie razem z nia - bez osobnego
+  // polecenia, ktore telefon musialby dopasowac do "ostatniej serii".
+  const seriaZZapasem = (page.state.outbox || []).filter((x) => x.m === 'SET').pop()
+  ok('zapas doklejony do czekajacej serii', seriaZZapasem && seriaZZapasem.p.rir === 1,
+    JSON.stringify((page.state.outbox || []).map((x) => x.m + ':' + x.p.rir)))
+  const wDzienniku = page.nakladka().ex[seriaZZapasem.p.exerciseId].entries
+  ok('i od razu widac go w dzienniku', wDzienniku.some((w) => w.rir === 1),
+    JSON.stringify(wDzienniku))
   await cisza()
   phone.setGlucha(false)
   await osusz()
+  const naTelefonie = (phone.wpisy[seriaZZapasem.p.exerciseId] || []).slice(-1)[0]
+  ok('telefon dostal serie razem z zapasem', naTelefonie && naTelefonie.rir === 1,
+    JSON.stringify(naTelefonie))
 
   section('Zapas powtorzen na ekranie poprawki')
   // Ten sam rzad co po serii: cztery przyciski, jedno nacisniecie.
@@ -2070,66 +2198,28 @@ async function main() {
     teraz + ' -> ' + page.w.clock.attrs.text)
   ok('nie ma juz kropek', page.w.dots === undefined)
 
-  section('Szybkie gesty w trakcie przejscia')
-  // Na zegarku widac bylo czasem pol czarnego ekranu po machnieciu w gore.
-  // Przejscie trwa 240 ms i w tym czasie spokojnie da sie machnac drugi raz.
-  // Zaslona sama w sobie nie jest problemem - problemem jest to, ze po niej
-  // trzeba odbudowac przyciski, a robi to wywolanie zwrotne, ktore przy
-  // nakladajacych sie przejsciach potrafi przepasc.
-  handlers.wolneAnimacje = true
+  section('Szybkie gesty bez animacji')
+  // Przejscie bylo czarna zaslona animowana w 60 klatkach na sekunde, a po
+  // niej odbudowa przyciskow. Cwierc sekundy bez reakcji na palec przy
+  // kazdej zmianie ekranu - i to bylo czuc jako lag. Ekran zmienia sie
+  // teraz od razu i nic po zmianie nie zostaje do posprzatania.
   page.state.message = null
   page.state.rirFor = null
   page.state.view = VIEW.SETS
   page.applyVisibility()
-  handlers.dokoncz()
-
-  const bezp0 = handlers.bezpieczniki()
+  const animacjePrzed = ANIMACJE.czeka.length
+  handlers.wolneAnimacje = true
   handlers.gesture(GESTURE_UP)
-  ok('pierwszy gest przeniosl na czas', page.state.view === VIEW.STATS, nazwa(page.state.view))
-  ok('zaslona wjechala', page.w.slide.visible)
-  ok('pierwsze przejscie ma bezpiecznik', handlers.bezpieczniki() === bezp0 + 1,
-    (handlers.bezpieczniki() - bezp0) + ' nowych')
-
-  // Drugi gest, zanim pierwsza animacja zdazyla sie skonczyc.
   handlers.gesture(GESTURE_UP)
-  ok('drugi gest przeniosl na tetno', page.state.view === VIEW.HEART, nazwa(page.state.view))
-  ok('nadal dokladnie jeden bezpiecznik', handlers.bezpieczniki() === bezp0 + 1,
-    (handlers.bezpieczniki() - bezp0) + ' nowych')
-
-  // Spoznione wywolanie zwrotne pierwszej animacji. Przychodzi w trakcie
-  // drugiej i nie wolno mu ruszac bezpiecznika, ktory nie jest jego.
-  handlers.jednaAnimacja()
-  ok('spoznione wywolanie nie zdjelo cudzego bezpiecznika',
-    handlers.bezpieczniki() === bezp0 + 1, (handlers.bezpieczniki() - bezp0) + ' nowych')
-
-  handlers.dokoncz()
-  ok('zaslona zeszla z ekranu', !page.w.slide.visible)
-  ok('zaslona wrocila na miejsce, nie w polowie drogi',
-    page.w.slide.attrs.y === 0 && page.w.slide.attrs.x === 0,
-    'x ' + page.w.slide.attrs.x + ', y ' + page.w.slide.attrs.y)
-
-  // To jest ten objaw: wracamy na ekran serii dwoma szybkimi gestami
-  // i przyciski musza zostac odbudowane, inaczej dol ekranu zostaje czarny.
-  const zapisy = page.w.prev.writes
+  ok('dwa szybkie gesty to dwa ekrany dalej', page.state.view === VIEW.HEART, nazwa(page.state.view))
+  ok('zmiana ekranu niczego nie animuje', ANIMACJE.czeka.length === animacjePrzed,
+    (ANIMACJE.czeka.length - animacjePrzed) + ' animacji')
+  ok('ekran tetna czysty od razu', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
   handlers.gesture(GESTURE_DOWN)
   handlers.gesture(GESTURE_DOWN)
   ok('wrocilismy na serie', page.state.view === VIEW.SETS, nazwa(page.state.view))
-  handlers.jednaAnimacja()
-  handlers.dokoncz()
-  ok('przyciski ekranu serii odbudowane', page.w.prev.writes > zapisy,
-    zapisy + ' -> ' + page.w.prev.writes)
-  ok('zaslona zeszla po powrocie', !page.w.slide.visible)
-  ok('ekran serii czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
-
-  // Nawet gdy wywolanie zwrotne nie przyjdzie wcale, bezpiecznik ma
-  // posprzatac - czarny ekran jest gorszy niz brak animacji.
-  ANIMACJE.czeka.length = 0
-  handlers.gesture(GESTURE_UP)
-  ANIMACJE.czeka.length = 0
-  handlers.dokoncz()
-  ok('bezpiecznik sprzata po zgubionym wywolaniu', !page.w.slide.visible)
+  ok('ekran serii czysty od razu', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
   handlers.wolneAnimacje = false
-  handlers.dokoncz()
   page.state.view = VIEW.SETS
   page.applyVisibility()
 
@@ -2230,7 +2320,6 @@ async function main() {
   page.state.message = null
   page.state.offline = false
   page.state.outbox = []
-  page.state.pending = {}
   page.state.data = null
   page.state.sessionId = null
   page.state.localId = null
@@ -2347,7 +2436,6 @@ async function main() {
   phone.log.length = 0
   page.state.message = null
   page.state.outbox = []
-  page.state.pending = {}
   page.state.data = null
   page.state.sessionId = null
   page.state.localId = null
@@ -2363,6 +2451,8 @@ async function main() {
   await cisza()
   const znacznikPrzed = page.state.localId
   const indeksPrzed = page.state.index
+  const kolejkaPrzed = (page.state.outbox || []).map((x) => x.cid)
+  const seriiPrzed = page.shownDone(page.current())
   ok('trening stoi przed zgasnieciem', page.state.view === VIEW.SETS,
     nazwa(page.state.view))
 
@@ -2390,10 +2480,12 @@ async function main() {
     indeksPrzed + ' -> ' + page2.state.index)
   ok('plan jednostki odtworzony', ((page2.state.data || {}).exercises || []).length > 0,
     String(((page2.state.data || {}).exercises || []).length))
-  ok('zapisana seria nie przepadla', page2.shownDone(page2.current()) +
-    (page2.state.pending[page2.current().id] || 0) >= 0,
-    JSON.stringify(page2.state.pending))
-  ok('kolejka przezyla restart', (page2.state.outbox || []).length >= 2,
+  ok('zapisana seria nie przepadla', page2.shownDone(page2.current()) === seriiPrzed,
+    seriiPrzed + ' -> ' + page2.shownDone(page2.current()))
+  // Dokladnie ta sama kolejka, nie "co najmniej". Luzne sprawdzenie
+  // przepuszczalo podwajanie kolejki przy kazdym restarcie.
+  ok('kolejka przezyla restart co do polecenia',
+    JSON.stringify((page2.state.outbox || []).map((x) => x.cid)) === JSON.stringify(kolejkaPrzed),
     JSON.stringify((page2.state.outbox || []).map((x) => x.m)))
   ok('spalone kalorie przezyly restart', page2.state.burnKcal === 42,
     String(page2.state.burnKcal))
@@ -2433,7 +2525,6 @@ async function main() {
   phone.active = true
   page.state.message = null
   page.state.outbox = []
-  page.state.pending = {}
   await osusz()
   page.state.view = VIEW.SETS
   page.applyVisibility()
@@ -2471,7 +2562,16 @@ async function main() {
   page.startClock()
   page.tickCount = 0
   handlers.zadania = 0
-  for (let i = 0; i < 31; i++) {
+  // Co dwie minuty, nie co pol: odpowiedz to plany wszystkich jednostek.
+  for (let i = 0; i < 60; i++) {
+    const t = handlers.zegary.filter((z) => z.zywy && z.ms === 1000).pop()
+    if (!t) break
+    t.zywy = false
+    t.fn()
+    await flush()
+  }
+  ok('po minucie jeszcze nie pyta', handlers.zadania === 0, handlers.zadania + ' zapytan')
+  for (let i = 0; i < 61; i++) {
     const t = handlers.zegary.filter((z) => z.zywy && z.ms === 1000).pop()
     if (!t) break
     t.zywy = false
@@ -2481,6 +2581,586 @@ async function main() {
   ok('na ekranie wyboru zegarek sam dopytuje o liste', handlers.zadania > 0,
     handlers.zadania + ' zapytan')
   await osusz()
+
+  // Te same trzy pomocniki, ale dla dowolnej strony - nowa strona ma wlasne
+  // zegary i budziki, a sterowanie zegarami pierwszej strony tylko wygladalo
+  // jak uplyw czasu.
+  const ciszaNa = async (h) => {
+    for (let i = 0; i < 4; i++) {
+      h.zegary.filter((z) => z.zywy && z.ms >= 5000)
+        .forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+    }
+  }
+  const zapisNa = async (h) => {
+    for (let i = 0; i < 4; i++) {
+      h.zegary.filter((z) => z.zywy && z.ms === 350)
+        .forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+    }
+  }
+  const osuszNa = async (h, strona) => {
+    for (let i = 0; i < 12; i++) {
+      h.zegary.filter((z) => z.zywy && z.ms >= 5000)
+        .forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+      strona.drain()
+      await flush(); await flush()
+      if (!strona.czeka()) break
+    }
+  }
+
+  section('Trening bez telefonu liczy wszystko u siebie')
+  // Zgloszenie z 7.11: "kalorie zepsute - nie liczy w ogole tak samo jak
+  // i serii". Oba liczniki stały, bo oba czekały na telefon: serie
+  // niepotwierdzone nie przeżywały zgaśnięcia ekranu, a współczynniki
+  // spalania ginęły razem z zapisem poprzedniej sesji.
+  phone.setGlucha(false)
+  phone.active = false
+  phone.starty.length = 0
+  phone.localIds = {}
+  phone.seen = {}
+  phone.log.length = 0
+  phone.endedAt = null
+  LocalStorage.dane['gymbro-outbox'] = '[]'
+  const czwarte = loadPage(phone)
+  const p4 = czwarte.page
+  p4.state.message = null
+  p4.forget()
+  p4.build()
+  await flush(); await flush()
+  ok('wspolczynniki spalania przychodza z jednostkami',
+    !!(p4.state.burn && p4.state.burn.k1), JSON.stringify(p4.state.burn))
+  ok('i progi tetna razem z nimi', !!(p4.state.zones && p4.state.zones.max))
+
+  // Koniec treningu czysci zapis sesji - wspolczynniki musza to przezyc,
+  // bo nastepny trening moze zaczac sie juz bez telefonu.
+  p4.finishWorkout()
+  await ciszaNa(czwarte.handlers)
+  phone.setGlucha(true)
+  p4.state.outbox = []
+  p4.state.burn = null
+  p4.state.zones = null
+  p4.state.units = null
+  p4.askUnits()
+  await ciszaNa(czwarte.handlers)
+  ok('po treningu wspolczynniki wracaja z pamieci',
+    !!(p4.state.burn && p4.state.burn.k1), JSON.stringify(p4.state.burn))
+
+  p4.startUnit(0)
+  await ciszaNa(czwarte.handlers)
+  const cw1 = (p4.state.data || {}).exercises[0]
+  const kcal0 = p4.state.burnKcal
+  p4.noteHeart(140)
+  jump(60000)
+  p4.noteHeart(140)
+  ok('kalorie rosna od pierwszej minuty, bez telefonu', p4.state.burnKcal > kcal0,
+    kcal0 + ' -> ' + p4.state.burnKcal)
+  ok('i pokazuja liczbe, nie kreske', /^[0-9]+$/.test(p4.kcalText()), p4.kcalText())
+
+  p4.state.phase = 'set'
+  p4.press()
+  await ciszaNa(czwarte.handlers)
+  jump(2000)
+  p4.state.phase = 'set'
+  p4.press()
+  await ciszaNa(czwarte.handlers)
+  ok('dwie serie policzone u siebie', p4.shownDone(cw1) === 2, String(p4.shownDone(cw1)))
+  const sumy = p4.sumy()
+  ok('podsumowanie zna serie bez telefonu', sumy.sets === 2, JSON.stringify(sumy))
+  ok('i powtorzenia z tonazem', sumy.reps > 0 && sumy.tonnage > 0, JSON.stringify(sumy))
+  ok('tonaz po cwiczeniach tez cos pokazuje', p4.tonRows().length === 1,
+    JSON.stringify(p4.tonRows()))
+  ok('widac, ile czeka na wyslanie', /Czeka|Wysyłam/.test(p4.syncText()), p4.syncText())
+
+  // Zgasniecie ekranu w srodku treningu bez lacznosci.
+  await zapisNa(czwarte.handlers)
+  const piate = loadPage(phone)
+  const p5 = piate.page
+  p5.build()
+  await flush(); await flush()
+  await ciszaNa(czwarte.handlers)
+  const cw1po = ((p5.state.data || {}).exercises || [])[0] || {}
+  ok('licznik serii przezyl zgasniecie ekranu', p5.shownDone(cw1po) === 2,
+    String(p5.shownDone(cw1po)))
+  ok('i sumy do podsumowania', p5.sumy().sets === 2, JSON.stringify(p5.sumy()))
+
+  section('Zalegla kolejka nie wyrzuca treningu')
+  // Tak wlasnie przepadl caly trening: telefon byl nieosiagalny, a nad ranem
+  // zegarek wyrzucil z kolejki wszystko starsze niz osiem godzin. Baza na
+  // telefonie jest jedyna kopia historii - zaleglosc musi dojechac.
+  phone.setGlucha(false)
+  phone.active = false
+  phone.starty.length = 0
+  phone.localIds = {}
+  phone.seen = {}
+  phone.log.length = 0
+  phone.endedAt = null
+  const dawno = Date.now() - 9 * 3600000
+  LocalStorage.dane['gymbro-outbox'] = JSON.stringify([
+    {
+      m: 'START', cid: 'z1', at: dawno,
+      p: { planId: 1, localId: 'w-stary', startedAt: dawno, sid: 'w-stary', cid: 'z1' }
+    },
+    {
+      m: 'SET', cid: 'z2', at: dawno + 60000,
+      p: { exerciseId: 1, weight: 80, reps: 8, doneAt: dawno + 60000, sid: 'w-stary', cid: 'z2' }
+    }
+  ])
+  const szoste = loadPage(phone)
+  const p6 = szoste.page
+  p6.state.outbox = []
+  p6.restoreOutbox()
+  ok('zaleglosc zostaje w kolejce', p6.czeka() >= 2, String(p6.czeka()))
+  const koniec = (p6.state.outbox || []).filter((x) => x.m === 'FINISH')[0]
+  ok('porzuconemu treningowi dopisano koniec', !!koniec,
+    JSON.stringify((p6.state.outbox || []).map((x) => x.m)))
+  ok('na godzinie ostatniego polecenia', koniec && koniec.p.endedAt === dawno + 60000,
+    JSON.stringify(koniec && koniec.p))
+
+  jump(2000)
+  const buzzPrzed = buzzes.length
+  for (let i = 0; i < 12; i++) {
+    szoste.handlers.zegary.filter((z) => z.zywy && z.ms >= 5000)
+      .forEach((z) => { z.zywy = false; z.fn() })
+    await flush(); await flush()
+    p6.drain()
+    await flush(); await flush()
+    if (!p6.czeka()) break
+  }
+  ok('kolejka dojechala', p6.czeka() === 0, String(p6.czeka()))
+  ok('telefon dostal wczorajszy trening', phone.starty.length === 1,
+    JSON.stringify(phone.starty))
+  ok('razem z jego seria', phone.log.length === 1, String(phone.log.length))
+  ok('i z godzina zakonczenia', phone.endedAt === dawno + 60000, String(phone.endedAt))
+  ok('wibracja mowi, ze wszystko dojechalo', buzzes.length > buzzPrzed,
+    buzzPrzed + ' -> ' + buzzes.length)
+
+  // ---- Bledy zgloszone po treningu 09.11 ---------------------------------
+  //
+  // Lagujace przyciski, ubita aplikacja przy koncu treningu, a po powrocie
+  // nowy trening i za chwile stary. Dziennik z dwiema seriami zamiast trzech,
+  // zapas podany do drugiej, ktorego nie bylo, poprawka serii wracajaca do
+  // starych liczb. Kazdy scenariusz nizej zaczyna od czystej pamieci zegarka.
+  const swieza = async () => {
+    Object.keys(LocalStorage.dane).forEach((k) => delete LocalStorage.dane[k])
+    phone.setGlucha(false)
+    phone.mostPadl = false
+    phone.setGubiOdpowiedz(false)
+    phone.wstrzymajOdpowiedzi(false)
+    phone.puscOdpowiedzi()
+    phone.reset()
+    phone.active = false
+    phone.seen = {}
+    phone.localIds = {}
+    phone.starty.length = 0
+    phone.lokalny = ''
+    phone.serieZnacznikow = {}
+    phone.setDuzoCwiczen(false)
+    phone.setDlugaNazwa(false)
+    const r = loadPage(phone)
+    r.page.build()
+    await flush(); await flush(); await flush()
+    return r
+  }
+  const cichoW = async (h) => {
+    for (let i = 0; i < 4; i++) {
+      h.zegary.filter((z) => z.zywy && z.ms >= 5000).forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+    }
+  }
+  const suszW = async (q, h) => {
+    for (let i = 0; i < 15; i++) {
+      h.zegary.filter((z) => z.zywy && z.ms >= 5000).forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+      q.drain()
+      await flush(); await flush()
+      if (!(q.state.outbox || []).length) break
+    }
+  }
+  const zapisW = async (h) => {
+    for (let i = 0; i < 4; i++) {
+      jump(1500)
+      h.zegary.filter((z) => z.zywy && z.ms === 350).forEach((z) => { z.zywy = false; z.fn() })
+      await flush(); await flush()
+    }
+  }
+  const seriaW = async (q) => {
+    jump(2000)
+    if (q.state.phase === 'rest') q.press()
+    jump(2000)
+    q.press()
+    await flush(); await flush()
+  }
+  const kolejka = (q) => JSON.stringify((q.state.outbox || []).map((x) => x.m))
+  const wpisyEx = (q, id) => {
+    const lista = ((q.state.data && q.state.data.exercises) || []).filter((e) => e.id === id)[0]
+    const stareWpisy = (lista && lista.entries) || []
+    // Stara strona nie ma nakladki - tam dziennik to wpisy z odpowiedzi telefonu.
+    if (typeof q.nakladka !== 'function') return stareWpisy
+    const e = q.nakladka().ex[id]
+    return (e && e.entries) || []
+  }
+
+  section('Restart bez telefonu nie podwaja kolejki')
+  // Kolejka lezala w dwoch miejscach pamieci, a po restarcie obie kopie sie
+  // sumowaly. Bez lacznosci kazde zgasniecie ekranu podwajalo ja: po kilku
+  // opuszczeniach nadgarstka tysiac polecen, zapis pliku na kazdym kroku,
+  // lagi coraz wieksze - i ubita aplikacja przy zakonczeniu.
+  let r1 = await swieza()
+  let q = r1.page
+  let h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  ok('trening ma numer od telefonu', q.state.sessionId === 101, String(q.state.sessionId))
+  phone.setGlucha(true)
+  await seriaW(q)
+  await seriaW(q)
+  await cichoW(h)
+  await zapisW(h)
+  const kolejkaPrzedRestartami = (q.state.outbox || []).map((x) => x.cid)
+  ok('serie czekaja w kolejce', kolejkaPrzedRestartami.length === 2, kolejka(q))
+  for (let i = 0; i < 3; i++) {
+    q.onDestroy()
+    const r = loadPage(phone)
+    r.page.build()
+    await flush(); await flush()
+    await cichoW(r.handlers)
+    q = r.page
+    h = r.handlers
+  }
+  ok('po trzech restartach dokladnie ta sama kolejka',
+    JSON.stringify((q.state.outbox || []).map((x) => x.cid)) === JSON.stringify(kolejkaPrzedRestartami),
+    kolejkaPrzedRestartami.length + ' -> ' + (q.state.outbox || []).length)
+  ok('w pamieci zegarka tez',
+    JSON.parse(LocalStorage.dane['gymbro-outbox'] || '[]').length === kolejkaPrzedRestartami.length,
+    String(JSON.parse(LocalStorage.dane['gymbro-outbox'] || '[]').length))
+
+  // To samo dla treningu zalozonego na zegarku - tam kolejka lezala tez
+  // w zapisie sesji i stamtad sie dublowala.
+  {
+    const rL = await swieza()
+    let qL = rL.page
+    let hL = rL.handlers
+    phone.setGlucha(true)
+    qL.startUnit(0)
+    await seriaW(qL)
+    await seriaW(qL)
+    await cichoW(hL)
+    await zapisW(hL)
+    const przedL = (qL.state.outbox || []).map((x) => x.cid)
+    for (let i = 0; i < 3; i++) {
+      qL.onDestroy()
+      const r = loadPage(phone)
+      r.page.build()
+      await flush(); await flush()
+      await cichoW(r.handlers)
+      await zapisW(r.handlers)
+      qL = r.page
+      hL = r.handlers
+    }
+    ok('trening z zegarka: po trzech restartach ta sama kolejka',
+      JSON.stringify((qL.state.outbox || []).map((x) => x.cid)) === JSON.stringify(przedL),
+      przedL.length + ' -> ' + (qL.state.outbox || []).length)
+    ok('trening z zegarka: w pamieci tez',
+      JSON.parse(LocalStorage.dane['gymbro-outbox'] || '[]').length === przedL.length,
+      przedL.length + ' -> ' + JSON.parse(LocalStorage.dane['gymbro-outbox'] || '[]').length)
+  }
+  phone.setGlucha(false)
+  // Wracamy do treningu z numerem od telefonu z poczatku scenariusza.
+  Object.keys(LocalStorage.dane).forEach((k) => delete LocalStorage.dane[k])
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  await seriaW(q)
+  await seriaW(q)
+  await cichoW(h)
+  await zapisW(h)
+  q.onDestroy()
+  {
+    const r = loadPage(phone)
+    r.page.build()
+    await flush(); await flush()
+    await cichoW(r.handlers)
+    q = r.page
+    h = r.handlers
+  }
+
+  section('Trening z numerem od telefonu wraca bez telefonu')
+  // Odtwarzal sie tylko trening zalozony na zegarku. Ten, ktory dostal juz
+  // numer od telefonu, po restarcie bez lacznosci konczyl na wyborze
+  // jednostki - a start z tego ekranu zakladal drugi trening obok.
+  ok('po restarcie bez telefonu trening, nie wybor jednostki',
+    q.state.view === VIEW.SETS && !q.state.message,
+    nazwa(q.state.view) + ' / ' + q.state.message)
+  ok('ten sam trening', q.state.sessionId === 101, String(q.state.sessionId))
+  ok('zrobione serie widac', q.state.data && q.shownDone(q.state.data.exercises[0]) === 2,
+    q.state.data ? String(q.shownDone(q.state.data.exercises[0])) : 'brak planu')
+  phone.setGlucha(false)
+  await suszW(q, h)
+  ok('obie serie doszly do telefonu, bez dubli', (phone.wpisy[1] || []).length === 2,
+    String((phone.wpisy[1] || []).length))
+
+  section('Awaria mostu nie kasuje serii')
+  // Zepp dziala, a GymBro na telefonie akurat nie slucha. Usluga towarzyszaca
+  // odpowiadala bledem, a zegarek wyrzucal za to polecenie z kolejki -
+  // seria po serii, choc na ekranie wszystkie byly "zrobione".
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.mostPadl = true
+  await seriaW(q)
+  await cichoW(h)
+  ok('seria zostaje w kolejce', (q.state.outbox || []).some((x) => x.m === 'SET'), kolejka(q))
+  phone.mostPadl = false
+  await suszW(q, h)
+  ok('gdy GymBro wroci, seria dojezdza', (phone.wpisy[1] || []).length === 1,
+    String((phone.wpisy[1] || []).length))
+
+  section('Odmowa jednego polecenia nie kasuje reszty')
+  // "Brak trwajacego treningu" dla jednego polecenia czyscil cala kolejke.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  q.state.outbox = [{
+    m: 'RIR', cid: 'obcy-1', at: Date.now(),
+    p: { exerciseId: 1, rir: 1, sid: 'w-obcy', cid: 'obcy-1' }
+  }].concat(q.state.outbox || [])
+  await seriaW(q)
+  await cichoW(h)
+  phone.setGlucha(false)
+  await suszW(q, h)
+  ok('seria za odrzuconym poleceniem dojechala', (phone.wpisy[1] || []).length === 1,
+    String((phone.wpisy[1] || []).length))
+
+  section('Poprawka serii bez telefonu')
+  // Zgloszone: "nie da sie edytowac serii, wraca do poprzedniego stanu".
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  await seriaW(q)
+  q.state.index = 0
+  q.showView(VIEW.LOG)
+  ok('seria w dzienniku od razu, bez telefonu', q.logRows().length === 1, String(q.logRows().length))
+  q.openFix(0)
+  q.fixStep('r', 1)
+  q.fixStep('r', 1)
+  q.saveFix()
+  ok('dziennik pokazuje poprawke od razu', (q.logRows()[0] || {}).reps === 10,
+    JSON.stringify(q.logRows()[0]))
+  ok('wiersz dziennika tez', /x 10/.test(q.w.logRows[0].attrs.text || ''), q.w.logRows[0].attrs.text)
+  await cichoW(h)
+  phone.setGlucha(false)
+  await suszW(q, h)
+  ok('telefon dostal poprawione powtorzenia', ((phone.wpisy[1] || [])[0] || {}).reps === 10,
+    JSON.stringify(phone.wpisy[1]))
+  ok('dziennik nie wrocil do starych liczb', (q.logRows()[0] || {}).reps === 10,
+    JSON.stringify(q.logRows()[0]))
+
+  section('Poprawka serii, ktora juz doszla')
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await seriaW(q)
+  await suszW(q, h)
+  q.state.index = 0
+  q.showView(VIEW.LOG)
+  q.openFix(0)
+  q.fixStep('r', -1)
+  q.saveFix()
+  ok('nowe powtorzenia na ekranie, zanim odpowie telefon', (q.logRows()[0] || {}).reps === 7,
+    JSON.stringify(q.logRows()[0]))
+  await suszW(q, h)
+  ok('i na telefonie', ((phone.wpisy[1] || [])[0] || {}).reps === 7, JSON.stringify(phone.wpisy[1]))
+
+  section('Serie i zapas bez telefonu, wszystkie w dzienniku')
+  // Zgloszone: trzy serie zrobione, w dzienniku dwie, zapasu do drugiej
+  // nie ma, a przy innych cwiczeniach dziennik pusty, choc licznik mowi
+  // "zrobione". Dziennik czekal na telefon, licznik nie.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  await seriaW(q)
+  await seriaW(q)
+  q.setRir(2)
+  await seriaW(q)
+  const pierwsze = wpisyEx(q, 1)
+  ok('dwie serie pierwszego cwiczenia w dzienniku', pierwsze.length === 2, JSON.stringify(pierwsze))
+  ok('zapas przy drugiej', pierwsze[1] && pierwsze[1].rir === 2, JSON.stringify(pierwsze[1]))
+  ok('seria drugiego cwiczenia tez', wpisyEx(q, 2).length === 1, JSON.stringify(wpisyEx(q, 2)))
+  const sumyW = typeof q.sumy === 'function' ? q.sumy() : ((q.state.data && q.state.data.totals) || {})
+  ok('podsumowanie liczy wszystkie trzy', (sumyW.sets || 0) === 3, JSON.stringify(sumyW))
+  await cichoW(h)
+  phone.setGlucha(false)
+  await suszW(q, h)
+  ok('telefon ma trzy serie', (phone.wpisy[1] || []).length + (phone.wpisy[2] || []).length === 3,
+    JSON.stringify(phone.wpisy))
+  ok('zapas trafil w druga serie, nie w ostatnia',
+    ((phone.wpisy[1] || [])[1] || {}).rir === 2 && ((phone.wpisy[2] || [])[0] || {}).rir === undefined,
+    JSON.stringify(phone.wpisy))
+
+  section('Koniec treningu od razu w pamieci')
+  // Aplikacja ginela przy zakonczeniu. Odlozony zapis kolejki nie zdazal,
+  // zapis sesji byl juz skasowany - telefon nie dostawal zakonczenia.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  await seriaW(q)
+  q.finishWorkout()
+  const wPamieci = JSON.parse(LocalStorage.dane['gymbro-outbox'] || '[]')
+  ok('zakonczenie w pamieci zaraz po nacisnieciu', wPamieci.some((x) => x.m === 'FINISH'),
+    JSON.stringify(wPamieci.map((x) => x.m)))
+  ok('razem z niewyslana seria', wPamieci.some((x) => x.m === 'SET'),
+    JSON.stringify(wPamieci.map((x) => x.m)))
+
+  section('Cudzy trening na telefonie nie przejmuje treningu z zegarka')
+  // "Nowy trening, a za chwile ten stary": zegarek przyjmowal za swoj
+  // kazdy trening, ktory akurat trwal na telefonie.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  phone.setGlucha(true)
+  q.startUnit(0)
+  await seriaW(q)
+  const mojZnacznik = q.state.localId
+  phone.setGlucha(false)
+  phone.active = true
+  phone.lokalny = 'w-inny'
+  q.send('STATE', {}, false)
+  await flush(); await flush()
+  ok('zegarek zostal przy swoim treningu', !!mojZnacznik && q.state.sessionId === mojZnacznik,
+    mojZnacznik + ' -> ' + q.state.sessionId)
+  ok('seria nie zniknela', q.state.data && q.shownDone(q.state.data.exercises[0]) === 1,
+    q.state.data ? String(q.shownDone(q.state.data.exercises[0])) : 'brak')
+
+  section('Inna kolejnosc cwiczen w odpowiedzi telefonu')
+  // Zegarek trzymal sie miejsca na liscie, nie cwiczenia. Gdy lista
+  // przychodzila w innej kolejnosci, ekran pokazywal inne cwiczenie,
+  // a kolejne serie szly pod cudza nazwa.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  q.state.index = 0
+  const odwrotnie = phone.state()
+  odwrotnie.exercises = odwrotnie.exercises.slice().reverse()
+  q.apply(odwrotnie, false)
+  ok('stoimy na tym samym cwiczeniu', (q.current() || {}).id === 1, JSON.stringify((q.current() || {}).id))
+
+  section('Odpowiedz bez drabinki nie gubi drabinki')
+  const lekka = phone.state()
+  lekka.exercises.forEach((e) => { delete e.ladder; delete e.atMin; delete e.atMax; delete e.step })
+  q.apply(lekka, false)
+  ok('drabinka zostala z poprzedniego stanu', Array.isArray((q.current() || {}).ladder),
+    JSON.stringify((q.current() || {}).ladder))
+
+  section('Zaleglosc leci paczkami')
+  // Po treningu bez lacznosci kazde polecenie to byla osobna runda przez
+  // Bluetooth z pelnym stanem w odpowiedzi - przez minute zegarek mielil
+  // odpowiedzi, zamiast reagowac na palec.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  phone.setGlucha(true)
+  for (let i = 0; i < 6; i++) {
+    await seriaW(q)
+    if (q.askingRir()) q.setRir(1)
+  }
+  await cichoW(h)
+  const doWyslania = (q.state.outbox || []).length
+  phone.setGlucha(false)
+  h.zadania = 0
+  await suszW(q, h)
+  ok('cala zaleglosc doszla', (q.state.outbox || []).length === 0, kolejka(q))
+  ok('w najwyzej dwoch rundach', h.zadania <= 2, doWyslania + ' polecen, ' + h.zadania + ' rund')
+  const wszystkieSerie = Object.keys(phone.wpisy).reduce((n, k) => n + phone.wpisy[k].length, 0)
+  ok('szesc serii na telefonie', wszystkieSerie === 6, String(wszystkieSerie))
+
+  section('Telefon bez paczek dostaje po jednym')
+  phone.starePaczki = true
+  phone.setGlucha(true)
+  await seriaW(q)
+  await seriaW(q)
+  await cichoW(h)
+  phone.setGlucha(false)
+  await suszW(q, h)
+  phone.starePaczki = false
+  ok('kolejka doszla i tak', (q.state.outbox || []).length === 0, kolejka(q))
+
+  section('Ekran serii nie pisze na prozno')
+  // Tetno przychodzi co sekunde przez caly trening. Kolor i polozenie
+  // serca, kolor zegara - kazdy odczyt pisal je od nowa, choc sie nie
+  // zmienialy. Tyle pracy co sekunde na watku, ktorego potrzebuje palec.
+  q.state.view = VIEW.SETS
+  q.state.message = null
+  q.applyVisibility()
+  q.onHeart()
+  q.paintClock()
+  const wszystkieZapisy = () => Object.keys(q.w).reduce((n, k) => {
+    const x = q.w[k]
+    if (x && typeof x.writes === 'number') return n + x.writes
+    if (Array.isArray(x)) return n + x.reduce((m, y) => m + ((y && y.writes) || 0), 0)
+    return n
+  }, 0)
+  let przedTetnem = wszystkieZapisy()
+  for (let i = 0; i < 5; i++) q.onHeart()
+  ok('piec odczytow tego samego tetna - zero zapisow', wszystkieZapisy() === przedTetnem,
+    (wszystkieZapisy() - przedTetnem) + ' zapisow')
+  przedTetnem = wszystkieZapisy()
+  for (let i = 0; i < 5; i++) {
+    jump(1000)
+    q.paintClock()
+  }
+  ok('piec sekund zegara - po jednym zapisie na sekunde', wszystkieZapisy() - przedTetnem <= 5,
+    (wszystkieZapisy() - przedTetnem) + ' zapisow')
+
+  section('Dluga nazwa przejezdza raz')
+  // Animacja nazwy chodzila w kolko przez caly czas cwiczenia - a dluga
+  // nazwa to kazde cwiczenie z hantlami na lawce.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  phone.setDlugaNazwa(true)
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  q.state.view = VIEW.SETS
+  q.lastName = null
+  q.paintSets()
+  const animacjeNazwy = () => q.w.name.writes
+  for (let i = 0; i < 6; i++) {
+    h.zegary.filter((z) => z.zywy && z.ms === 1100).forEach((z) => { z.zywy = false; z.fn() })
+    await flush()
+  }
+  const poPrzejazdach = animacjeNazwy()
+  for (let i = 0; i < 6; i++) {
+    h.zegary.filter((z) => z.zywy && z.ms === 1100).forEach((z) => { z.zywy = false; z.fn() })
+    await flush()
+  }
+  ok('po przejezdzie tam i z powrotem nazwa stoi', animacjeNazwy() === poPrzejazdach,
+    poPrzejazdach + ' -> ' + animacjeNazwy())
+  phone.setDlugaNazwa(false)
 
   section('Most do telefonu przekazuje parametry')
   // Zgloszone 02.11: podany zapas wracal jako "nie podano". Dwa polecenia
@@ -2497,7 +3177,12 @@ async function main() {
     ['UNDO', { exerciseId: 1, cid: 'c4' }],
     ['EDIT', { setId: 7, reps: 9, cid: 'c5' }],
     ['WEIGHT', { exerciseId: 1, from: 60, dir: 1 }],
-    ['START', { planId: 1, localId: 'w1', cid: 'c6' }]
+    ['START', { planId: 1, localId: 'w1', cid: 'c6' }],
+    // Te trzy szly z pustym cialem: bez sesji, znacznika i godziny konca.
+    ['PAUSE', { sid: '101', cid: 'c7' }],
+    ['RESUME', { sid: '101', cid: 'c8' }],
+    ['FINISH', { endedAt: 123456, sid: '101', cid: 'c9' }],
+    ['BATCH', { lite: 1, items: [{ m: 'SET', p: { exerciseId: 1, cid: 'c10' } }] }]
   ]
   for (let i = 0; i < polecenia.length; i++) {
     const metoda = polecenia[i][0]
@@ -2509,6 +3194,21 @@ async function main() {
       !!zadanie && zadanie.body === JSON.stringify(parametry),
       JSON.stringify((odpowiedz || {}).data) + ' / ' + (zadanie && zadanie.body))
   }
+
+  section('Most odroznia odmowe od awarii')
+  // Odmowa telefonu dotyczy jednego polecenia; awaria po drodze - nie,
+  // i wtedy polecenie musi zostac w kolejce zegarka.
+  const zeStatusem = (status, cialo) => loadSide(() => ({ status: status, body: JSON.stringify(cialo) }))
+  let odp = await zeStatusem(404, { error: 'nie ma takiej serii' }).zadaj('EDIT', { setId: 9 })
+  ok('404 to odmowa', odp && odp.data && odp.data.reject === true && !odp.data.retry, JSON.stringify(odp))
+  odp = await zeStatusem(500, { error: 'blad wewnetrzny' }).zadaj('SET', { exerciseId: 1 })
+  ok('500 to awaria - ponowic', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
+  odp = await zeStatusem(401, {}).zadaj('SET', { exerciseId: 1 })
+  ok('zly token - ponowic, nie wyrzucac', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
+  odp = await loadSide(() => { throw new Error('ECONNREFUSED') }).zadaj('SET', { exerciseId: 1 })
+  ok('nikt nie slucha - ponowic', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
+  odp = await zeStatusem(200, { active: true }).zadaj('SET', { exerciseId: 1 })
+  ok('udane bez zadnej flagi', odp && odp.data && !odp.data.retry && !odp.data.reject, JSON.stringify(odp))
 
   console.log('\n' + (failures === 0
     ? 'Wszystko przeszlo: ' + checks + ' sprawdzen.'
