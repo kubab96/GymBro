@@ -204,6 +204,35 @@ fun SpikeApp() {
     }
     val busy = Busy.isBusy
 
+    // Zgody dla pilota: powiadomienia i - od Androida 14 - urządzenia
+    // w pobliżu.
+    //
+    // Pytamy przy starcie, a nie przy pierwszym treningu, bo trening zaczyna
+    // się na zegarku, z telefonem w szatni: gdy zgoda okaże się potrzebna,
+    // nie ma już komu jej udzielić. Po odpowiedzi podnosimy pilota jeszcze
+    // raz - bez urządzeń w pobliżu nie mógł wstać w onCreate.
+    //
+    // Odmowy nie pamiętamy sami: po drugiej system przestaje pokazywać okno
+    // i odpowiada od razu, więc nagabywania przy każdym otwarciu nie będzie.
+    // Dla urządzeń w pobliżu jest wtedy przycisk w Profilu.
+    val pilotScope = rememberCoroutineScope()
+    val pilotPerms = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        WatchLinkService.sync(context, sessionActive = false)
+        // Usługa wstaje asynchronicznie - Profil odczytany od razu pokazałby
+        // jeszcze „Pilot nie działa".
+        pilotScope.launch {
+            delay(400)
+            Refresh.bump()
+        }
+    }
+    LaunchedEffect(Unit) {
+        // Wyłączony pilot nie potrzebuje żadnej z tych zgód.
+        if (!WatchLinkService.always(context)) return@LaunchedEffect
+        val brakuje = WatchLinkService.permissionsToAsk(context)
+        if (brakuje.isNotEmpty()) pilotPerms.launch(brakuje)
+    }
 
     // Cicha synchronizacja z zegarkiem przy otwarciu aplikacji.
     //

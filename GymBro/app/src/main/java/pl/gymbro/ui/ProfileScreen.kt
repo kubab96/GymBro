@@ -100,6 +100,34 @@ fun ProfileScreen() {
     // się zgadzać bez zamykania całości.
     var batteryFree by remember { mutableStateOf(WatchLinkService.batteryUnrestricted(context)) }
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    // Od Androida 14 pilot nie wstanie bez zgody na urządzenia w pobliżu -
+    // patrz WatchLinkService.canStart. Czytane jak batteryFree: zgodę daje
+    // się w systemowym oknie, więc stan odświeżamy po powrocie.
+    var linkAllowed by remember { mutableStateOf(WatchLinkService.canStart(context)) }
+    val nearbyLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        linkAllowed = WatchLinkService.canStart(context)
+        WatchLinkService.sync(context, sessionActive = false)
+        mainHandler.postDelayed({ linkListening = WatchLinkService.listening }, 400)
+        // Po dwóch odmowach system nie pokazuje już okna i odpowiada od
+        // razu - przycisk wyglądałby na martwy. Wtedy jedyna droga wiedzie
+        // przez ustawienia aplikacji, więc tam prowadzimy. Po pierwszej
+        // odmowie nie: ktoś dopiero co powiedział „nie" i wyrzucenie go
+        // do ustawień byłoby natręctwem.
+        val trwale = !linkAllowed && (context as? android.app.Activity)
+            ?.shouldShowRequestPermissionRationale(WatchLinkService.NEARBY.first()) == false
+        if (trwale) {
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:${context.packageName}")
+                    )
+                )
+            }
+        }
+    }
 
     suspend fun reloadInventory() {
         val i = withContext(Dispatchers.IO) { gymRepo.inventory() }
@@ -126,6 +154,7 @@ fun ProfileScreen() {
         counts = withContext(Dispatchers.IO) { sessions.historyCounts() }
         batteryFree = WatchLinkService.batteryUnrestricted(context)
         linkListening = WatchLinkService.listening
+        linkAllowed = WatchLinkService.canStart(context)
     }
 
     fun persist(updated: UserProfile) {
@@ -454,6 +483,9 @@ fun ProfileScreen() {
             }
         }
 
+        // Odstępy jak między kartami wyżej - te trzy stykały się krawędziami,
+        // bo dopisywano je później i każda zapomniała o swoim.
+        Spacer(Modifier.height(12.dp))
         SectionCard("Zegarek") {
             Text(
                 "Amazfit przez Health Connect. Treningi i biegi lądują w Postępie - " +
@@ -479,6 +511,7 @@ fun ProfileScreen() {
 
         // Pilot na zegarku: tutaj widać token, bo mini-aplikacja Zepp OS musi
         // go dostać w swoich ustawieniach. Inaczej nie da się go nigdzie odczytać.
+        Spacer(Modifier.height(12.dp))
         SectionCard("Pilot na zegarku") {
             Text(
                 "Zegarek zapisuje serie przez adres lokalny telefonu. Nic nie " +
@@ -491,12 +524,27 @@ fun ProfileScreen() {
             // "brak połączenia" na zegarku, już na siłowni.
             Text("Stan", style = MaterialTheme.typography.labelMedium)
             Text(
-                if (linkListening) "Pilot działa - zegarek może zapisywać serie"
-                else "Pilot nie działa - otwórz tę aplikację jeszcze raz",
+                when {
+                    linkListening -> "Pilot działa - zegarek może zapisywać serie"
+                    // Powód wprost, bo rada „otwórz jeszcze raz" nic tu nie
+                    // da: bez zgody pilot nie wstanie za żadnym razem.
+                    !linkAllowed -> "Pilot nie działa - system wymaga zgody na " +
+                        "urządzenia w pobliżu, zanim pozwoli mu pracować w tle"
+                    !linkAlways -> "Pilot jest wyłączony - włączy się na czas treningu"
+                    else -> "Pilot nie działa - otwórz tę aplikację jeszcze raz"
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (linkListening) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.error
+                color = if (linkListening || (linkAllowed && !linkAlways)) {
+                    MaterialTheme.colorScheme.onSurface
+                } else MaterialTheme.colorScheme.error
             )
+            if (!linkListening && !linkAllowed) {
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = { nearbyLauncher.launch(WatchLinkService.NEARBY) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Zezwól na urządzenia w pobliżu") }
+            }
             // Drugi stan, osobny od pierwszego i ważniejszy, niż wygląda:
             // pilot może działać teraz i zginąć za kwadrans. Dopóki system
             // ma prawo go ubić, "Pilot działa" mówi prawdę tylko o tej chwili.
@@ -510,8 +558,9 @@ fun ProfileScreen() {
             } else {
                 Text(
                     "System może ubić pilota, gdy telefon leży w szatni. " +
-                        "Wtedy serie z zegarka czekają w jego kolejce, a po " +
-                        "ośmiu godzinach przepadają.",
+                        "Serie nie przepadną - czekają w kolejce zegarka - " +
+                        "ale na telefon dojadą dopiero wtedy, gdy pilot " +
+                        "znów wstanie, zwykle po otwarciu tej aplikacji.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.error
                 )
@@ -555,6 +604,7 @@ fun ProfileScreen() {
                 }
             )
         }
+        Spacer(Modifier.height(12.dp))
         SectionCard("Historia") {
             val c = counts
             Text(

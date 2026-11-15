@@ -4,9 +4,11 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.os.Build
@@ -44,14 +46,28 @@ class WatchLinkService : Service() {
 
         // Od Androida 14 rodzaj usługi trzeba podać przy starcie, nie tylko
         // w manifeście - inaczej system ubija ją wyjątkiem.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification("Zegarek może zapisywać serie"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification("Zegarek może zapisywać serie"))
+        //
+        // Ten sam Android 14 rzuca tu SecurityException, gdy brakuje zgody
+        // na urządzenia w pobliżu - patrz [canStart]. Normalnie bez zgody
+        // do tego miejsca nie dochodzimy, bo [start] sprawdza ją wcześniej.
+        // Zgodę da się jednak cofnąć w ustawieniach, a START_STICKY podnosi
+        // usługę bez pytania nas o zdanie - wtedy lepiej zgasnąć po cichu,
+        // niż wywrócić całą aplikację.
+        val wystartowala = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification("Zegarek może zapisywać serie"),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification("Zegarek może zapisywać serie"))
+            }
+        }.onFailure { Log.w(TAG, "system nie pozwolil wystartowac pilotowi", it) }.isSuccess
+        if (!wystartowala) {
+            listening = false
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         if (server == null) {
@@ -213,7 +229,53 @@ class WatchLinkService : Service() {
         fun sync(context: Context, sessionActive: Boolean) {
             if (sessionActive || always(context)) start(context) else stop(context)
         }
+
+        /**
+         * Czy system pozwoli tej usłudze wystartować.
+         *
+         * Od Androida 14 usługa pierwszoplanowa typu `connectedDevice` wymaga
+         * przyznanej zgody na urządzenia w pobliżu - bez niej `startForeground`
+         * rzuca wyjątkiem. Na świeżej instalacji zgody jeszcze nie ma, a pilot
+         * wstaje razem z aplikacją, więc pierwsze uruchomienie kończyło się
+         * awarią, zanim pokazał się jakikolwiek ekran. Na Androidzie 13
+         * i starszych tego warunku nie ma i stąd nie było go widać.
+         */
+        fun canStart(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) return true
+            return NEARBY.any {
+                context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+            }
+        }
+
+        /**
+         * Zgody, o które trzeba poprosić, żeby pilot działał i było go widać.
+         *
+         * Dwie różne sprawy w jednej liście, bo pyta się o nie w tym samym
+         * momencie: bez urządzeń w pobliżu pilot na Androidzie 14+ w ogóle
+         * nie wstanie, a bez powiadomień wstanie, ale po cichu - nie widać
+         * wtedy ani tego, że działa, ani przycisku, którym się go wyłącza.
+         * Pusta tablica znaczy, że nie ma o co pytać.
+         */
+        fun permissionsToAsk(context: Context): Array<String> = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) add(Manifest.permission.POST_NOTIFICATIONS)
+            if (!canStart(context)) addAll(NEARBY)
+        }.toTypedArray()
+
+        /** Zgoda na urządzenia w pobliżu - jedno okno systemowe, dwa uprawnienia. */
+        val NEARBY = arrayOf(
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_SCAN
+        )
+
         fun start(context: Context) {
+            // Bez tego sprawdzenia startForegroundService zobowiązuje usługę
+            // do wejścia na pierwszy plan, a ona nie może tego zrobić - i tak
+            // źle, i tak niedobrze. Nie startujemy więc wcale; Profil mówi,
+            // czego brakuje.
+            if (!canStart(context)) return
             val intent = Intent(context, WatchLinkService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)

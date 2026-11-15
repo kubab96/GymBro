@@ -85,6 +85,8 @@ Mini-aplikacja Zepp OS nie umie sięgnąć do innej aplikacji na telefonie. Umie
 
 **GymBro nie musi być otwarty** - usługa działa niezależnie od aktywności.
 
+**Od Androida 14 pilot nie wstanie bez zgody na urządzenia w pobliżu.** Typ `connectedDevice` wymaga jej już przy `startForeground`, inaczej leci `SecurityException` - na świeżej instalacji była to awaria przy pierwszym uruchomieniu. Dlatego `WatchLinkService.start` sprawdza `canStart` i bez zgody nie startuje wcale, a o zgodę pyta `MainActivity` przy starcie i przycisk w Profilu. Niesprawdzone na urządzeniu: telefon ma Androida 13, a emulator na tej maszynie nie rusza bez sterownika hypervisora.
+
 ### Podział pracy: zegarek nic nie liczy
 
 Zegarek wysyła intencję („zapisz serię", „ciężar w górę") i rysuje to, co wróci. Ciężary, talerze i progresję liczy telefon, w jednym miejscu (`gym/LiveSession.kt`), nieświadomym tego, kto pyta. Dwa miejsca liczące propozycję ciężaru rozjechałyby się przy pierwszej zmianie reguł.

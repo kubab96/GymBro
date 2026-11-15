@@ -941,8 +941,18 @@ class SessionRepository(context: Context) {
      */
     fun wipeHistory(): Int {
         val db2 = db.writable
-        db2.delete("set_entry", null, null)
-        return db2.delete("session", null, null)
+        // Oba kasowania razem albo żadne. Przerwane w połowie - ubity proces,
+        // pełny dysk - zostawiało sesje bez ani jednej serii: puste treningi
+        // w historii, których nie było jak odróżnić od prawdziwych.
+        db2.beginTransaction()
+        try {
+            db2.delete("set_entry", null, null)
+            val removed = db2.delete("session", null, null)
+            db2.setTransactionSuccessful()
+            return removed
+        } finally {
+            db2.endTransaction()
+        }
     }
 
     /**

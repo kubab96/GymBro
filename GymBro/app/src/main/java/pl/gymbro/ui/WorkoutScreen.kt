@@ -151,9 +151,17 @@ fun WorkoutScreen() {
         mutableStateOf<ExternalSession?>(null)
     }
 
+    // Ekran świeci tylko w trakcie treningu i tylko na tej zakładce.
+    //
+    // Wcześniej efekt był kluczowany na Unit, a zakładki żyją w tle przez
+    // cały czas działania aplikacji - więc ekran nie gasł nigdy: ani przy
+    // wpisywaniu jedzenia, ani z telefonem odłożonym na stół bez żadnego
+    // treningu. Flaga jest jedna na całe okno, stąd warunek na widoczność.
     val view = LocalView.current
-    DisposableEffect(Unit) {
-        view.keepScreenOn = true
+    val tabShown = LocalTabShown.current
+    val sessionRunning = session != null
+    DisposableEffect(sessionRunning, tabShown) {
+        view.keepScreenOn = sessionRunning && tabShown
         onDispose { view.keepScreenOn = false }
     }
 
@@ -302,6 +310,10 @@ fun WorkoutScreen() {
         return
     }
 
+    // Jeden odczyt na całe składanie. `session` to stan, który zegarek potrafi
+    // wyzerować w każdej chwili (FINISH z pilota), więc `session!!` w gałęzi
+    // niżej i w przyciskach było awarią czekającą na zbieg okoliczności.
+    val current = session
     CompositionLocalProvider(LocalAdviceSessions provides adviceSessions) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         when {
@@ -309,7 +321,7 @@ fun WorkoutScreen() {
 
             inv == null -> Text("Brak danych o sprzęcie.", Modifier.padding(top = 16.dp))
 
-            session == null -> PlanPicker(
+            current == null -> PlanPicker(
                 programName = activeProgram?.name,
                 options = planOptions,
                 onProgress = { showProgress = true },
@@ -330,14 +342,16 @@ fun WorkoutScreen() {
             }
 
             else -> ActiveSession(
-                session = session!!,
+                session = current,
                 states = states,
                 activeIndex = activeIndex,
                 inventory = inv,
                 onSelect = { activeIndex = it },
                 onSaveSet = { st, w, r, rir ->
                     scope.launch {
-                        val s = session!!
+                        // Trening mógł się skończyć na zegarku między dotknięciem
+                        // a tym miejscem - wtedy nie ma do czego dopisać serii.
+                        val s = session ?: return@launch
                         withContext(Dispatchers.IO) {
                             sessionRepo.addSet(
                                 SetEntry(
@@ -357,21 +371,21 @@ fun WorkoutScreen() {
                 },
                 onDeleteSet = { id ->
                     scope.launch {
-                        val s = session!!
+                        val s = session ?: return@launch
                         withContext(Dispatchers.IO) { sessionRepo.deleteSet(id) }
                         reload(s, inv)
                     }
                 },
                 onUpdateSet = { id, w, r, rir ->
                     scope.launch {
-                        val s = session!!
+                        val s = session ?: return@launch
                         withContext(Dispatchers.IO) { sessionRepo.updateSet(id, w, r, rir) }
                         reload(s, inv)
                     }
                 },
                 onFinish = {
                     scope.launch {
-                        val done = session!!
+                        val done = session ?: return@launch
                         // Propozycje liczymy przed zamknięciem sesji, bo potem
                         // nie ma już czego czytać na ekranie.
                         withContext(Dispatchers.IO) {

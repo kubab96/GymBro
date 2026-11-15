@@ -9,6 +9,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -685,7 +686,7 @@ class ScaleScanner(private val context: Context) {
             BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeDescriptor(cccd, value) == 0
+            g.writeDescriptor(cccd, value) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             cccd.value = value
@@ -703,7 +704,7 @@ class ScaleScanner(private val context: Context) {
 
         log("ZAPIS " + ScaleProtocol.short(ch.uuid) + ": " + ScaleProtocol.hex(bytes))
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            g.writeCharacteristic(ch, bytes, type) == 0
+            g.writeCharacteristic(ch, bytes, type) == BluetoothStatusCodes.SUCCESS
         } else {
             @Suppress("DEPRECATION")
             ch.value = bytes

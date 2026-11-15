@@ -160,7 +160,11 @@ class LocalServer(
     private fun write(client: Socket, response: Response) {
         val bytes = response.json.toByteArray(Charsets.UTF_8)
         val head = buildString {
-            append("HTTP/1.1 ").append(response.status).append(" OK\r\n")
+            // Opis zgodny z kodem. Stało tu na sztywno "OK", więc odmowa
+            // wychodziła jako "401 OK" - klient patrzy na liczbę, ale każdy,
+            // kto podglądał ruch przy diagnozie, czytał sprzeczność.
+            append("HTTP/1.1 ").append(response.status).append(' ')
+                .append(reason(response.status)).append("\r\n")
             append("Content-Type: application/json; charset=utf-8\r\n")
             append("Content-Length: ").append(bytes.size).append("\r\n")
             append("Connection: close\r\n\r\n")
