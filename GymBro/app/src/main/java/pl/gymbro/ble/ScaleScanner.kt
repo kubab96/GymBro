@@ -22,6 +22,7 @@ import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import pl.gymbro.BuildConfig
 import pl.gymbro.data.roundKg
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -29,6 +30,17 @@ import java.util.UUID
 import kotlin.math.abs
 
 private const val LOG_TAG = "GymBroBLE"
+
+/**
+ * Czy prowadzic log diagnostyczny - tylko w wariancie debug.
+ *
+ * Log zapisuje adresy i dane rozgloszeniowe wszystkich urzadzen w poblizu,
+ * nie tylko wagi. Na wlasnym telefonie przy rozgryzaniu protokolu to jest
+ * dokladnie to, o co chodzi; w wydaniu to spis cudzych sluchawek i zegarkow
+ * w logcacie, a do tego zgadywanie masy z kazdej nieznanej ramki, ktorego
+ * wyniku nikt nie czyta.
+ */
+private val DIAG: Boolean = BuildConfig.DEBUG
 
 private val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
@@ -214,13 +226,17 @@ class ScaleScanner(private val context: Context) {
      * podlaczonego komputera. I do logcata, bo odczytywanie dlugiego logu przez
      * przewijanie listy na ekranie jest zawodne - latwo przy tym przegapic linie
      * albo wyjsc z ekranu i przerwac skanowanie.
+     *
+     * Tylko w wariancie debug - patrz [DIAG]. Wczesniej log celowo przezywal
+     * takze w release (poziom informacyjny, bo Log.d i Log.v R8 wycina),
+     * zeby dalo sie diagnozowac wage na wersji do pomiarow plynnosci. Odkad
+     * release ma byc wydaniem, a nie druga wersja robocza, to sie odwraca:
+     * do diagnozy sluzy debug, a ekran z tym logiem i tak jest tylko tam.
      */
     private fun log(line: String) {
+        if (!DIAG) return
         val stamped = timeFmt.format(System.currentTimeMillis()) + "  " + line
         synchronized(_log) { _log.value = (_log.value + stamped).takeLast(1500) }
-        // Poziom informacyjny, nie debug: R8 w konfiguracji "optimize" usuwa
-        // wywolania Log.d i Log.v jako pozbawione skutkow ubocznych, wiec w
-        // wariancie release log diagnostyczny po prostu znikal.
         android.util.Log.i(LOG_TAG, line)
     }
 
@@ -340,7 +356,7 @@ class ScaleScanner(private val context: Context) {
             if (seenPayloads.add(key)) {
                 if (seenPayloads.size > 4000) seenPayloads.clear()
                 log("  ADV[0x%04X] ".format(id) + (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
-                log(ScaleProtocol.annotate(null, bytes, deep = !noise))
+                if (DIAG) log(ScaleProtocol.annotate(null, bytes, deep = !noise))
             }
         }
         for ((uuid, bytes) in serviceData) {
@@ -350,7 +366,7 @@ class ScaleScanner(private val context: Context) {
             if (seenPayloads.add(key)) {
                 log("  ADV serviceData[" + ScaleProtocol.short(uuid) + "] " +
                     (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
-                log(ScaleProtocol.annotate(uuid, bytes, deep = !noise))
+                if (DIAG) log(ScaleProtocol.annotate(uuid, bytes, deep = !noise))
             }
         }
     }
@@ -367,7 +383,7 @@ class ScaleScanner(private val context: Context) {
         if (scalePackets == 1) {
             log("WAGA uslyszana po " + (System.currentTimeMillis() - scanStartedAt) + " ms od startu skanu")
         }
-        traceRaw(result)
+        if (DIAG) traceRaw(result)
         _scaleName.value = name?.trim().orEmpty()
 
         // Logujemy kazda ODMIENNA ramke, porownujac surowe bajty, a nie
@@ -383,7 +399,7 @@ class ScaleScanner(private val context: Context) {
             lastFrameKey = key
             repeatCount = 0
             log("  ADV: " + hex)
-            manufacturer.firstOrNull()?.let { log("    pola 16-bit: " + ScaleProtocol.fields16(it.second)) }
+            if (DIAG) manufacturer.firstOrNull()?.let { log("    pola 16-bit: " + ScaleProtocol.fields16(it.second)) }
             val s = read.sample
             if (s == null) {
                 log("    waga czuwa, bez masy")
@@ -896,7 +912,7 @@ class ScaleScanner(private val context: Context) {
 
         val sample = ScaleDecoders.fromGatt(uuid, data, qnDivisor)
         if (sample == null) {
-            log(ScaleProtocol.annotate(uuid, data))
+            if (DIAG) log(ScaleProtocol.annotate(uuid, data))
             return
         }
         log(

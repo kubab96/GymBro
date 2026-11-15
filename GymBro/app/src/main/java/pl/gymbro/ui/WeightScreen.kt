@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import pl.gymbro.ScaleScreen
 import pl.gymbro.data.BodyMeasurement
 import pl.gymbro.data.BodyFat
 import pl.gymbro.data.BodyMetric
@@ -55,9 +54,9 @@ import java.util.Locale
 /**
  * Ekran masy ciała.
  *
- * Zastępuje surowy ekran diagnostyczny z fazy rozpoznania - ten jest nadal
- * dostępny pod przyciskiem, bo przydaje się, gdy waga zacznie się zachowywać
- * inaczej, niż zakładamy.
+ * Zastępuje surowy ekran diagnostyczny z fazy rozpoznania. Tamten przydaje
+ * się nadal, gdy waga zacznie się zachowywać inaczej, niż zakładamy, ale
+ * przycisk do niego jest tylko w wariancie debug - patrz [DIAGNOSTICS].
  *
  * Założenie, które rządzi tym ekranem: **pojedynczy pomiar nic nie znaczy**.
  * Masa ciała waha się w ciągu doby o ponad kilogram, więc na pierwszym planie
@@ -144,7 +143,7 @@ fun WeightScreen() {
         return
     }
 
-    if (showDiagnostics) {
+    if (DIAGNOSTICS && showDiagnostics) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -153,7 +152,7 @@ fun WeightScreen() {
             ) {
                 Text("Diagnostyka BLE", style = MaterialTheme.typography.titleMedium)
             }
-            ScaleScreen()
+            BleDiagnosticsScreen()
         }
         return
     }
@@ -168,7 +167,10 @@ fun WeightScreen() {
             Text("Masa ciała", style = MaterialTheme.typography.headlineMedium)
             Row {
                 TextButton(onClick = { showMeasurements = true }) { Text("Obwody") }
-                TextButton(onClick = { showDiagnostics = true }) { Text("Diagnostyka") }
+                // Tylko w wariancie debug - patrz DIAGNOSTICS.
+                if (DIAGNOSTICS) {
+                    TextButton(onClick = { showDiagnostics = true }) { Text("Diagnostyka") }
+                }
             }
         }
 

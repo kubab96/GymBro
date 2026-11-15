@@ -20,7 +20,7 @@ import pl.gymbro.MainActivity
 import java.security.SecureRandom
 
 /**
- * Trzyma serwer przy życiu na czas treningu.
+ * Trzyma serwer przy życiu, gdy aplikacja jest w tle.
  *
  * Zwykłe gniazdo w tle nie przetrwa: telefon na siłowni leży w kieszeni
  * z wygaszonym ekranem, a aplikacja w tle traci prawo do pracy. Usługa
@@ -28,8 +28,12 @@ import java.security.SecureRandom
  * serię dwadzieścia minut po tym, jak ostatni raz spojrzałeś na telefon.
  *
  * Powiadomienie nie jest przy okazji złe: widać z niego, że pilot jest włączony,
- * i można go stamtąd wyłączyć. Serwer działa tylko w trakcie treningu, więc poza
- * siłownią nie ma otwartego gniazda ani nic nie zjada baterii.
+ * i można go stamtąd wyłączyć.
+ *
+ * Domyślnie stoi cały czas, nie tylko w trakcie treningu: trening zaczyna się
+ * na zegarku, więc pierwsze pytanie przychodzi, zanim jakakolwiek sesja
+ * istnieje - patrz [always]. Po wyłączeniu tego w Profilu usługa żyje tylko
+ * tyle, co sesja.
  */
 class WatchLinkService : Service() {
 

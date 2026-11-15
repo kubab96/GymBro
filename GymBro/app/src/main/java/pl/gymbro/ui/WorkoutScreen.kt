@@ -254,12 +254,13 @@ fun WorkoutScreen() {
         if (live != null && inv2 != null) reload(live, inv2)
     }
 
-    // Pilot na zegarku: usługa żyje dokładnie tyle, co trening.
+    // Pilot na zegarku: stan usługi uzgadniamy przy każdej zmianie sesji.
     //
-    // Serwer słucha na pętli zwrotnej telefonu, więc poza treningiem nie ma po
-    // co stać. Nasłuch przekłada zapis z zegarka na odświeżenie ekranu - serwer
-    // woła z własnego wątku, a Refresh to stan Compose, więc musi to trafić
-    // na wątek główny.
+    // Przy ustawieniu domyślnym pilot stoi cały czas i to wywołanie niczego
+    // nie zmienia; liczy się, gdy w Profilu wyłączono pracę poza treningiem -
+    // wtedy usługa wstaje z sesją i gaśnie razem z nią. Nasłuch przekłada
+    // zapis z zegarka na odświeżenie ekranu - serwer woła z własnego wątku,
+    // a Refresh to stan Compose, więc musi to trafić na wątek główny.
     val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
     DisposableEffect(session?.id) {
         WatchLinkService.sync(context, sessionActive = session != null)

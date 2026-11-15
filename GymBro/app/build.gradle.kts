@@ -13,7 +13,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1-faza0"
+        versionName = "0.1.0"
     }
 
     buildTypes {
@@ -40,7 +40,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        // BuildConfig.DEBUG odroznia wariant z narzedziami diagnostycznymi od
+        // wydania - patrz ui/Diagnostics.kt. AGP 8 nie generuje tej klasy sam.
+        buildConfig = true
+    }
 }
 
 dependencies {

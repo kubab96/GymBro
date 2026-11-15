@@ -17,6 +17,7 @@ import androidx.health.connect.client.records.Vo2MaxRecord
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import pl.gymbro.BuildConfig
 import pl.gymbro.data.DailyMetric
 import pl.gymbro.data.ExternalSession
 import pl.gymbro.data.HealthRepository
@@ -246,18 +247,24 @@ class HealthImporter(private val context: Context) {
             // Przy ośmiuset rekordach sama liczba nic nie mówi - dopiero podział
             // na typy i długości pokazuje, co jest treningiem, a co śladem po
             // autodetekcji ruchu. Od tego zależy, co ma prawo trafić do historii.
-            val histogram = sessions
-                .groupBy { exerciseName(it.exerciseType) }
-                .map { (type, list) ->
-                    val mins = list.map {
-                        Duration.between(it.startTime, it.endTime).toMinutes()
+            //
+            // Tylko w wariancie debug: to spis rodzajów i długości treningów,
+            // czyli dane o zdrowiu, a w wydaniu nikt go nie czyta - liczyłby
+            // się przy każdej synchronizacji po nic.
+            if (BuildConfig.DEBUG) {
+                val histogram = sessions
+                    .groupBy { exerciseName(it.exerciseType) }
+                    .map { (type, list) ->
+                        val mins = list.map {
+                            Duration.between(it.startTime, it.endTime).toMinutes()
+                        }
+                        val short = mins.count { it < 5 }
+                        "$type: ${list.size} szt., mediana ${mins.sorted()[mins.size / 2]} min, " +
+                            "poniżej 5 min: $short"
                     }
-                    val short = mins.count { it < 5 }
-                    "$type: ${list.size} szt., mediana ${mins.sorted()[mins.size / 2]} min, " +
-                        "poniżej 5 min: $short"
-                }
-                .sorted()
-            Log.i(TAG, "Co przysyła zegarek:\n" + histogram.joinToString("\n"))
+                    .sorted()
+                Log.i(TAG, "Co przysyła zegarek:\n" + histogram.joinToString("\n"))
+            }
             val known = repo.allByExternalId()
             var budget = AGGREGATE_BUDGET
 

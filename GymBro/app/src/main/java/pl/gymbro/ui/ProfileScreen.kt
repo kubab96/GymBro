@@ -503,7 +503,7 @@ fun ProfileScreen() {
             OutlinedButton(
                 onClick = { showWatch = true },
                 modifier = Modifier.fillMaxWidth()
-            ) { Text("Synchronizacja i diagnostyka") }
+            ) { Text("Synchronizacja z zegarkiem") }
         }
 
         // Czyszczenie historii jest ustawieniem, nie czynnością treningową -
@@ -571,15 +571,22 @@ fun ProfileScreen() {
                 ) { Text("Pozwól pracować w tle") }
             }
 
+            // Adres tylko w wariancie debug. Jest stały i zegarek zna go bez
+            // pytania, więc na co dzień to szczegół budowy, nie ustawienie -
+            // przydaje się wyłącznie przy sprawdzaniu pilota z komputera.
+            if (DIAGNOSTICS) {
+                Spacer(Modifier.height(8.dp))
+                Text("Adres", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "http://127.0.0.1:${WatchLinkService.PORT}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
             Spacer(Modifier.height(8.dp))
-            Text("Adres", style = MaterialTheme.typography.labelMedium)
-            Text(
-                "http://127.0.0.1:${WatchLinkService.PORT}",
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace
-            )
-            Spacer(Modifier.height(8.dp))
-            Text("Token", style = MaterialTheme.typography.labelMedium)
+            // „Kod parowania", nie „token": to jedyna rzecz z tej karty, którą
+            // przepisuje się do aplikacji na zegarku, i nazwa ma mówić po co.
+            Text("Kod parowania", style = MaterialTheme.typography.labelMedium)
             Text(
                 linkToken,
                 style = MaterialTheme.typography.bodyMedium,

@@ -229,9 +229,11 @@ Gałąź domyślna to `master`, zdalne `origin` to `github.com/kubab96/GymBro`.
 
 ## Rzeczy, które łatwo zepsuć
 
-**Token pilota.** `gymbro-watch/utils/config/link.js` jest w `.gitignore` - paruje konkretny zegarek z konkretnym telefonem. Wzór: `link.example.js`, wartość: GymBro → Profil → Pilot na zegarku. Bez tego pliku paczka się zbuduje, ale telefon odrzuci każde żądanie z 401.
+**Token pilota.** `gymbro-watch/utils/config/link.js` jest w `.gitignore` - paruje konkretny zegarek z konkretnym telefonem. Wzór: `link.example.js`, wartość: GymBro → Profil → Pilot na zegarku, pole „Kod parowania". Bez tego pliku paczka się zbuduje, ale telefon odrzuci każde żądanie z 401.
 
 **Baza to jedyna kopia historii treningów.** Nie ma eksportu. `GymBro/kopie/` trzyma ręczne kopie ściągnięte z telefonu i jest poza repozytorium. Przed czymkolwiek, co dotyka danych, zrób kopię.
+
+**Diagnostyka jest tylko w wariancie debug.** Podsłuch BLE i surowy zrzut Health Connect (`ui/Diagnostics.kt`), log skanera wagi w logcacie, zgadywanie masy z nieznanych ramek i adres pilota w Profilu wiszą na `BuildConfig.DEBUG`. W release przycisków „Diagnostyka" i „Surowe" nie ma, a `adb logcat -s GymBroBLE` milczy - do rozgryzania wagi instaluj debug. Płynność dalej mierz na release.
 
 **Na zegarku nic się nie animuje poza nazwą ćwiczenia** (raz tam i z powrotem). Pełnoekranowa zasłona przejścia i błysk w 60 klatkach były ćwierć sekundy głuchoty na palec przy każdej zmianie ekranu. Zapis do pamięci czeka na 1,2 s ciszy po ostatnim dotyku (`CISZA_MS`); tylko START i FINISH idą do pliku od razu.
 

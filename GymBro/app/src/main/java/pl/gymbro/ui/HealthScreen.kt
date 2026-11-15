@@ -33,7 +33,6 @@ import androidx.health.connect.client.PermissionController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import pl.gymbro.HealthDumpScreen
 import pl.gymbro.data.ExternalSession
 import pl.gymbro.data.HealthRepository
 import pl.gymbro.data.MetricKind
@@ -141,7 +140,7 @@ fun HealthScreen(onBack: () -> Unit) {
         }
     }
 
-    if (showDump) {
+    if (DIAGNOSTICS && showDump) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -164,7 +163,10 @@ fun HealthScreen(onBack: () -> Unit) {
         ) {
             Text("Zegarek", style = MaterialTheme.typography.headlineMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { showDump = true }) { Text("Surowe") }
+                // Tylko w wariancie debug - patrz DIAGNOSTICS.
+                if (DIAGNOSTICS) {
+                    TextButton(onClick = { showDump = true }) { Text("Surowe") }
+                }
             }
         }
 
