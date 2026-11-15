@@ -1,5 +1,6 @@
 package pl.gymbro.ble
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -9,18 +10,22 @@ import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import pl.gymbro.data.roundKg
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.math.abs
 
 private const val LOG_TAG = "GymBroBLE"
 
@@ -58,8 +63,17 @@ data class ScaleReading(
     /** Surowa impedancja w omach, jesli waga ja podaje. Potrzebna do zapisu w bazie. */
     val impedanceOhm: Double? = null,
     /** Moment odczytu - czyni kazda emisje unikalna. */
-    val at: Long = System.currentTimeMillis()
+    val at: Long = System.currentTimeMillis(),
+    /**
+     * Falsz, gdy waga zamilkla, zanim potwierdzila wynik, i proponujemy
+     * ostatnia liczbe, jaka dotarla. Ekran prosi wtedy o porownanie
+     * z wyswietlaczem zamiast udawac pewnosc.
+     */
+    val certain: Boolean = true
 )
+
+/** Liczba, ktora waga pokazuje w tej chwili - jeszcze nie wynik. */
+data class LiveWeight(val weightKg: Double, val at: Long)
 
 data class FoundDevice(
     val address: String,
@@ -71,24 +85,43 @@ data class FoundDevice(
 )
 
 /**
- * Uniwersalny sniffer wag BLE na potrzeby Fazy 0.
+ * Nasluch wag BLE: skanowanie, rozpoznanie rodziny, odczyt na zywo i wynik.
  *
- * Zamiast zakladac konkretny protokol, robi trzy rzeczy:
- *  1. skanuje otoczenie i rozpoznaje znane rodziny wag po nazwie i UUID serwisu,
- *  2. zrzuca do logu zawartosc rozgloszen (czesc tanich wag podaje mase
- *     w samym advertisement, bez laczenia),
- *  3. po polaczeniu subskrybuje KAZDA charakterystyke z notify/indicate
- *     i loguje kazda ramke razem z proba jej rozszyfrowania.
+ * Robi to, co aplikacje producentow, w tej samej kolejnosci:
+ *  1. skanuje otoczenie i rozpoznaje wage po tym, czym sie przedstawia,
+ *  2. jesli waga nadaje pomiar w rozgloszeniu, czyta go bez laczenia,
+ *  3. jesli wymaga polaczenia - laczy sie sama i subskrybuje pomiary,
+ *  4. pokazuje liczbe od pierwszej ramki, a wynik oddaje, gdy sie ustali
+ *     ([WeightSettler]).
  *
- * Efekt: wchodzisz na wage, a aplikacja zapisuje wszystko, co ta waga wysyla.
- * Ten log wystarcza, zeby napisac docelowy parser.
+ * Obok tego prowadzi log diagnostyczny ze wszystkim, co slychac - bez niego
+ * nieznanej wagi nie da sie rozgryzc, a "nie dziala" nie da sie zmierzyc.
  */
 @SuppressLint("MissingPermission")
 class ScaleScanner(private val context: Context) {
 
+    companion object {
+        /** Uprawnienia, bez ktorych skan konczy sie wyjatkiem albo cisza. */
+        fun permissions(): Array<String> =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+
+        /** Po tylu milisekundach odrzucony odczyt moze wrocic jako nowy. */
+        private const val REJECTED_HOLD_MS = 10_000L
+
+        /** Nie dobijamy sie do tej samej wagi czesciej. */
+        private const val RECONNECT_GAP_MS = 15_000L
+
+        private const val TICK_MS = 500L
+    }
+
     private val manager =
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val adapter get() = manager.adapter
+    private val main = Handler(Looper.getMainLooper())
 
     private val _devices = MutableStateFlow<Map<String, FoundDevice>>(emptyMap())
     val devices: StateFlow<Map<String, FoundDevice>> = _devices.asStateFlow()
@@ -99,32 +132,64 @@ class ScaleScanner(private val context: Context) {
     private val _connected = MutableStateFlow<String?>(null)
     val connected: StateFlow<String?> = _connected.asStateFlow()
 
+    /** Czy trwa nasluch w sensie ekranu - takze wtedy, gdy skan ustapil polaczeniu. */
     private val _scanning = MutableStateFlow(false)
     val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
 
-    /** Ostatni stabilny pomiar z wagi - to jest wlasciwy wynik Fazy 0. */
+    /** Wynik pomiaru: ustalony przez wage albo przez [WeightSettler]. */
     private val _lastStable = MutableStateFlow<ScaleReading?>(null)
     val lastStable: StateFlow<ScaleReading?> = _lastStable.asStateFlow()
+
+    /**
+     * Biezaca liczba z wagi. Ekran pokazuje ja od pierwszej ramki: czekanie
+     * z pustym ekranem na wynik koncowy nie odroznialo "waga liczy" od
+     * "nic nie slychac".
+     */
+    private val _live = MutableStateFlow<LiveWeight?>(null)
+    val live: StateFlow<LiveWeight?> = _live.asStateFlow()
+
+    /** Nazwa uslyszanej wagi (pusta, gdy sie nie przedstawia); null, dopoki zadnej nie slychac. */
+    private val _scaleName = MutableStateFlow<String?>(null)
+    val scaleName: StateFlow<String?> = _scaleName.asStateFlow()
+
+    /** Ile pakietow rozgloszeniowych w ogole doszlo. Zero = skanowanie nie dziala. */
+    private val _packets = MutableStateFlow(0)
+    val packets: StateFlow<Int> = _packets.asStateFlow()
+
+    private val settler = WeightSettler()
+
+    /** Czy pod spodem naprawde chodzi skan (na czas laczenia jest wstrzymany). */
+    private var scanRunning = false
+    private var autoConnect = false
+    private var scanStartedAt = 0L
+    private var scalePackets = 0
+
+    /**
+     * Odczyt odrzucony przyciskiem "Zmierz ponownie". Waga nadaje ustalony
+     * wynik jeszcze kilka sekund po zejsciu - bez tej blokady nowy nasluch
+     * lapal w pierwszej chwili dokladnie te liczbe, ktora wlasnie odrzucono.
+     */
+    private var rejectedKg: Double? = null
+    private var rejectedUntil = 0L
 
     /**
      * Dzielnik masy dla wag QN/Yolanda. Podaje go ramka 0x12 po polaczeniu;
      * do tego czasu zakladamy 100, bo tak ma wiekszosc tych wag.
      */
     private var qnDivisor: Int = 100
+    private var qnGreeted = false
 
     /** Waga rozglasza kilka razy na sekunde - logujemy dopiero zmiane odczytu. */
-    private var lastMeasurementKey: String? = null
+    private var lastFrameKey: String? = null
     private var rawTraceCount = 0
 
     /** Ile razy z rzedu przyszla ta sama ramka pomiarowa. */
     private var repeatCount = 0
 
-    /** Ile pakietow rozgloszeniowych w ogole doszlo. Zero = skanowanie nie dziala. */
-    private val _packets = MutableStateFlow(0)
-    val packets: StateFlow<Int> = _packets.asStateFlow()
-
     /** Deduplikacja tresci rozgloszen, zeby log nie urosl do nieskonczonosci. */
     private val seenPayloads = mutableSetOf<String>()
+
+    private val connectTried = HashMap<String, Long>()
 
     /**
      * Android nie zwraca ZADNYCH wynikow skanowania BLE przy wylaczonych uslugach
@@ -137,16 +202,6 @@ class ScaleScanner(private val context: Context) {
     }
 
     private var gatt: BluetoothGatt? = null
-    private val descriptorQueue = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
-
-    /**
-     * Charakterystyki tozsamosci urzadzenia do odczytania po polaczeniu.
-     *
-     * Osobna kolejka od subskrypcji, bo stos BLE Androida obsluguje jedna
-     * operacje GATT naraz: najpierw czytamy, kim urzadzenie jest, potem
-     * zapisujemy sie na ramki z pomiarami.
-     */
-    private val readQueue = ConcurrentLinkedQueue<BluetoothGattCharacteristic>()
     private val timeFmt = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
 
     fun isBluetoothOn(): Boolean = adapter?.isEnabled == true
@@ -161,7 +216,7 @@ class ScaleScanner(private val context: Context) {
      */
     private fun log(line: String) {
         val stamped = timeFmt.format(System.currentTimeMillis()) + "  " + line
-        _log.value = (_log.value + stamped).takeLast(1500)
+        synchronized(_log) { _log.value = (_log.value + stamped).takeLast(1500) }
         // Poziom informacyjny, nie debug: R8 w konfiguracji "optimize" usuwa
         // wywolania Log.d i Log.v jako pozbawione skutkow ubocznych, wiec w
         // wariancie release log diagnostyczny po prostu znikal.
@@ -177,175 +232,241 @@ class ScaleScanner(private val context: Context) {
     // ---- Skanowanie ------------------------------------------------------
 
     private val scanCallback = object : ScanCallback() {
-        /**
-         * Surowy podsluch jednego urzadzenia, z pominieciem calego odsiewania.
-         *
-         * Reszta tej klasy celowo wycisza powtorzenia, zeby log dalo sie czytac.
-         * Przy diagnozowaniu "dlaczego nie widac wagi" to wyciszanie jest jednak
-         * samo w sobie podejrzanym - nie da sie odroznic "pakiety nie przychodza"
-         * od "przychodza, ale je odrzucamy". Ta sciezka loguje wszystko, co
-         * przyjdzie od wskazanego urzadzenia, i tylko tak mozna to rozstrzygnac.
-         */
-        private fun traceRaw(result: ScanResult, name: String?) {
-            val isScale = name?.startsWith("Yoda", ignoreCase = true) == true ||
-                result.device.address.startsWith("A8:0B:6B", ignoreCase = true)
-            if (!isScale) return
-            rawTraceCount++
-            val msd = result.scanRecord?.manufacturerSpecificData
-            val payload = if (msd == null || msd.size() == 0) "(brak manufacturer data)"
-            else (0 until msd.size()).joinToString("  ") { i ->
-                "0x%04X: %s".format(msd.keyAt(i), ScaleProtocol.hex(msd.valueAt(i) ?: ByteArray(0)))
-            }
-            log("SUROWO #" + rawTraceCount + "  RSSI=" + result.rssi + "  " + payload)
-        }
+        override fun onScanResult(callbackType: Int, result: ScanResult) = onResult(result)
 
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val rec = result.scanRecord
-            val name = rec?.deviceName ?: result.device.name
-            val services = rec?.serviceUuids?.map { it.uuid } ?: emptyList()
-
-            traceRaw(result, name)
-
-            // Wagi OKOK/Chipsea czesto nie maja sensownej nazwy ani serwisow w rozgloszeniu -
-            // rozpoznajemy je po ID producenta w manufacturer data.
-            val okOkId: Int? = rec?.manufacturerSpecificData?.let { msd ->
-                (0 until msd.size())
-                    .map { msd.keyAt(it) }
-                    .firstOrNull { OkOkParser.looksLikeOkOk(it) }
-            }
-
-            val family = when {
-                YolandaParser.matchesName(name) -> "Qingniu / Yolanda (QN-Scale)"
-                okOkId != null -> "OKOK / Chipsea (ID 0x%04X, rozgloszenie)".format(okOkId)
-                else -> ScaleProtocol.guessFamilyFromName(name)
-                    ?: services.firstNotNullOfOrNull { ScaleProtocol.describeService(it) }
-            }
-
-            val addr = result.device.address
-            val alreadyKnown = _devices.value.containsKey(addr)
-            _devices.value = _devices.value + (addr to FoundDevice(
-                address = addr,
-                name = name,
-                rssi = result.rssi,
-                services = services,
-                family = family,
-                lastSeen = System.currentTimeMillis()
-            ))
-
-            _packets.value = _packets.value + 1
-
-            // KAZDE nowe urzadzenie trafia do logu, nie tylko rozpoznane.
-            // Poprzednia wersja milczala o wszystkim, czego nie znala - przez co
-            // pusty log nie odrozmial "nic nie widac" od "widac, ale nie rozpoznaje".
-            if (!alreadyKnown) {
-                log("URZADZENIE: " + (name ?: "(bez nazwy)") + "  " + addr + "  RSSI=" + result.rssi)
-                if (family != null) log("  >>> rodzina: " + family)
-                // Czy urzadzenie w ogole przyjmuje polaczenia.
-                //
-                // Rozstrzyga to samo rozgloszenie, wiec nie trzeba czekac na
-                // nieudane laczenie i zgadywac z kodu bledu. Waga, ktora
-                // rozglasza sie jako niekonektowalna, nigdy nie poda modelu ani
-                // firmware'u - te dane leza za polaczeniem GATT, ktorego nie bedzie.
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    log("  polaczenia: " + if (result.isConnectable) "TAK" else "NIE (samo rozgloszenie)")
-                }
-                services.forEach {
-                    log("  serwis: " + ScaleProtocol.short(it) + "  " + (ScaleProtocol.describeService(it) ?: ""))
-                }
-            }
-
-            rec?.manufacturerSpecificData?.let { msd ->
-                for (i in 0 until msd.size()) {
-                    val id = msd.keyAt(i)
-                    val bytes = msd.valueAt(i) ?: continue
-
-                    // Wariant rozgloszeniowy Yolanda/QN - naglowek AA BB pod ID 0xFFFF.
-                    val y = YolandaParser.parseBroadcast(id, bytes)
-                    if (y != null) {
-                        val key = "%s|%.2f|%b".format(y.source, y.weightKg, y.stable)
-                        if (key != lastMeasurementKey) {
-                            lastMeasurementKey = key
-                            log("  ADV[0x%04X]: ".format(id) + ScaleProtocol.hex(bytes))
-                            log(y.pretty())
-                            if (y.stable) {
-                                _lastStable.value =
-                                    ScaleReading(y.weightKg, null, true, y.source)
-                            }
-                        }
-                        continue
-                    }
-
-                    // Rodzina OKOK/Chipsea.
-                    val m = OkOkParser.parse(id, bytes)
-                    if (m != null) {
-                        // Logujemy kazda ODMIENNA ramke, porownujac surowe bajty,
-                        // a nie odczytane z nich wartosci.
-                        //
-                        // Wczesniej kluczem byla masa i impedancja po zdekodowaniu -
-                        // przez co ramka, w ktorej zmienilo sie pole, ktorego jeszcze
-                        // nie rozumiemy, nigdy nie trafiala do logu. Po ustabilizowaniu
-                        // masy wszystko bylo wyciszane. Jesli waga dosyla sklad ciala
-                        // osobna ramka, dopiero tak da sie go zobaczyc.
-                        val hex = ScaleProtocol.hex(bytes)
-                        val key = "%s|%s".format(m.variant, hex)
-                        if (key != lastMeasurementKey) {
-                            lastMeasurementKey = key
-                            repeatCount = 0
-                            log("  ADV[0x%04X]: ".format(id) + hex)
-                            log("    pola 16-bit: " + ScaleProtocol.fields16(bytes))
-                            log(m.pretty())
-                            if (m.stable) {
-                                _lastStable.value = ScaleReading(
-                                    weightKg = m.weightKg,
-                                    detail = m.impedanceOhm?.let { "impedancja %.1f Ohm".format(it) },
-                                    stable = true,
-                                    source = m.variant,
-                                    impedanceOhm = m.impedanceOhm
-                                )
-                            }
-                        } else {
-                            // Bez tego licznika brak nowych linii w logu jest dwuznaczny:
-                            // nie wiadomo, czy waga zamilkla, czy powtarza ten sam odczyt.
-                            repeatCount++
-                            if (repeatCount % 20 == 0) {
-                                log("  (ta sama ramka powtorzona " + repeatCount + " razy - " +
-                                    "waga nadaje, ale nie odswieza pomiaru)")
-                            }
-                        }
-                        continue
-                    }
-
-                    // Nierozpoznane: logujemy kazda ODMIENNA tresc raz. Waga nadaje
-                    // kilka razy na sekunde, ale zmienia payload przy zmianie odczytu,
-                    // wiec wejscie na nia samo z siebie wyprodukuje nowe wpisy.
-                    val noise = ScaleProtocol.isNoiseCompany(id)
-                    val key = if (noise) addr + "|" + id else addr + "|" + id + "|" + ScaleProtocol.hex(bytes)
-                    if (seenPayloads.add(key)) {
-                        if (seenPayloads.size > 4000) seenPayloads.clear()
-                        log("  ADV[0x%04X] ".format(id) + (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
-                        log(ScaleProtocol.annotate(null, bytes, deep = !noise))
-                    }
-                }
-            }
-            rec?.serviceData?.forEach { (uuid, bytes) ->
-                val noise = ScaleProtocol.isNoiseService(uuid.uuid)
-                val key = if (noise) addr + "|sd|" + uuid
-                          else addr + "|sd|" + uuid + "|" + ScaleProtocol.hex(bytes)
-                if (seenPayloads.add(key)) {
-                    log("  ADV serviceData[" + ScaleProtocol.short(uuid.uuid) + "] " +
-                        (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
-                    log(ScaleProtocol.annotate(uuid.uuid, bytes, deep = !noise))
-                }
-            }
+        override fun onBatchScanResults(results: MutableList<ScanResult>) {
+            results.forEach { onResult(it) }
         }
 
         override fun onScanFailed(errorCode: Int) {
             log("BLAD skanowania, kod=" + errorCode)
+            scanRunning = false
             _scanning.value = false
         }
     }
 
-    fun startScan() {
+    /**
+     * Surowy podsluch jednego urzadzenia, z pominieciem calego odsiewania.
+     *
+     * Reszta tej klasy celowo wycisza powtorzenia, zeby log dalo sie czytac.
+     * Przy diagnozowaniu "dlaczego nie widac wagi" to wyciszanie jest jednak
+     * samo w sobie podejrzanym - nie da sie odroznic "pakiety nie przychodza"
+     * od "przychodza, ale je odrzucamy". Ta sciezka loguje wszystko, co
+     * przyjdzie od rozpoznanej wagi, i tylko tak mozna to rozstrzygnac.
+     */
+    private fun traceRaw(result: ScanResult) {
+        rawTraceCount++
+        val msd = result.scanRecord?.manufacturerSpecificData
+        val payload = if (msd == null || msd.size() == 0) "(brak manufacturer data)"
+        else (0 until msd.size()).joinToString("  ") { i ->
+            "0x%04X: %s".format(msd.keyAt(i), ScaleProtocol.hex(msd.valueAt(i) ?: ByteArray(0)))
+        }
+        log(
+            "SUROWO #" + rawTraceCount + "  +" + (System.currentTimeMillis() - scanStartedAt) +
+                " ms  RSSI=" + result.rssi + "  " + payload
+        )
+    }
+
+    private fun onResult(result: ScanResult) {
+        val rec = result.scanRecord
+        val name = rec?.deviceName ?: result.device.name
+        val services = rec?.serviceUuids?.map { it.uuid } ?: emptyList()
+        val addr = result.device.address
+
+        val manufacturer = rec?.manufacturerSpecificData?.let { msd ->
+            (0 until msd.size()).mapNotNull { i -> msd.valueAt(i)?.let { msd.keyAt(i) to it } }
+        } ?: emptyList()
+        val serviceData = rec?.serviceData?.mapNotNull { (uuid, bytes) ->
+            if (uuid == null || bytes == null) null else uuid.uuid to bytes
+        } ?: emptyList()
+
+        val read = ScaleDecoders.fromAdvert(manufacturer, serviceData)
+        val connectable =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.O || result.isConnectable
+        val gattScale = read == null && ScaleDecoders.wantsConnection(name, services)
+
+        val family = read?.family
+            ?: (if (YolandaParser.matchesName(name)) "Qingniu / Yolanda (QN-Scale)" else null)
+            ?: ScaleProtocol.guessFamilyFromName(name)
+            ?: services.firstNotNullOfOrNull { ScaleProtocol.describeService(it) }
+
+        val alreadyKnown = _devices.value.containsKey(addr)
+        _devices.value = _devices.value + (addr to FoundDevice(
+            address = addr,
+            name = name,
+            rssi = result.rssi,
+            services = services,
+            family = family,
+            lastSeen = System.currentTimeMillis()
+        ))
+        _packets.value = _packets.value + 1
+
+        // KAZDE nowe urzadzenie trafia do logu, nie tylko rozpoznane.
+        // Poprzednia wersja milczala o wszystkim, czego nie znala - przez co
+        // pusty log nie odrozmial "nic nie widac" od "widac, ale nie rozpoznaje".
+        if (!alreadyKnown) {
+            log("URZADZENIE: " + (name ?: "(bez nazwy)") + "  " + addr + "  RSSI=" + result.rssi)
+            if (family != null) log("  >>> rodzina: " + family)
+            // Czy urzadzenie w ogole przyjmuje polaczenia.
+            //
+            // Rozstrzyga to samo rozgloszenie, wiec nie trzeba czekac na
+            // nieudane laczenie i zgadywac z kodu bledu. Waga, ktora
+            // rozglasza sie jako niekonektowalna, nigdy nie poda modelu ani
+            // firmware'u - te dane leza za polaczeniem GATT, ktorego nie bedzie.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                log("  polaczenia: " + if (result.isConnectable) "TAK" else "NIE (samo rozgloszenie)")
+            }
+            services.forEach {
+                log("  serwis: " + ScaleProtocol.short(it) + "  " + (ScaleProtocol.describeService(it) ?: ""))
+            }
+        }
+
+        if (read != null) {
+            onScaleAdvert(result, name, read, manufacturer, serviceData)
+            return
+        }
+        if (gattScale && connectable) {
+            _scaleName.value = name?.trim().orEmpty()
+            if (autoConnect) tryAutoConnect(result.device, name)
+        }
+
+        // Nierozpoznane: logujemy kazda ODMIENNA tresc raz. Waga nadaje
+        // kilka razy na sekunde, ale zmienia payload przy zmianie odczytu,
+        // wiec wejscie na nia samo z siebie wyprodukuje nowe wpisy.
+        for ((id, bytes) in manufacturer) {
+            val noise = ScaleProtocol.isNoiseCompany(id)
+            val key = if (noise) addr + "|" + id else addr + "|" + id + "|" + ScaleProtocol.hex(bytes)
+            if (seenPayloads.add(key)) {
+                if (seenPayloads.size > 4000) seenPayloads.clear()
+                log("  ADV[0x%04X] ".format(id) + (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
+                log(ScaleProtocol.annotate(null, bytes, deep = !noise))
+            }
+        }
+        for ((uuid, bytes) in serviceData) {
+            val noise = ScaleProtocol.isNoiseService(uuid)
+            val key = if (noise) addr + "|sd|" + uuid
+                      else addr + "|sd|" + uuid + "|" + ScaleProtocol.hex(bytes)
+            if (seenPayloads.add(key)) {
+                log("  ADV serviceData[" + ScaleProtocol.short(uuid) + "] " +
+                    (name ?: addr) + ": " + ScaleProtocol.hex(bytes))
+                log(ScaleProtocol.annotate(uuid, bytes, deep = !noise))
+            }
+        }
+    }
+
+    /** Rozgloszenie rozpoznanej wagi - z masa albo bez. */
+    private fun onScaleAdvert(
+        result: ScanResult,
+        name: String?,
+        read: AdvertRead,
+        manufacturer: List<Pair<Int, ByteArray>>,
+        serviceData: List<Pair<UUID, ByteArray>>
+    ) {
+        scalePackets++
+        if (scalePackets == 1) {
+            log("WAGA uslyszana po " + (System.currentTimeMillis() - scanStartedAt) + " ms od startu skanu")
+        }
+        traceRaw(result)
+        _scaleName.value = name?.trim().orEmpty()
+
+        // Logujemy kazda ODMIENNA ramke, porownujac surowe bajty, a nie
+        // odczytane z nich wartosci.
+        //
+        // Wczesniej kluczem byla masa i impedancja po zdekodowaniu - przez co
+        // ramka, w ktorej zmienilo sie pole, ktorego jeszcze nie rozumiemy,
+        // nigdy nie trafiala do logu.
+        val hex = manufacturer.joinToString(" | ") { "0x%04X: ".format(it.first) + ScaleProtocol.hex(it.second) } +
+            serviceData.joinToString(" | ") { ScaleProtocol.short(it.first) + ": " + ScaleProtocol.hex(it.second) }
+        val key = result.device.address + "|" + hex
+        if (key != lastFrameKey) {
+            lastFrameKey = key
+            repeatCount = 0
+            log("  ADV: " + hex)
+            manufacturer.firstOrNull()?.let { log("    pola 16-bit: " + ScaleProtocol.fields16(it.second)) }
+            val s = read.sample
+            if (s == null) {
+                log("    waga czuwa, bez masy")
+            } else {
+                log(
+                    (if (s.stable == true) ">>> POMIAR STABILNY: " else "    pomiar w trakcie: ") +
+                        "%.2f kg".format(s.weightKg) +
+                        (s.impedanceOhm?.let { "   impedancja %.1f Ohm".format(it) } ?: "") +
+                        "   [" + s.source + "]"
+                )
+            }
+        } else {
+            // Bez tego licznika brak nowych linii w logu jest dwuznaczny:
+            // nie wiadomo, czy waga zamilkla, czy powtarza ten sam odczyt.
+            repeatCount++
+            if (repeatCount % 20 == 0) {
+                log("  (ta sama ramka powtorzona " + repeatCount + " razy)")
+            }
+        }
+
+        val sample = read.sample
+        if (sample == null) {
+            // Pusta waga po odrzuconym pomiarze znaczy, ze zaczyna od nowa -
+            // nastepna liczba jest juz nowym wazeniem, chocby byla ta sama.
+            rejectedKg = null
+            return
+        }
+        onSample(sample)
+    }
+
+    /**
+     * Jedno miejsce, przez ktore przechodzi kazdy odczyt - z rozgloszenia
+     * i z polaczenia. Powtorzonej ramki celowo NIE odsiewamy: dla stabilizacji
+     * druga taka sama liczba jest wlasnie ta informacja, na ktora czekamy.
+     */
+    private fun onSample(sample: WeightSample) {
+        if (!_scanning.value) return
+        val now = System.currentTimeMillis()
+
+        val rejected = rejectedKg
+        if (rejected != null) {
+            val same = abs(sample.weightKg - rejected) < 0.005 && sample.stable != false
+            if (same && now < rejectedUntil) return
+            rejectedKg = null
+        }
+
+        _live.value = LiveWeight(roundKg(sample.weightKg), now)
+        settler.offer(sample, now)?.let { publish(it, now) }
+    }
+
+    private fun publish(verdict: WeightSettler.Verdict, now: Long) {
+        val s = verdict.sample
+        log(
+            "WYNIK: %.2f kg".format(s.weightKg) + "  (" + verdict.reason + ")  po " +
+                (now - scanStartedAt) + " ms od startu skanu, pakietow od wagi: " + scalePackets
+        )
+        _lastStable.value = ScaleReading(
+            weightKg = roundKg(s.weightKg),
+            detail = s.impedanceOhm?.let { "impedancja %.1f Ohm".format(it) },
+            stable = true,
+            source = s.source,
+            impedanceOhm = s.impedanceOhm,
+            at = now,
+            certain = verdict.certain
+        )
+    }
+
+    private val ticker = object : Runnable {
+        override fun run() {
+            if (!_scanning.value) return
+            val now = System.currentTimeMillis()
+            settler.tick(now)?.let { publish(it, now) }
+            main.postDelayed(this, TICK_MS)
+        }
+    }
+
+    /**
+     * @param rejected odczyt, ktory uzytkownik wlasnie odrzucil - przez chwile
+     *   nie przyjmiemy go ponownie, patrz [rejectedKg]
+     * @param autoConnect czy laczyc sie samemu z waga, ktora tego wymaga.
+     *   Kreator pomiaru tak; ekran diagnostyczny nie, bo tam laczy sie
+     *   recznie, z wybranym urzadzeniem.
+     */
+    fun startScan(rejected: ScaleReading? = null, autoConnect: Boolean = false) {
         if (!isBluetoothOn()) {
             log("!!! Bluetooth jest wylaczony - wlacz go i sprobuj ponownie.")
             return
@@ -355,30 +476,89 @@ class ScaleScanner(private val context: Context) {
             log("!!! Android w tym stanie nie zwroci ani jednego wyniku skanowania BLE,")
             log("!!! i nie zglosi zadnego bledu. Wlacz lokalizacje i skanuj ponownie.")
         }
+        if (_scanning.value) stopScan()
+
+        this.autoConnect = autoConnect
         _devices.value = emptyMap()
         _packets.value = 0
+        _live.value = null
+        _scaleName.value = null
         seenPayloads.clear()
-        // Nowe skanowanie to nowy pomiar, nawet jesli waga pokaze dokladnie to samo
-        // co poprzednio. Bez wyzerowania identyczne wejscie na wage byloby
-        // potraktowane jako powtorzenie poprzedniej ramki i zignorowane.
-        lastMeasurementKey = null
+        connectTried.clear()
+        settler.reset()
+        lastFrameKey = null
         rawTraceCount = 0
         repeatCount = 0
+        scalePackets = 0
+        rejectedKg = rejected?.weightKg
+        scanStartedAt = System.currentTimeMillis()
+        rejectedUntil = scanStartedAt + REJECTED_HOLD_MS
+
+        _scanning.value = true
+        log("--- start skanowania (wejdz na wage, zeby ja obudzic) ---")
+        resumeScan()
+        main.removeCallbacks(ticker)
+        main.postDelayed(ticker, TICK_MS)
+    }
+
+    /**
+     * Wlasciwy start skanu.
+     *
+     * FILTR JEST TU KONIECZNY, choc niczego nie odsiewa. Zmierzone
+     * 2026-11-13 na Redmi Note 11 Pro (HyperOS, Android 13), trzy powtorzenia
+     * po 10 s w tym samym pokoju:
+     *
+     *   bez filtra         2 urzadzenia,  20-26 wynikow
+     *   z pustym filtrem  11-15 urzadzen, 69-127 wynikow
+     *
+     * Skan bez filtra system traktuje jak podejrzany i dlawi; waga byla wtedy
+     * slyszana dwa razy na dziesiec sekund albo wcale. Pusty filtr przepuszcza
+     * wszystko, wiec nadal widzimy kazda wage, takze nieznana.
+     */
+    private fun resumeScan() {
+        if (scanRunning || !_scanning.value) return
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
             .build()
-        // Bez filtrow - chcemy zobaczyc wszystko, co jest w poblizu.
-        adapter?.bluetoothLeScanner?.startScan(null, settings, scanCallback)
-        _scanning.value = true
-        log("--- start skanowania (wejdz na wage, zeby ja obudzic) ---")
+        val filters = listOf(ScanFilter.Builder().build())
+        try {
+            val scanner = adapter?.bluetoothLeScanner
+            if (scanner == null) {
+                log("!!! Brak skanera BLE - Bluetooth wylaczyl sie w trakcie.")
+                _scanning.value = false
+                return
+            }
+            scanner.startScan(filters, settings, scanCallback)
+            scanRunning = true
+        } catch (e: SecurityException) {
+            // Bez zgody na Bluetooth start konczyl sie wyjatkiem i zamknieciem
+            // aplikacji w srodku kreatora pomiaru.
+            log("!!! Brak uprawnienia do skanowania: " + e.message)
+            _scanning.value = false
+        }
+    }
+
+    private fun pauseScan() {
+        if (!scanRunning) return
+        try {
+            adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (_: SecurityException) {
+        }
+        scanRunning = false
     }
 
     fun stopScan() {
-        adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        val wasScanning = _scanning.value
+        pauseScan()
         _scanning.value = false
+        main.removeCallbacks(ticker)
+        if (!wasScanning) return
         log("--- stop skanowania ---")
-        log("Podsumowanie: " + _devices.value.size + " urzadzen, " + _packets.value + " pakietow.")
+        log(
+            "Podsumowanie: " + _devices.value.size + " urzadzen, " + _packets.value +
+                " pakietow, w tym od wagi: " + scalePackets + "."
+        )
         if (_packets.value == 0) {
             log("ZERO pakietow. To nie jest problem z rozpoznaniem wagi - skanowanie")
             log("w ogole nic nie zwraca. Sprawdz po kolei:")
@@ -389,8 +569,19 @@ class ScaleScanner(private val context: Context) {
         }
     }
 
+    /**
+     * Koniec pracy z waga: nasluch i polaczenie. Tanie wagi obsluguja naraz
+     * jednego klienta - zostawione polaczenie blokuje je dla aplikacji
+     * producenta i trzyma wage wlaczona.
+     */
+    fun finish() {
+        stopScan()
+        if (gatt != null) disconnect()
+    }
+
     // ---- Polaczenie i nasluch -------------------------------------------
 
+    /** Reczne laczenie z ekranu diagnostycznego. */
     fun connect(address: String) {
         stopScan()
         val device = adapter?.getRemoteDevice(address)
@@ -398,7 +589,33 @@ class ScaleScanner(private val context: Context) {
             log("Nie znaleziono urzadzenia " + address)
             return
         }
-        log("Lacze z " + address + " ...")
+        open(device)
+    }
+
+    /**
+     * Waga, ktora nie nadaje pomiaru w rozgloszeniu, oddaje go dopiero po
+     * polaczeniu. Skan na ten czas ustepuje: laczenie w trakcie skanowania
+     * na wielu telefonach konczy sie bledem 133.
+     */
+    private fun tryAutoConnect(device: BluetoothDevice, name: String?) {
+        if (gatt != null) return
+        val now = System.currentTimeMillis()
+        val last = connectTried[device.address]
+        if (last != null && now - last < RECONNECT_GAP_MS) return
+        connectTried[device.address] = now
+        log("Waga " + (name ?: device.address) + " wymaga polaczenia - lacze sam.")
+        pauseScan()
+        open(device)
+    }
+
+    private fun open(device: BluetoothDevice) {
+        log("Lacze z " + device.address + " ...")
+        synchronized(ops) {
+            ops.clear()
+            opRunning = false
+        }
+        qnGreeted = false
+        qnDivisor = 100
         gatt = device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
     }
 
@@ -408,6 +625,115 @@ class ScaleScanner(private val context: Context) {
         gatt = null
         _connected.value = null
         log("Rozlaczono.")
+    }
+
+    /**
+     * Operacje GATT musza isc pojedynczo - stos BLE w Androidzie obsluguje
+     * jedna naraz i kazda nastepna zlecona przed odpowiedzia po cichu przepada.
+     * Stad jedna kolejka na odczyty, subskrypcje i zapisy.
+     */
+    private sealed class Op {
+        class Read(val ch: BluetoothGattCharacteristic) : Op()
+        class Subscribe(val ch: BluetoothGattCharacteristic) : Op()
+        class Write(val ch: BluetoothGattCharacteristic, val bytes: ByteArray) : Op()
+    }
+
+    private val ops = ArrayDeque<Op>()
+    private var opRunning = false
+
+    private fun enqueue(g: BluetoothGatt, op: Op) {
+        synchronized(ops) { ops.addLast(op) }
+        pump(g)
+    }
+
+    private fun opDone(g: BluetoothGatt) {
+        synchronized(ops) { opRunning = false }
+        pump(g)
+    }
+
+    private fun pump(g: BluetoothGatt) {
+        while (true) {
+            val op = synchronized(ops) {
+                if (opRunning) null else ops.removeFirstOrNull()?.also { opRunning = true }
+            } ?: return
+            if (begin(g, op)) return
+            synchronized(ops) { opRunning = false }
+        }
+    }
+
+    /** Falsz = operacji nie udalo sie zlecic, wiec odpowiedz nie przyjdzie. */
+    private fun begin(g: BluetoothGatt, op: Op): Boolean = try {
+        when (op) {
+            is Op.Read -> g.readCharacteristic(op.ch)
+            is Op.Subscribe -> subscribe(g, op.ch)
+            is Op.Write -> write(g, op.ch, op.bytes)
+        }
+    } catch (e: SecurityException) {
+        false
+    }
+
+    private fun subscribe(g: BluetoothGatt, ch: BluetoothGattCharacteristic): Boolean {
+        g.setCharacteristicNotification(ch, true)
+        val cccd = ch.getDescriptor(CCCD)
+        if (cccd == null) {
+            log("   (brak CCCD dla " + ScaleProtocol.short(ch.uuid) + ", pomijam)")
+            return false
+        }
+        val value = if (ch.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
+            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        else
+            BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeDescriptor(cccd, value) == 0
+        } else {
+            @Suppress("DEPRECATION")
+            cccd.value = value
+            @Suppress("DEPRECATION")
+            g.writeDescriptor(cccd)
+        }
+    }
+
+    private fun write(g: BluetoothGatt, ch: BluetoothGattCharacteristic, bytes: ByteArray): Boolean {
+        val p = ch.properties
+        val type = if (p and BluetoothGattCharacteristic.PROPERTY_WRITE == 0 &&
+            p and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+        ) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+
+        log("ZAPIS " + ScaleProtocol.short(ch.uuid) + ": " + ScaleProtocol.hex(bytes))
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            g.writeCharacteristic(ch, bytes, type) == 0
+        } else {
+            @Suppress("DEPRECATION")
+            ch.value = bytes
+            ch.writeType = type
+            @Suppress("DEPRECATION")
+            g.writeCharacteristic(ch)
+        }
+    }
+
+    private fun findCharacteristic(g: BluetoothGatt, short: String): BluetoothGattCharacteristic? =
+        g.services.asSequence().flatMap { it.characteristics.asSequence() }
+            .firstOrNull { ScaleProtocol.short(it.uuid) == short }
+
+    /**
+     * Powitanie rodziny Qingniu: bez odpowiedzi na ramke 0x12 waga milczy
+     * i rozlacza sie po kilku sekundach. Starsze wagi maja osobne
+     * charakterystyki na jednostke (0xFFE3) i czas (0xFFE4), nowsze jedna
+     * wspolna (0xFFF2).
+     */
+    private fun greetQn(g: BluetoothGatt, protocolType: Int) {
+        if (qnGreeted) return
+        qnGreeted = true
+        val unit = findCharacteristic(g, "0xFFE3") ?: findCharacteristic(g, "0xFFF2")
+        val time = findCharacteristic(g, "0xFFE4") ?: findCharacteristic(g, "0xFFF2")
+        if (unit == null) {
+            log("  Yolanda/QN: brak charakterystyki do zapisu - waga moze nie zaczac nadawac")
+            return
+        }
+        enqueue(g, Op.Write(unit, YolandaParser.unitCommand(protocolType)))
+        if (time != null) enqueue(g, Op.Write(time, YolandaParser.timeCommand(System.currentTimeMillis())))
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -427,14 +753,25 @@ class ScaleScanner(private val context: Context) {
                         log("  Takiej wagi nie da sie polaczyc - dane bierzemy z rozgloszenia.")
                     }
                     _connected.value = null
+                    main.post {
+                        // Zamkniecie jest konieczne: bez niego kazda proba
+                        // zostawia zajety slot klienta GATT, a po kilkunastu
+                        // telefon przestaje laczyc sie z czymkolwiek.
+                        if (gatt === g) {
+                            g.close()
+                            gatt = null
+                        }
+                        // Waga rozlaczyla sie przed wynikiem - sluchamy dalej.
+                        resumeScan()
+                    }
                 }
             }
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
             log("=== Mapa GATT urzadzenia ===")
-            descriptorQueue.clear()
-            readQueue.clear()
+            val reads = mutableListOf<Op>()
+            val subs = mutableListOf<Op>()
             for (service in g.services) {
                 val desc = ScaleProtocol.describeService(service.uuid)
                 log("SERWIS " + ScaleProtocol.short(service.uuid) + "  " + (desc ?: ""))
@@ -450,39 +787,24 @@ class ScaleScanner(private val context: Context) {
 
                     val notifiable = p and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or
                             BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0
-                    if (notifiable) descriptorQueue.add(ch)
+                    if (notifiable) subs += Op.Subscribe(ch)
 
                     val readable = p and BluetoothGattCharacteristic.PROPERTY_READ != 0
-                    if (readable && ScaleProtocol.short(ch.uuid) in DEVICE_INFO_NAMES) {
-                        readQueue.add(ch)
+                    if (readable && ScaleProtocol.short(ch.uuid).removePrefix("0x") in DEVICE_INFO_NAMES) {
+                        reads += Op.Read(ch)
                     }
                 }
             }
-            log("Subskrybuje " + descriptorQueue.size + " charakterystyk. Teraz wejdz na wage.")
-            if (readQueue.isEmpty()) {
-                log("Urzadzenie nie udostepnia uslugi informacyjnej - nazwy modelu nie poda.")
-                subscribeNext(g)
-            } else {
-                log("=== Tozsamosc urzadzenia ===")
-                readNext(g)
-            }
-        }
-
-        /** Odczyty tez musza isc pojedynczo, jak zapisy deskryptorow. */
-        private fun readNext(g: BluetoothGatt) {
-            val ch = readQueue.poll()
-            if (ch == null) {
-                subscribeNext(g)
-                return
-            }
-            if (!g.readCharacteristic(ch)) {
-                log("   (nie udalo sie zlecic odczytu " + ScaleProtocol.short(ch.uuid) + ")")
-                readNext(g)
-            }
+            // Subskrypcje przed tozsamoscia: waga zaczyna nadawac od razu po
+            // polaczeniu, a model i firmware moga poczekac. W odwrotnej
+            // kolejnosci pierwsze ramki pomiaru przepadaly.
+            log("Subskrybuje " + subs.size + " charakterystyk. Teraz wejdz na wage.")
+            subs.forEach { enqueue(g, it) }
+            reads.forEach { enqueue(g, it) }
         }
 
         private fun logDeviceInfo(ch: BluetoothGattCharacteristic, value: ByteArray) {
-            val key = ScaleProtocol.short(ch.uuid)
+            val key = ScaleProtocol.short(ch.uuid).removePrefix("0x")
             val label = DEVICE_INFO_NAMES[key] ?: key
             // Wartosci sa tekstem, ale tanie urzadzenia potrafia wstawic smieci -
             // stad odsiew znakow niedrukowalnych i podgląd w hex na wszelki wypadek.
@@ -494,44 +816,20 @@ class ScaleScanner(private val context: Context) {
             }
         }
 
-        /**
-         * Zapisy deskryptorow musza isc pojedynczo - stos BLE w Androidzie
-         * obsluguje jedna operacje GATT naraz. Stad kolejka.
-         */
-        private fun subscribeNext(g: BluetoothGatt) {
-            val ch = descriptorQueue.poll()
-            if (ch == null) {
-                log("=== Subskrypcje gotowe, czekam na ramki ===")
-                return
-            }
-            g.setCharacteristicNotification(ch, true)
-            val cccd = ch.getDescriptor(CCCD)
-            if (cccd == null) {
-                log("   (brak CCCD dla " + ScaleProtocol.short(ch.uuid) + ", pomijam)")
-                subscribeNext(g)
-                return
-            }
-            val value = if (ch.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0)
-                BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            else
-                BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                g.writeDescriptor(cccd, value)
-            } else {
-                @Suppress("DEPRECATION")
-                cccd.value = value
-                @Suppress("DEPRECATION")
-                g.writeDescriptor(cccd)
-            }
-        }
-
         override fun onDescriptorWrite(
             g: BluetoothGatt,
             descriptor: BluetoothGattDescriptor,
             status: Int
         ) {
-            subscribeNext(g)
+            opDone(g)
+        }
+
+        override fun onCharacteristicWrite(
+            g: BluetoothGatt,
+            ch: BluetoothGattCharacteristic,
+            status: Int
+        ) {
+            opDone(g)
         }
 
         // Android 13+
@@ -542,7 +840,7 @@ class ScaleScanner(private val context: Context) {
             status: Int
         ) {
             if (status == BluetoothGatt.GATT_SUCCESS) logDeviceInfo(ch, value)
-            readNext(g)
+            opDone(g)
         }
 
         // Android 12 i starsze
@@ -554,7 +852,7 @@ class ScaleScanner(private val context: Context) {
             status: Int
         ) {
             if (status == BluetoothGatt.GATT_SUCCESS) ch.value?.let { logDeviceInfo(ch, it) }
-            readNext(g)
+            opDone(g)
         }
 
         // Android 13+
@@ -563,44 +861,54 @@ class ScaleScanner(private val context: Context) {
             ch: BluetoothGattCharacteristic,
             value: ByteArray
         ) {
-            handleFrame(ch.uuid, value)
+            val uuid = ch.uuid
+            val copy = value.copyOf()
+            main.post { handleFrame(g, uuid, copy) }
         }
 
         // Android 12 i starsze
         @Deprecated("Deprecated in Java")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
-            val v = ch.value ?: return
-            handleFrame(ch.uuid, v)
+            val v = ch.value?.copyOf() ?: return
+            val uuid = ch.uuid
+            main.post { handleFrame(g, uuid, v) }
         }
+    }
 
-        private fun handleFrame(uuid: UUID, data: ByteArray) {
-            log("RAMKA " + ScaleProtocol.short(uuid) + " (" + data.size + " B): " + ScaleProtocol.hex(data))
+    /**
+     * Ramka z polaczenia. Zawsze na watku glownym - odczyty z rozgloszen
+     * przychodza tam samo, a [WeightSettler] nie jest pisany pod dwa watki.
+     */
+    private fun handleFrame(g: BluetoothGatt, uuid: UUID, data: ByteArray) {
+        log("RAMKA " + ScaleProtocol.short(uuid) + " (" + data.size + " B): " + ScaleProtocol.hex(data))
 
+        val short = ScaleProtocol.short(uuid)
+        if (short == "0xFFE1" || short == "0xFFF1") {
             // Ramka 0x12 ustala skale masy dla calej sesji - lapiemy ja pierwsza.
             YolandaParser.parseScaleFactor(data)?.let {
                 qnDivisor = it
                 log("  Yolanda/QN: dzielnik masy ustawiony na " + it)
+                greetQn(g, data[2].toInt() and 0xFF)
             }
+        }
 
-            val y = YolandaParser.parseGattFrame(data, qnDivisor)
-            if (y != null) {
-                log(y.pretty())
-                if (y.stable) {
-                    _lastStable.value = ScaleReading(
-                        y.weightKg,
-                        listOfNotNull(
-                            y.resistance1?.takeIf { it > 0 }?.let { "R1=$it" },
-                            y.resistance2?.takeIf { it > 0 }?.let { "R2=$it" }
-                        ).joinToString("  ").ifEmpty { null },
-                        true,
-                        y.source
-                    )
-                }
-                return
-            }
-
+        val sample = ScaleDecoders.fromGatt(uuid, data, qnDivisor)
+        if (sample == null) {
             log(ScaleProtocol.annotate(uuid, data))
+            return
+        }
+        log(
+            (if (sample.stable == true) ">>> POMIAR STABILNY: " else "    pomiar w trakcie: ") +
+                "%.2f kg   [".format(sample.weightKg) + sample.source + "]"
+        )
+        scalePackets++
+        if (_scanning.value) {
+            onSample(sample)
+        } else if (sample.stable == true) {
+            // Ekran diagnostyczny laczy sie recznie, po zatrzymaniu skanu -
+            // wynik ma sie tam pokazac mimo to.
+            publish(WeightSettler.Verdict(sample, WeightSettler.Reason.SCALE_SAID), System.currentTimeMillis())
         }
     }
 }

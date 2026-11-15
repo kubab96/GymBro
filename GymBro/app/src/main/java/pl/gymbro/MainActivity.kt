@@ -469,14 +469,13 @@ internal fun ScaleScreen() {
         }
 
         Text(
-            "Twoja waga to \"Yoda0\" - rodzina Qingniu/Yolanda (QN-Scale).\n\n" +
+            "Tu widac wszystko, co telefon slyszy - sluzy do rozgryzania wagi,\n" +
+                "ktorej zwykly pomiar nie lapie.\n\n" +
                 "Krok 1: wlacz skanowanie.\n" +
-                "Krok 2: DOPIERO TERAZ stan na wadze i stoj, az pokaze wynik.\n" +
-                "Krok 3: jesli masa nie wyskoczy sama, dotknij \"Yoda0\" na liscie -\n" +
-                "        ten wariant wymaga polaczenia GATT zamiast rozgloszenia.\n" +
-                "Krok 4: powtorz 2-3 razy i skopiuj log.\n\n" +
-                "Wagi tej rodziny nadaja tylko kilkanascie sekund od obudzenia,\n" +
-                "wiec kolejnosc ma znaczenie: najpierw skan, potem wejscie na wage.",
+                "Krok 2: stan na wadze i stoj, az pokaze wynik.\n" +
+                "Krok 3: jesli masa nie wyskoczy sama, dotknij wage na liscie -\n" +
+                "        czesc wag oddaje pomiar dopiero po polaczeniu.\n" +
+                "Krok 4: powtorz 2-3 razy i skopiuj log.",
             style = MaterialTheme.typography.bodySmall
         )
 

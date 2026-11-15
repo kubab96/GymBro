@@ -1,5 +1,10 @@
 package pl.gymbro.ui
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.InfiniteRepeatableSpec
@@ -43,11 +48,14 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.gymbro.ble.ScaleReading
 import pl.gymbro.ble.ScaleScanner
 import pl.gymbro.data.BodyFat
 import pl.gymbro.data.BodyMetric
@@ -101,16 +109,47 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
 
     val stable by scanner.lastStable.collectAsState()
     val scanning by scanner.scanning.collectAsState()
+    val live by scanner.live.collectAsState()
+    val scaleName by scanner.scaleName.collectAsState()
 
-    LaunchedEffect(Unit) {
-        previous = withContext(Dispatchers.IO) { metricsRepo.latestPerSite() }
-        profile = withContext(Dispatchers.IO) { profileRepo.get() }
-        scanner.startScan()
+    // Czy ostatni odczyt potwierdziła waga, czy tylko zamilkła po nim.
+    var certain by remember { mutableStateOf(true) }
+
+    // Zgoda na Bluetooth była dotąd zakładana z góry: kreator wołał skan bez
+    // pytania, więc na telefonie bez zgody kończył się wyjątkiem, a nie pomiarem.
+    val perms = remember { ScaleScanner.permissions() }
+    var granted by remember {
+        mutableStateOf(
+            perms.all {
+                ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+            }
+        )
+    }
+    var bluetoothOn by remember { mutableStateOf(scanner.isBluetoothOn()) }
+
+    fun listen(rejected: ScaleReading? = null) {
+        bluetoothOn = scanner.isBluetoothOn()
+        if (granted && bluetoothOn) scanner.startScan(rejected = rejected, autoConnect = true)
     }
 
-    // Skanowanie musi się skończyć razem z kreatorem - inaczej blokuje wagę
-    // dla aplikacji producenta i zjada baterię.
-    DisposableEffect(Unit) { onDispose { scanner.stopScan() } }
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        granted = result.values.all { it }
+        listen()
+    }
+
+    LaunchedEffect(Unit) {
+        // Skan przed bazą: waga nadaje ustalony wynik tylko kilka sekund,
+        // a wczytanie profilu i obwodów potrafiło zjeść pierwszą z nich.
+        if (granted) listen() else permLauncher.launch(perms)
+        previous = withContext(Dispatchers.IO) { metricsRepo.latestPerSite() }
+        profile = withContext(Dispatchers.IO) { profileRepo.get() }
+    }
+
+    // Nasłuch i połączenie muszą się skończyć razem z kreatorem - inaczej
+    // blokują wagę dla aplikacji producenta i zjadają baterię.
+    DisposableEffect(Unit) { onDispose { scanner.finish() } }
 
     // Odczyt tylko zatrzymuje nasłuch i czeka na potwierdzenie. Automatyczne
     // przejście dalej odbierało możliwość odrzucenia pomiaru, który wyszedł źle -
@@ -121,6 +160,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
         weightKg = s.weightKg
         impedance = s.impedanceOhm
         source = "waga BLE"
+        certain = s.certain
         measuredAt = System.currentTimeMillis()
         scanner.stopScan()
     }
@@ -150,18 +190,27 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
             when (current) {
                 FlowStep.SCALE -> ScaleStep(
                     scanning = scanning,
+                    granted = granted,
+                    bluetoothOn = bluetoothOn,
+                    liveKg = live?.weightKg,
+                    scaleName = scaleName,
+                    certain = certain,
+                    onGrant = { permLauncher.launch(perms) },
                     capturedKg = weightKg,
                     onManual = { kg ->
                         weightKg = kg
                         impedance = null
                         source = "ręcznie"
+                        certain = true
                         measuredAt = System.currentTimeMillis()
                         scanner.stopScan()
                     },
                     onRetry = {
                         weightKg = null
                         impedance = null
-                        scanner.startScan()
+                        // Odrzucony odczyt idzie do skanera: waga nadaje go jeszcze
+                        // chwilę i bez tego wracał w pierwszej sekundzie nasłuchu.
+                        listen(rejected = stable)
                     },
                     onAccept = { step = FlowStep.GIRTHS }
                 )
@@ -245,6 +294,12 @@ private fun StepBar(step: FlowStep) {
 @Composable
 private fun ScaleStep(
     scanning: Boolean,
+    granted: Boolean,
+    bluetoothOn: Boolean,
+    liveKg: Double?,
+    scaleName: String?,
+    certain: Boolean,
+    onGrant: () -> Unit,
     capturedKg: Double?,
     onManual: (Double) -> Unit,
     onRetry: () -> Unit,
@@ -282,12 +337,23 @@ private fun ScaleStep(
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(Modifier.height(4.dp))
-            Text(
-                "Jeśli zszedłeś z wagi za wcześnie albo stałeś niepewnie, " +
-                    "zmierz jeszcze raz.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (certain) {
+                Text(
+                    "Jeśli zszedłeś z wagi za wcześnie albo stałeś niepewnie, " +
+                        "zmierz jeszcze raz.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                // Waga zgasła bez potwierdzenia wyniku: to ostatnia liczba, jaka
+                // dotarła, i mogła nam umknąć końcowa korekta o jedną działkę.
+                Text(
+                    "Waga zamilkła, zanim potwierdziła wynik. Porównaj z tym, " +
+                        "co pokazał wyświetlacz - jeśli się różni, zmierz jeszcze raz.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
 
             Spacer(Modifier.height(20.dp))
             Row(
@@ -319,23 +385,47 @@ private fun ScaleStep(
         PulsingScale(active = scanning)
         Spacer(Modifier.height(20.dp))
 
-        Text(
-            if (scanning) "Stań na wadze" else "Nasłuch zatrzymany",
-            style = MaterialTheme.typography.headlineMedium
-        )
+        // Liczba z wagi idzie na ekran od pierwszej ramki, jeszcze zanim się
+        // ustali. Pusty ekran aż do wyniku nie odróżniał "waga liczy" od
+        // "telefon nic nie słyszy" - a to drugie zdarzało się częściej.
+        val context = LocalContext.current
+        val title = when {
+            !granted -> "Brak zgody na Bluetooth"
+            !bluetoothOn -> "Bluetooth jest wyłączony"
+            !scanning -> "Nasłuch zatrzymany"
+            liveKg != null -> "%.2f kg".format(liveKg)
+            scaleName != null -> "Waga znaleziona"
+            else -> "Stań na wadze"
+        }
+        val hint = when {
+            !granted -> "Bez niej telefon nie usłyszy wagi. Masę możesz też wpisać ręcznie."
+            !bluetoothOn -> "Włącz go i naciśnij Szukaj wagi."
+            !scanning -> "Naciśnij, żeby szukać wagi ponownie."
+            liveKg != null -> "Stój nieruchomo - czekam, aż wynik się ustali."
+            // Tania waga często nie ma nazwy - wtedy nie ma czego pokazać.
+            scaleName != null ->
+                (if (scaleName.isBlank()) "" else "$scaleName\n") + "Wejdź na nią i stój nieruchomo."
+            else -> "Odczyt pojawi się tu sam, gdy tylko waga się odezwie."
+        }
+        Text(title, style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(6.dp))
         Text(
-            if (scanning)
-                "Stój nieruchomo, aż waga pokaże wynik i zgaśnie.\nOdczyt pojawi się tu sam."
-            else
-                "Naciśnij, żeby szukać wagi ponownie.",
+            hint,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
 
         Spacer(Modifier.height(16.dp))
-        if (!scanning) {
-            Button(onClick = onRetry) { Text("Szukaj wagi") }
+        when {
+            !granted -> Button(onClick = onGrant) { Text("Zezwól") }
+            !bluetoothOn -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+                ) { Text("Ustawienia") }
+                Button(onClick = onRetry) { Text("Szukaj wagi") }
+            }
+            !scanning -> Button(onClick = onRetry) { Text("Szukaj wagi") }
         }
 
         Spacer(Modifier.height(28.dp))

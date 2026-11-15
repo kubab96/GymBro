@@ -182,6 +182,27 @@ Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w 
 
 Zapisując ciężary, przepuszczaj je przez `data/Kg.kt` (`roundKg`). Arytmetyka zmiennoprzecinkowa wpisywała do bazy wartości w rodzaju `81.39999999999999`.
 
+### Waga łazienkowa
+
+`ble/`, pięć warstw, rozdzielonych tak, żeby wszystko poza samym radiem dało się testować na JVM:
+
+| Plik | Rola |
+|---|---|
+| `ble/ScaleScanner.kt` | skan, połączenie GATT, log diagnostyczny - jedyny plik z Androidem |
+| `ble/ScaleDecoders.kt` | jedno miejsce, które zna wszystkie rodziny wag; czyste funkcje na bajtach |
+| `ble/OkOkParser.kt`, `YolandaParser.kt`, `MiScaleParser.kt`, `StandardScaleParser.kt` | po jednym protokole |
+| `ble/WeightSettler.kt` | kiedy ciąg odczytów jest już wynikiem |
+
+Nie ma protokołu wspólnego dla wszystkich wag - „łączy się z każdą" znaczy listę sterowników dobieranych po tym, czym waga się przedstawia. Nową rodzinę dopisuje się jako parser plus jedna gałąź w `ScaleDecoders`, z testem na prawdziwej ramce. Sprawdzona na sprzęcie jest tylko domowa „Yoda0" (OKOK C0, samo rozgłoszenie); Xiaomi, standard Bluetooth SIG i Qingniu przez GATT są napisane z otwartych opisów protokołów.
+
+**Skan zawsze z filtrem, choćby pustym.** Zmierzone na telefonie (HyperOS, Android 13): skan bez filtra widzi 2 urządzenia na 10 s, z pustym filtrem 11-15. Do tego system i tak przycina tryb `LOW_LATENCY` do okna 114 ms co 456 ms (`configureRegularScanParams` w logcacie), więc do aplikacji dociera ułamek tego, co waga nadaje.
+
+**Dlatego wynik nie może zależeć od jednej ramki.** Liczba idzie na ekran od pierwszego pakietu, a wynikiem staje się na trzy sposoby: waga ustawiła bit „ustalone", ta sama liczba stoi odpowiednio długo, albo waga zamilkła - wtedy ostatnia liczba przychodzi z zastrzeżeniem. Czekanie wyłącznie na bit kończyło się tym, że pomiar łapał się po kilkunastu sekundach albo wcale.
+
+**Fałszywy pomiar jest gorszy niż brak pomiaru.** Dekoder dobiera się po ID producenta, UUID serwisu albo charakterystyce, nigdy po samym kształcie bajtów - dopasowany „na oko" wyciągnął kiedyś 26,50 kg z rozgłoszenia komputera.
+
+`GymBro/tools/sztuczna-waga.ps1` nadaje z komputera ramki takie jak domowa waga (Windows PowerShell 5.1, nie `pwsh`). Pozwala przejść cały kreator pomiaru bez stawania na wadze; nie nadaje się do mierzenia opóźnień, bo Windows nadaje rzadko i nierówno. **Próbnego pomiaru nie zapisuj** - kończ przez Anuluj, inaczej 84,05 kg ląduje w historii.
+
 ### Zakładki
 
 Pięć: Trening, Jedzenie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`).

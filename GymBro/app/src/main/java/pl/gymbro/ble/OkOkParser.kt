@@ -28,13 +28,14 @@ object OkOkParser {
         val variant: String,
         val weightKg: Double,
         val impedanceOhm: Double?,
-        val stable: Boolean,
+        /** null, gdy wariant nie mowi, czy wynik jest ustalony. */
+        val stable: Boolean?,
         val divisorUsed: Int,
         val checksumOk: Boolean?
     ) {
         fun pretty(): String {
             val sb = StringBuilder()
-            sb.append(if (stable) ">>> POMIAR STABILNY: " else "    pomiar w trakcie: ")
+            sb.append(if (stable == true) ">>> POMIAR STABILNY: " else "    pomiar w trakcie: ")
             sb.append("%.2f kg".format(weightKg))
             if (impedanceOhm != null && impedanceOhm > 0) {
                 sb.append("   impedancja %.1f Ohm".format(impedanceOhm))
@@ -116,8 +117,11 @@ object OkOkParser {
         xor = xor xor (0xCA xor 0x11)
         val crcOk = (xor and 0xFF) == (d[16].toInt() and 0xFF)
 
-        // Ten wariant nie podaje impedancji w rozgloszeniu.
-        return Measurement("OKOK V11", weight, null, true, div, crcOk)
+        // Ten wariant nie podaje impedancji w rozgloszeniu. Nie mowi tez, czy
+        // wynik jest ustalony: wczesniej kazda ramka uchodzila tu za stabilna,
+        // wiec pierwsza liczba zlapana w trakcie wchodzenia na wage stawala sie
+        // pomiarem. O ustaleniu rozstrzyga teraz WeightSettler.
+        return Measurement("OKOK V11", weight, null, null, div, crcOk)
     }
 
     /**

@@ -61,9 +61,7 @@ object YolandaParser {
      *   [17-18] masa    uint16 little-endian, dzielnik 100
      */
     fun parseBroadcast(companyId: Int, d: ByteArray): Reading? {
-        if (companyId != BROADCAST_COMPANY_ID) return null
-        if (d.size < 19) return null
-        if ((d[0].toInt() and 0xFF) != 0xAA || (d[1].toInt() and 0xFF) != 0xBB) return null
+        if (!isBroadcastFrame(companyId, d)) return null
 
         val kg = u16le(d, 17) / 100.0
         if (kg !in 0.5..300.0) return null
@@ -74,7 +72,45 @@ object YolandaParser {
         return Reading("Yolanda/QN rozgloszenie", kg, null, null, stable)
     }
 
+    /**
+     * Czy to ramka tej rodziny, niezaleznie od tego, czy niesie mase.
+     *
+     * Pusta waga nadaje te sama ramke z zerem - nie jest to pomiar, ale jest
+     * to wiadomosc, ze waga sie obudzila i ze ja slyszymy.
+     */
+    fun isBroadcastFrame(companyId: Int, d: ByteArray): Boolean =
+        companyId == BROADCAST_COMPANY_ID && d.size >= 19 &&
+            (d[0].toInt() and 0xFF) == 0xAA && (d[1].toInt() and 0xFF) == 0xBB
+
     // ---- Wariant 2: ramki GATT -------------------------------------------
+
+    /**
+     * Odpowiedz na ramke 0x12, bez ktorej waga nie zaczyna nadawac pomiarow:
+     * 13 09 [typ protokolu] [jednostka: 01 = kg] 10 00 00 00 [suma].
+     *
+     * Wg otwartych opisow protokolu (openScale); nie sprawdzane na sprzecie -
+     * domowa "Yoda0" polaczen nie przyjmuje i nadaje sama.
+     */
+    fun unitCommand(protocolType: Int): ByteArray {
+        val b = byteArrayOf(0x13, 0x09, protocolType.toByte(), 0x01, 0x10, 0, 0, 0, 0)
+        b[8] = checksum(b, 0, 7).toByte()
+        return b
+    }
+
+    /** Sekundy od poczatku 2000 roku - tak te wagi licza czas. */
+    private const val QN_EPOCH_S = 946_702_800L
+
+    /** Ustawienie zegara wagi: 02 i cztery bajty czasu, little-endian. */
+    fun timeCommand(nowMs: Long): ByteArray {
+        val t = nowMs / 1000 - QN_EPOCH_S
+        return byteArrayOf(
+            0x02,
+            (t and 0xFF).toByte(),
+            ((t shr 8) and 0xFF).toByte(),
+            ((t shr 16) and 0xFF).toByte(),
+            ((t shr 24) and 0xFF).toByte()
+        )
+    }
 
     /**
      * Ramka 0x10 - pomiar na zywo. Istnieja dwa ulozenia pol i nie da sie ich
