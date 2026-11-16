@@ -14,7 +14,19 @@ enum class Equipment {
     DUMBBELL_SINGLE,
     CABLE,
     MACHINE,
-    BODYWEIGHT;
+    BODYWEIGHT,
+
+    /**
+     * Kettlebell - gotowy ciężar w jednej ręce, nie składany z talerzy.
+     *
+     * Osobno od hantla, bo hantel przy ograniczonych obciążeniach liczy się
+     * z talerzy na uchwycie - a kettlebella nikt nie skręca z krążków.
+     * Liczony jak maszyna: stały krok (4 kg, patrz [Seed.kettlebellSteps]).
+     */
+    KETTLEBELL,
+
+    /** Gumy oporowe. Bez ciężaru w kilogramach - opór idzie z koloru gumy. */
+    BAND;
 
     /** Czy ciężar tego sprzętu składamy z talerzy, czy bierzemy jako gotową liczbę. */
     val isPlateLoaded: Boolean
@@ -64,7 +76,10 @@ data class Exercise(
  * jednostki z różnych schematów leżałyby w jednym worku, a przełączenie się
  * na inny program wymagałoby kasowania poprzedniego.
  *
- * Aktywny jest dokładnie jeden - to jego jednostki widać na ekranie treningu.
+ * Aktywny jest dokładnie jeden - jego jednostki dostaje zegarek i od niego
+ * zaczyna ekran treningu, na którym da się wybrać też inny.
+ *
+ * W interfejsie nazywa się „plan treningowy"; patrz `ui/ProgramListScreen.kt`.
  */
 data class Program(
     val id: Long = 0,
@@ -79,7 +94,9 @@ data class Plan(
     val id: Long = 0,
     val name: String,
     val position: Int,
-    val programId: Long? = null
+    val programId: Long? = null,
+    /** Dzień tygodnia 1-7; null, gdy jednostka nie ma stałego dnia. */
+    val day: Int? = null
 )
 
 /** Ćwiczenie wewnątrz planu, razem z zadanymi seriami i ciężarem. */
@@ -344,14 +361,26 @@ data class UserProfile(
     val sex: Sex = Sex.MALE,
     val birthYear: Int? = null,
 
-    /** Posiadany sprzęt. null oznacza „wszystko dostępne". */
-    val ownedEquipment: Set<Equipment>? = null,
+    /**
+     * Czy sprzęt i obciążenia są dostosowane do tego, co faktycznie masz.
+     *
+     * false = pełna siłownia i dowolny ciężar. Jeden przełącznik zamiast
+     * dwóch osobnych („mam wszystko" i „dowolny ciężar"): oba pytały o to
+     * samo - czy trenujesz tam, gdzie jest wszystko - i dawało się ustawić
+     * je sprzecznie. W bazie siedzi w kolumnie `limited_weights`, bo to ona
+     * do tej pory decydowała o liczeniu z talerzy.
+     */
+    val customGear: Boolean = false,
 
     /**
-     * Czy obciążenia są ograniczone posiadanymi talerzami.
-     * false = dowolny ciężar, jak na siłowni komercyjnej.
+     * Wybrany sprzęt. Liczy się tylko przy [customGear].
+     *
+     * Pusty zbiór znaczy „bez ograniczeń", nie „nic nie mam": inaczej
+     * włączenie dostosowania, zanim cokolwiek się doda, chowałoby wszystkie
+     * ćwiczenia. Zbiór zostaje w bazie także przy wyłączonym przełączniku,
+     * żeby wyłączenie na próbę nie kasowało listy.
      */
-    val limitedWeights: Boolean = false,
+    val ownedGear: Set<Gear> = emptySet(),
 
     /** Domyslny cel treningowy; pozycja planu moze go nadpisac. */
     val trainingGoal: TrainingGoal = TrainingGoal.MIXED,
@@ -378,9 +407,28 @@ data class UserProfile(
     val age: Int?
         get() = birthYear?.let { java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) - it }
 
-    /** Czy to ćwiczenie da się wykonać posiadanym sprzętem. */
+    /**
+     * Rodzaje ćwiczeń, które da się wykonać. null oznacza „wszystko dostępne".
+     *
+     * Masa ciała wchodzi zawsze - pompki nie wymagają niczego z listy.
+     */
+    val ownedEquipment: Set<Equipment>?
+        get() = if (!customGear || ownedGear.isEmpty()) null
+        else ownedGear.flatMapTo(mutableSetOf(Equipment.BODYWEIGHT)) { it.covers }
+
+    /** Czy ten rodzaj sprzętu jest w zasięgu. */
     fun canDo(equipment: Equipment): Boolean =
-        ownedEquipment == null || equipment in ownedEquipment
+        ownedEquipment?.contains(equipment) ?: true
+
+    /**
+     * Czy to konkretne ćwiczenie da się zrobić - rodzaj sprzętu plus to, czego
+     * wymaga samo ćwiczenie ([Seed.needsOf]): stojaki przy przysiadzie, drążek
+     * przy podciąganiu.
+     *
+     * Bez listy sprzętu zawsze tak - to ścieżka „mam dostęp do wszystkiego".
+     */
+    fun canDoExercise(name: String, equipment: Equipment): Boolean =
+        ownedEquipment == null || (canDo(equipment) && Seed.needsMet(name, ownedGear))
 }
 
 /**
@@ -436,7 +484,15 @@ data class SessionSummary(
     val endedAt: Long,
     val workingSets: Int,
     val tonnage: Double,
-    val watch: ExternalSession? = null
+    val watch: ExternalSession? = null,
+    /**
+     * Plan (FBW, PPL), do którego należy jednostka tego treningu.
+     *
+     * null, gdy jednostkę albo cały plan skasowano - trening zostaje wtedy
+     * bez przynależności i historia pokazuje go przy każdym planie, bo
+     * inaczej nie byłoby skąd go otworzyć.
+     */
+    val programId: Long? = null
 ) {
     /** Czas trwania wg zegarka, a w jego braku wg zapisu w aplikacji. */
     val durationMin: Long
@@ -471,7 +527,9 @@ data class Plate(
  *
  * [unlimited] oznacza, że obciążenie nie jest ograniczone talerzami - tak jest
  * domyślnie i tak działa siłownia komercyjna. Kalkulator załadunku jest wtedy
- * wyłączony, a ciężar zmienia się stałym krokiem.
+ * wyłączony, a ciężar zmienia się stałym krokiem. Tak samo jest przy
+ * dostosowanym sprzęcie bez ani jednego talerza na liście: pusta lista to
+ * „nie podałem", a nie „mam sam gryf".
  */
 data class Inventory(
     val barKg: Double,

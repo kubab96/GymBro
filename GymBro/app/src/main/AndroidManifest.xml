@@ -79,14 +79,28 @@
 
     <application
         android:allowBackup="false"
-        android:label="GymBro"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.GymBro">
 
+        <!--
+            configChanges: obrót ekranu nie niszczy aktywności.
+
+            Bez tego każdy obrót odtwarzał aktywność od zera i wyrzucał na
+            główny widok zakładki - z otwartej jednostki planu, ze szczegółów
+            treningu, z rozgrzebanego okna poprawiania serii. Nawigacja wewnątrz
+            zakładek trzyma się w zwykłym remember, a ten ginie z aktywnością;
+            łatanie każdego ekranu z osobna przez rememberSaveable gubiło coś
+            przy następnym nowym ekranie. Compose sam przelicza układ na nową
+            szerokość, więc nie ma tu niczego do obsłużenia ręcznie.
+
+            Celowo bez uiMode: zmianę motywu ma dalej obsłużyć odtworzenie,
+            bo kolor ikon paska stanu ustawia enableEdgeToEdge tylko w onCreate.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="GymBro"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.GymBro">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

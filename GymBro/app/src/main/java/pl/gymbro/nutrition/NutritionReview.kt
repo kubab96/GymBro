@@ -20,7 +20,7 @@ import pl.gymbro.data.epochDayOf
 import kotlin.math.abs
 
 /**
- * Repozytoria, których potrzebuje zakładka Jedzenie.
+ * Repozytoria, których potrzebuje zakładka Kalorie.
  *
  * Dziesięć osobnych parametrów w sygnaturze [NutritionReview.refresh] byłoby
  * nieczytelne, a sam ekran i tak musi je wszystkie utworzyć. Jeden uchwyt

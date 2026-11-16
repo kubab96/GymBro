@@ -44,8 +44,11 @@ import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.data.SessionRepository
 import pl.gymbro.gym.ProgressionReview
+import pl.gymbro.ui.LeaveGuard
 import pl.gymbro.ui.LocalGoToTab
+import pl.gymbro.ui.LocalLeaveGuard
 import pl.gymbro.ui.LocalTabReselect
+import pl.gymbro.ui.PLAN_TAB
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -102,15 +105,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/**
- * Ktora zakladka jest Planem - stad plakietka z propozycjami.
- *
- * Numer, nie nazwa, bo pasek rysuje sie z listy po indeksie. Dopisanie
- * zakladki przed Planem musi przesunac te stala - inaczej plakietka
- * z propozycjami progresji ladowala na Wadze.
- */
-private const val PLAN_TAB = 3
-
 /** Jedna zakładka nawigacji. */
 private data class NavTab(
     val label: String,
@@ -120,12 +114,13 @@ private data class NavTab(
 // Zakładki opisują to, co robisz, nie urządzenia, z których pochodzą dane.
 // Zegarek miał tu kiedyś własne miejsce - teraz jego treningi i biegi trafiają
 // do Postępu, a samo połączenie jest ustawieniem w Profilu.
-// Jedzenie stoi na drugim miejscu, bo wchodzi sie tam kilka razy dziennie -
-// czesciej niz w Plan i Profil, ktore zaglada sie raz na kilka dni. Przy
-// pasku na dole blizej lewej krawedzi znaczy blizej kciuka.
+// Kalorie (dziennik jedzenia) stoja na drugim miejscu, bo wchodzi sie tam
+// kilka razy dziennie - czesciej niz w Plan i Profil, ktore zaglada sie raz
+// na kilka dni. Przy pasku na dole blizej lewej krawedzi znaczy blizej kciuka.
+// Kolejnosc jest zszyta z PLAN_TAB w ui/TabHost.kt.
 private val navTabs = listOf(
     NavTab("Trening", Icons.Filled.FitnessCenter),
-    NavTab("Jedzenie", Icons.Filled.Restaurant),
+    NavTab("Kalorie", Icons.Filled.Restaurant),
     NavTab("Waga", Icons.Filled.MonitorWeight),
     NavTab("Plan", Icons.AutoMirrored.Filled.ListAlt),
     NavTab("Profil", Icons.Filled.Person)
@@ -133,9 +128,11 @@ private val navTabs = listOf(
 
 @Composable
 fun GymBroApp() {
-    // rememberSaveable, nie remember: obrót ekranu niszczy i odtwarza aktywność,
-    // a zwykły remember ginie razem z nią. Bez tego każdy obrót wyrzucał
-    // z powrotem na pierwszą zakładkę.
+    // rememberSaveable, nie remember: system potrafi ubić aplikację w tle
+    // i odtworzyć ją po powrocie, a zwykły remember ginie razem z nią - wtedy
+    // wracało się na pierwszą zakładkę. Obrót ekranu już aktywności nie
+    // niszczy (configChanges w manifeście), więc tamten przypadek nie
+    // potrzebuje tu niczego.
     val context = LocalContext.current
     var tab by rememberSaveable { mutableStateOf(0) }
     // Osobny licznik dla kazdej zakladki - patrz LocalTabReselect.
@@ -270,6 +267,25 @@ fun GymBroApp() {
         }
     }
 
+    // Jedna droga na zmiane zakladki: pasek, wstecz i skok z wnetrza
+    // ekranu. Opuszczana zakladka zwija sie do swojego widoku glownego.
+    //
+    // Zanim to nastapi, opuszczana zakladka moze zapytac o niezapisane
+    // zmiany - patrz LeaveGuard. Dlatego wszystkie trzy drogi musza isc
+    // tedy: pasek zmienial kiedys zakladke wprost i pytanie z Profilu
+    // padaloby przy wstecz, ale nie przy dotknieciu paska.
+    val guards = remember { List(navTabs.size) { LeaveGuard() } }
+    val idzDo: (Int) -> Unit = { cel ->
+        if (cel != tab) {
+            val przejdz = {
+                reselect[tab] = (reselect[tab] ?: 0) + 1
+                tab = cel
+            }
+            val pytanie = guards[tab].ask
+            if (pytanie == null || !pytanie(przejdz)) przejdz()
+        }
+    }
+
     // Nawigacja na dole, nie na górze: w sali obsługujesz telefon jedną ręką,
     // a górna krawędź ekranu jest poza zasięgiem kciuka.
     Scaffold(
@@ -286,10 +302,7 @@ fun GymBroApp() {
                             // otwarte. Nacisniecie w juz otwarta zakladke robi
                             // to samo, tylko od razu widac efekt.
                             if (tab == i) reselect[i] = (reselect[i] ?: 0) + 1
-                            else {
-                                reselect[tab] = (reselect[tab] ?: 0) + 1
-                                tab = i
-                            }
+                            else idzDo(i)
                         },
                         icon = {
                             // Plakietka tylko na Planie i tylko dopoki jej nie
@@ -331,14 +344,6 @@ fun GymBroApp() {
             //
             // Z Treningu wstecz wychodzi normalnie: musi istnieć wyjście,
             // którego nie trzeba szukać.
-            // Jedna droga na zmiane zakladki: pasek, wstecz i skok z wnetrza
-            // ekranu. Opuszczana zakladka zwija sie do swojego widoku glownego.
-            val idzDo: (Int) -> Unit = { cel ->
-                if (cel != tab) {
-                    reselect[tab] = (reselect[tab] ?: 0) + 1
-                    tab = cel
-                }
-            }
 
             // Wstecz wraca na Trening.
             BackHandler(enabled = tab != 0) { idzDo(0) }
@@ -352,7 +357,8 @@ fun GymBroApp() {
                     modifier = Modifier.fillMaxSize()
                 ) { index ->
                     CompositionLocalProvider(
-                        LocalTabReselect provides (reselect[index] ?: 0)
+                        LocalTabReselect provides (reselect[index] ?: 0),
+                        LocalLeaveGuard provides guards[index]
                     ) {
                         when (index) {
                             0 -> WorkoutScreen()

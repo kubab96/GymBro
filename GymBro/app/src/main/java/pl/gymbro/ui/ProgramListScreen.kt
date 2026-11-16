@@ -27,13 +27,20 @@ import pl.gymbro.ui.theme.ButtonShape
 import pl.gymbro.data.Program
 
 /**
- * Lista programów treningowych.
+ * Lista planów treningowych - w kodzie „program", na ekranie „plan".
  *
  * Program to schemat - FBW, PPL, góra/dół - a jednostki w środku to konkretne
  * treningi. Rozdzielenie tych poziomów pozwala trzymać kilka schematów naraz
  * i przełączać się między nimi bez kasowania poprzedniego.
  *
- * Aktywny jest dokładnie jeden i to jego jednostki widać na ekranie treningu.
+ * Aktywny jest dokładnie jeden: jego jednostki dostaje zegarek i od niego
+ * zaczyna ekran treningu. Tam da się podejrzeć i zrobić także inny plan -
+ * bez przestawiania aktywnego.
+ *
+ * Nazewnictwo: użytkownik mówi na to „plan treningowy", więc tak brzmi każdy
+ * napis. W kodzie zostaje `Program`, bo `Plan` to już jednostka (A, B, Push)
+ * i zamiana nazw w modelu, bazie i protokole zegarka nie jest warta tego,
+ * co mogłaby zepsuć.
  */
 
 /** Program razem z liczbą jednostek - do wyświetlenia na karcie. */
@@ -52,7 +59,7 @@ fun ProgramList(
         Spacer(Modifier.height(20.dp))
         Text("Plan", style = MaterialTheme.typography.headlineLarge)
         Text(
-            "Programy treningowe",
+            "Plany treningowe",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -66,10 +73,10 @@ fun ProgramList(
                 )
             ) {
                 Column(Modifier.padding(18.dp)) {
-                    Text("Nie masz jeszcze programu", style = MaterialTheme.typography.titleMedium)
+                    Text("Nie masz jeszcze planu", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Program to schemat treningu, a jednostki w środku to konkretne " +
+                        "Plan to schemat treningu, a jednostki w środku to konkretne " +
                             "dni. Na przykład FBW z jednostkami A, B i C, albo PPL " +
                             "z Push, Pull i Legs.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -94,7 +101,7 @@ fun ProgramList(
         Button(
             onClick = onNew,
             modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
-        ) { Text("Nowy program", modifier = Modifier.padding(vertical = 6.dp)) }
+        ) { Text("Stwórz nowy plan", modifier = Modifier.padding(vertical = 6.dp)) }
     }
 }
 

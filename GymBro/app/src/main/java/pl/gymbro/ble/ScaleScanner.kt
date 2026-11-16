@@ -298,8 +298,7 @@ class ScaleScanner(private val context: Context) {
         } ?: emptyList()
 
         val read = ScaleDecoders.fromAdvert(manufacturer, serviceData)
-        val connectable =
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.O || result.isConnectable
+        val connectable = result.isConnectable
         val gattScale = read == null && ScaleDecoders.wantsConnection(name, services)
 
         val family = read?.family
@@ -330,9 +329,7 @@ class ScaleScanner(private val context: Context) {
             // nieudane laczenie i zgadywac z kodu bledu. Waga, ktora
             // rozglasza sie jako niekonektowalna, nigdy nie poda modelu ani
             // firmware'u - te dane leza za polaczeniem GATT, ktorego nie bedzie.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                log("  polaczenia: " + if (result.isConnectable) "TAK" else "NIE (samo rozgloszenie)")
-            }
+            log("  polaczenia: " + if (result.isConnectable) "TAK" else "NIE (samo rozgloszenie)")
             services.forEach {
                 log("  serwis: " + ScaleProtocol.short(it) + "  " + (ScaleProtocol.describeService(it) ?: ""))
             }

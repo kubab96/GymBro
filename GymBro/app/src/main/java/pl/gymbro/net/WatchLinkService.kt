@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -58,15 +59,11 @@ class WatchLinkService : Service() {
         // usługę bez pytania nas o zdanie - wtedy lepiej zgasnąć po cichu,
         // niż wywrócić całą aplikację.
         val wystartowala = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification("Zegarek może zapisywać serie"),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification("Zegarek może zapisywać serie"))
-            }
+            startForeground(
+                NOTIFICATION_ID,
+                notification("Zegarek może zapisywać serie"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
         }.onFailure { Log.w(TAG, "system nie pozwolil wystartowac pilotowi", it) }.isSuccess
         if (!wystartowala) {
             listening = false
@@ -136,16 +133,14 @@ class WatchLinkService : Service() {
 
     private fun notification(text: String): Notification {
         val manager = getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL,
-                    "Pilot na zegarku",
-                    // Cicho i bez wibracji: to stan, nie zdarzenie.
-                    NotificationManager.IMPORTANCE_LOW
-                )
+        manager.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL,
+                "Pilot na zegarku",
+                // Cicho i bez wibracji: to stan, nie zdarzenie.
+                NotificationManager.IMPORTANCE_LOW
             )
-        }
+        )
         val open = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
@@ -268,7 +263,14 @@ class WatchLinkService : Service() {
             if (!canStart(context)) addAll(NEARBY)
         }.toTypedArray()
 
-        /** Zgoda na urządzenia w pobliżu - jedno okno systemowe, dwa uprawnienia. */
+        /**
+         * Zgoda na urządzenia w pobliżu - jedno okno systemowe, dwa uprawnienia.
+         *
+         * Oba istnieją od Androida 12, a aplikacja wstaje od 10. Lint ostrzega
+         * przed tym słusznie, ale tu to tylko napisy: sięga po nie wyłącznie
+         * [canStart], który poniżej Androida 14 odpowiada wcześniej.
+         */
+        @SuppressLint("InlinedApi")
         val NEARBY = arrayOf(
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.BLUETOOTH_SCAN
@@ -281,11 +283,7 @@ class WatchLinkService : Service() {
             // czego brakuje.
             if (!canStart(context)) return
             val intent = Intent(context, WatchLinkService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            context.startForegroundService(intent)
         }
 
         fun stop(context: Context) {

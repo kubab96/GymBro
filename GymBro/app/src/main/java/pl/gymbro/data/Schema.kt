@@ -38,8 +38,12 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 19 - tabelka stanu aplikacji, pod wersje wczytanej paczki produktow
          * 21 - zestaw rozszerzony o pieczywo z wlasnego wypieku
          * 22 - pieczywo Biedronki z oficjalnych wartosci
+         * 25 - biblioteka cwiczen rozszerzona o maszyny i wyciagi, pod gotowe plany
+         * 26 - biblioteka kilkuset cwiczen: masa ciala, kettlebell, gumy
+         * 27 - opcjonalny dzien tygodnia jednostki
+         * 28 - cwiczenia pod nowy sprzet: landmine, kamizelka, paralletki, pilki, sanki
          */
-        const val VERSION = 24
+        const val VERSION = 28
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -88,6 +92,18 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          */
         private val V24_STATEMENTS = listOf(
             "ALTER TABLE recipe ADD COLUMN portions INTEGER"
+        )
+
+        /**
+         * Dzień tygodnia jednostki: 1-7, a NULL znaczy „bez przypisanego dnia".
+         *
+         * Opcjonalny, bo większość rotuje A/B/C bez stałych dni - i dla nich
+         * „następny w kolejce" liczony z ostatniego wykonania dalej jest
+         * właściwą podpowiedzią. Numer, nie nazwa dnia: kto zaczyna tydzień
+         * od soboty, nie musi tłumaczyć tego aplikacji.
+         */
+        private val V27_STATEMENTS = listOf(
+            "ALTER TABLE plan ADD COLUMN day INTEGER"
         )
 
         /**
@@ -644,6 +660,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V19_STATEMENTS.forEach { db.execSQL(it) }
         V20_STATEMENTS.forEach { db.execSQL(it) }
         V24_STATEMENTS.forEach { db.execSQL(it) }
+        V27_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -701,7 +718,17 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         }
 
         if (oldVersion < 12) {
-            V12_COLUMNS.forEach { db.execSQL(it) }
+            // Kolumny profilu pomijamy, gdy tabelę założyła dopiero co gałąź
+            // wersji 4 wyżej: V4_TABLES tworzy user_profile od razu z celem
+            // i fazą (dopisano je tam dla świeżych instalacji), więc drugi
+            // ALTER kończył się "duplicate column name" i baza sprzed wersji
+            // 4 nie dawała się otworzyć wcale. Żadna taka baza dziś nie
+            // istnieje - najstarsza kopia jest z wersji 13 - ale droga, która
+            // wywraca aplikację przy starcie, nie może zostać w kodzie.
+            val profilJuzMaKolumny = oldVersion < 4
+            V12_COLUMNS
+                .filterNot { profilJuzMaKolumny && it.startsWith("ALTER TABLE user_profile") }
+                .forEach { db.execSQL(it) }
         }
 
         if (oldVersion < 13) {
@@ -778,6 +805,36 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
 
         if (oldVersion < 24) {
             V24_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        // Biblioteka cwiczen urosla o maszyny i wyciagi - patrz Seed.LIBRARY.
+        //
+        // Sam schemat sie nie zmienia. Galaz jest potrzebna z tego samego
+        // powodu co przy zestawie produktow: biblioteka wstawia sie tylko
+        // z onCreate i z migracji, wiec bez podbicia wersji nowe pozycje
+        // zostalyby w kodzie i nigdy nie dotarly na telefon. Wstawianie
+        // pomija konflikty nazw, wiec to, co juz jest - takze cwiczenia
+        // wlasne i poprawione - zostaje nietkniete.
+        if (oldVersion < 25) {
+            Seed.seedExerciseLibrary(db)
+        }
+
+        // Ta sama droga co wyzej, tylko z kettlebellami i gumami - nowymi
+        // rodzajami sprzetu. Krok 4 kg osobno, bo seedExerciseLibrary nie
+        // zna kolumny weight_step (patrz Seed.kettlebellSteps).
+        if (oldVersion < 26) {
+            Seed.seedExerciseLibrary(db)
+            Seed.kettlebellSteps(db)
+        }
+
+        if (oldVersion < 27) {
+            V27_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        // Nowe cwiczenia pod nowy sprzet w Profilu - patrz Seed.V28. Ta sama
+        // droga co przy wersjach 25 i 26: biblioteka wstawia sie tylko z migracji.
+        if (oldVersion < 28) {
+            Seed.seedExerciseLibrary(db)
         }
     }
 }

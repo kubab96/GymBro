@@ -65,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -132,6 +133,16 @@ fun WorkoutScreen() {
     var activeProgram by remember {
         mutableStateOf(Cache.peek<Program>(Cache.ACTIVE_PROGRAM))
     }
+    // Wszystkie plany - do przełącznika pod tytułem.
+    var programs by remember { mutableStateOf<List<Program>>(emptyList()) }
+    // Plan oglądany na tym ekranie. null znaczy „ten aktywny".
+    //
+    // Osobno od aktywnego, bo to dwie różne decyzje: aktywny mówi, według
+    // czego trenujesz na co dzień (i to jego jednostki dostaje zegarek),
+    // a oglądany - co chcesz zrobić dzisiaj. Jednorazowy trening z innego
+    // planu wymagał dotąd przestawienia aktywnego w zakładce Plan i potem
+    // pamiętania, żeby przestawić go z powrotem.
+    var viewedProgramId by rememberSaveable { mutableStateOf<Long?>(null) }
     var inventory by remember {
         mutableStateOf(Cache.peek<Inventory>(Cache.INVENTORY))
     }
@@ -182,25 +193,42 @@ fun WorkoutScreen() {
      * którą przed chwilą skończyłeś.
      */
     suspend fun reloadPlanOptions() {
+        val poprzedniAktywny = activeProgram?.id
+        val wybrany = viewedProgramId
         val result = withContext(Dispatchers.IO) {
-            // Ekran treningu pokazuje jednostki AKTYWNEGO programu. Bez tego
+            // Ekran treningu pokazuje jednostki JEDNEGO planu. Bez tego
             // przy dwóch schematach naraz (np. FBW i PPL) wszystkie jednostki
             // leżałyby w jednej liście i rotacja przestałaby cokolwiek znaczyć.
-            val program = programRepo.active()
-            val plans = if (program != null) planRepo.plansOf(program.id) else emptyList()
+            val wszystkie = programRepo.all()
+            val aktywny = wszystkie.firstOrNull { it.isActive }
+            // Zmiana aktywnego planu w zakładce Plan jest świeższą decyzją
+            // niż wybór zrobiony tutaj wcześniej, więc go unieważnia. Tak
+            // samo skasowanie planu, który był oglądany.
+            val ogladany = wszystkie.firstOrNull { it.id == wybrany }
+                ?.takeIf { poprzedniAktywny == null || poprzedniAktywny == aktywny?.id }
+                ?: aktywny
+            val plans = if (ogladany != null) planRepo.plansOf(ogladany.id) else emptyList()
             // Dwa zapytania zbiorcze zamiast dwóch na każdą jednostkę.
             val counts = sessionRepo.itemCounts()
             val lastDone = sessionRepo.lastFinishedAll()
-            program to plans.map { plan ->
-                PlanOption(
-                    plan = plan,
-                    exerciseCount = counts[plan.id] ?: 0,
-                    lastDoneAt = lastDone[plan.id]
-                )
-            }
+            Triple(
+                wszystkie, ogladany,
+                plans.map { plan ->
+                    PlanOption(
+                        plan = plan,
+                        exerciseCount = counts[plan.id] ?: 0,
+                        lastDoneAt = lastDone[plan.id]
+                    )
+                }
+            )
         }
-        activeProgram = Cache.put(Cache.ACTIVE_PROGRAM, result.first)
-        planOptions = Cache.put(Cache.PLAN_OPTIONS, result.second)
+        programs = result.first
+        activeProgram = Cache.put(Cache.ACTIVE_PROGRAM, result.first.firstOrNull { it.isActive })
+        viewedProgramId = result.second?.takeIf { !it.isActive }?.id
+        // Pamięć podręczna trzyma jednostki tylko planu aktywnego: to z niej
+        // ekran startuje po powrocie do zakładki, zanim cokolwiek się wczyta.
+        if (viewedProgramId == null) Cache.put(Cache.PLAN_OPTIONS, result.third)
+        planOptions = result.third
     }
 
     // Naciskiem w otwarta zakladke wracamy do glownego widoku treningu.
@@ -240,6 +268,11 @@ fun WorkoutScreen() {
         if (Refresh.version == seenRefresh) return@LaunchedEffect
         seenRefresh = Refresh.version
         reloadPlanOptions()
+        // Talerze i gryf zmienia się w Profilu. Bez tego Trening liczył
+        // załadunek ze starego zestawu aż do zamknięcia aplikacji.
+        inventory = Cache.put(
+            Cache.INVENTORY, withContext(Dispatchers.IO) { gymRepo.inventory() }
+        )
         // Trwający trening mógł zostać skasowany gdzie indziej (czyszczenie
         // historii). Bez tego dopisywalibyśmy serie do sesji, której już nie ma.
         // Czytamy sesję na nowo: mogła zostać wstrzymana z zegarka albo
@@ -281,14 +314,22 @@ fun WorkoutScreen() {
     var history by remember {
         mutableStateOf(Timeline.Split(emptyList(), emptyList(), emptyList()))
     }
-    LaunchedEffect(Refresh.version, session) {
+    // Klucz na oglądany plan, bo historia siły dotyczy tylko jego.
+    val shownProgram = programs.firstOrNull { it.id == viewedProgramId } ?: activeProgram
+    LaunchedEffect(Refresh.version, session, shownProgram?.id) {
+        val planId = shownProgram?.id
         history = withContext(Dispatchers.IO) {
             val watch = healthRepo.sessions(limit = 200)
             Timeline.build(
-                strength = sessionRepo.historySummaries(20).map { s ->
+                // Z zapasem, a nie dwadzieścia ostatnich: odsiewanie po
+                // planie dzieje się dopiero po sklejeniu z zegarkiem, więc
+                // przy krótkiej liście plan robiony miesiąc temu wyglądałby
+                // na nigdy nietknięty.
+                strength = sessionRepo.historySummaries(200).map { s ->
                     s.copy(watch = WatchMatch.bestMatch(s.startedAt, s.endedAt, watch))
                 },
-                watch = watch
+                watch = watch,
+                programId = planId
             )
         }
     }
@@ -323,7 +364,14 @@ fun WorkoutScreen() {
             inv == null -> Text("Brak danych o sprzęcie.", Modifier.padding(top = 16.dp))
 
             current == null -> PlanPicker(
-                programName = activeProgram?.name,
+                program = shownProgram,
+                programs = programs,
+                onProgram = { picked ->
+                    // Wybór aktywnego to powrót do stanu wyjściowego, nie
+                    // osobny wybór - stąd null, a nie jego numer.
+                    viewedProgramId = picked.id.takeIf { !picked.isActive }
+                    scope.launch { reloadPlanOptions() }
+                },
                 options = planOptions,
                 onProgress = { showProgress = true },
                 history = history,
@@ -426,7 +474,10 @@ private enum class Stream(val label: String) {
 
 @Composable
 private fun PlanPicker(
-    programName: String?,
+    /** Plan, którego jednostki i historię widać - niekoniecznie aktywny. */
+    program: Program?,
+    programs: List<Program>,
+    onProgram: (Program) -> Unit,
     options: List<PlanOption>,
     onProgress: () -> Unit,
     history: Timeline.Split,
@@ -436,6 +487,9 @@ private fun PlanPicker(
 ) {
     var confirming by remember { mutableStateOf<PlanOption?>(null) }
     var stream by rememberSaveable { mutableStateOf(Stream.STRENGTH) }
+    var choosingProgram by remember { mutableStateOf(false) }
+    val programName = program?.name
+    val aktywny = programs.firstOrNull { it.isActive }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
 
@@ -445,13 +499,38 @@ private fun PlanPicker(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(Modifier.weight(1f)) {
                 Text("Trening", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    programName ?: "Wybierz jednostkę",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (program == null) {
+                    Text(
+                        "Wybierz jednostkę",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    // Nazwa planu jest przełącznikiem. Strzałka mówi, że da
+                    // się w nią dotknąć - sama nazwa wyglądała jak podtytuł
+                    // i nikt by tam wyboru nie szukał.
+                    Text(
+                        program.name + "  ▾",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { choosingProgram = true }
+                            .padding(vertical = 4.dp)
+                    )
+                    // Zegarek dostaje jednostki planu aktywnego niezależnie
+                    // od tego, co tu wybrano. Bez tej linijki trening
+                    // zaczęty z nadgarstka byłby z innego planu, niż widać.
+                    if (!program.isActive && aktywny != null) {
+                        Text(
+                            "plan nieaktywny · na zegarku dalej " + aktywny.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             // Postęp czyta się między treningami, a nie w ich trakcie - stąd wejście
             // na ekranie wyboru, a nie w nawigacji głównej.
@@ -491,17 +570,17 @@ private fun PlanPicker(
                     ) {
                         Column(Modifier.padding(18.dp)) {
                             Text(
-                                if (programName == null) "Nie masz jeszcze programu"
-                                else "Program jest pusty",
+                                if (programName == null) "Nie masz jeszcze planu"
+                                else "Plan jest pusty",
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 if (programName == null)
-                                    "Przejdź do zakładki Plan i utwórz program - na przykład " +
+                                    "Przejdź do zakładki Plan i stwórz plan - na przykład " +
                                         "FBW z jednostkami A, B i C albo PPL z Push, Pull i Legs."
                                 else
-                                    "Program " + programName + " nie ma jeszcze jednostek. " +
+                                    "Plan " + programName + " nie ma jeszcze jednostek. " +
                                         "Dodaj je w zakładce Plan.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -522,8 +601,13 @@ private fun PlanPicker(
                 }
 
                 HistorySection(
-                    title = "Ostatnio",
-                    empty = "Pusto. Po pierwszym zapisanym treningu pojawi się tu historia.",
+                    title = "Historia",
+                    // Przy kilku planach pusta lista nie znaczy, że nigdy
+                    // nie trenowałeś - tylko że nie według tego planu.
+                    empty = if (programs.size > 1 && programName != null)
+                        "Pusto. Żaden zapisany trening nie szedł jeszcze według planu " +
+                            programName + "."
+                    else "Pusto. Po pierwszym zapisanym treningu pojawi się tu historia.",
                     items = history.strength,
                     onOpen = onOpen
                 )
@@ -547,6 +631,64 @@ private fun PlanPicker(
         }
 
         Spacer(Modifier.height(24.dp))
+    }
+
+    // Wybór oglądanego planu.
+    //
+    // Nie zmienia planu aktywnego - to robi się w zakładce Plan. Tutaj
+    // chodzi o jeden trening z innego schematu albo o zajrzenie w jego
+    // historię, bez przestawiania tego, co dostaje zegarek.
+    if (choosingProgram) {
+        AlertDialog(
+            onDismissRequest = { choosingProgram = false },
+            title = { Text("Który plan pokazać") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    programs.forEach { p ->
+                        val wybrany = p.id == program?.id
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (wybrany) MaterialTheme.colorScheme.primaryContainer
+                                    else Color.Transparent
+                                )
+                                .clickable {
+                                    choosingProgram = false
+                                    if (!wybrany) onProgram(p)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(p.name, style = MaterialTheme.typography.titleMedium)
+                                if (p.isActive) {
+                                    Text(
+                                        "aktywny",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            if (wybrany) Text("✓", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (programs.size > 1)
+                            "Zmienia tylko to, co widać w tej zakładce. Plan aktywny " +
+                                "ustawiasz w zakładce Plan."
+                        else "Masz jeden plan. Kolejne stworzysz w zakładce Plan.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { choosingProgram = false }) { Text("Zamknij") }
+            }
+        )
     }
 
     // Potwierdzenie startu.
@@ -772,7 +914,8 @@ private fun PlanCard(option: PlanOption, suggested: Boolean, onClick: () -> Unit
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    "${option.exerciseCount} ćwiczeń · ${lastDoneLabel(option.lastDoneAt)}",
+                    (option.plan.day?.let { "dzień $it · " } ?: "") +
+                        "${option.exerciseCount} ćwiczeń · ${lastDoneLabel(option.lastDoneAt)}",
                     style = MaterialTheme.typography.bodySmall
                 )
                 if (suggested) {
@@ -1371,7 +1514,10 @@ private fun ActiveExercise(
     editingSet?.let { s ->
         EditSetDialog(
             entry = s,
-            item = item,
+            exerciseName = item.exerciseName,
+            equipment = item.equipment,
+            step = item.step,
+            showWeight = item.hasTargetWeight,
             inventory = inventory,
             onDismiss = { editingSet = null },
             onSave = { w, r, v ->
@@ -1409,114 +1555,6 @@ private fun SetChip(s: SetEntry, onEdit: () -> Unit) {
             fontFamily = FontFamily.Monospace
         )
     }
-}
-
-/**
- * Poprawianie zapisanej serii.
- *
- * Te same regulatory co przy zapisie, żeby nie uczyć się drugiego sposobu
- * wpisywania tego samego. Kasowanie zostaje tutaj, w jednym miejscu
- * z poprawianiem - ale jako osobny przycisk, a nie skutek dotknięcia kafelka.
- */
-@Composable
-private fun EditSetDialog(
-    entry: SetEntry,
-    item: PlanItem,
-    inventory: Inventory,
-    onDismiss: () -> Unit,
-    onSave: (Double, Int, Int?) -> Unit,
-    onDelete: () -> Unit
-) {
-    val mode = LoadMode.of(item.equipment, inventory)
-    var weight by remember(entry.id) { mutableStateOf(entry.weightKg) }
-    var reps by remember(entry.id) { mutableStateOf(entry.reps) }
-    // Zapas wchodzi do poprawki z tym, co zapisano - inaczej okno milczało
-    // o jedynej wartości, której po treningu nie da się odtworzyć z pamięci.
-    var rir by remember(entry.id) { mutableStateOf(entry.rir) }
-    var typingWeight by remember { mutableStateOf(false) }
-
-    if (typingWeight) {
-        WeightDialog(
-            initialKg = weight,
-            title = item.exerciseName,
-            onDismiss = { typingWeight = false },
-            onPick = { weight = it; typingWeight = false }
-        )
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Popraw serię") },
-        text = {
-            Column {
-                if (item.hasTargetWeight) {
-                    Stepper(
-                        label = "${Loading.fmt(weight)} ${item.equipment.weightUnitLabel}",
-                        onMinus = {
-                            weight = if (mode != null) {
-                                PlateCalculator.nextDown(weight, mode, inventory)?.totalKg ?: weight
-                            } else roundKg((weight - item.step).coerceAtLeast(0.0))
-                        },
-                        onPlus = {
-                            weight = if (mode != null) {
-                                PlateCalculator.nextUp(weight, mode, inventory)?.totalKg ?: weight
-                            } else roundKg(weight + item.step)
-                        },
-                        onLabelClick = if (mode == null) ({ typingWeight = true }) else null
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
-                Stepper(
-                    label = "$reps powt.",
-                    onMinus = { if (reps > 1) reps-- },
-                    onPlus = { reps++ }
-                )
-
-                // Zapas widoczny od razu, nie pod przyciskiem jak przy
-                // świeżej serii: tam się go podaje, tutaj przede wszystkim
-                // sprawdza, co się wtedy podało.
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    if (rir != null) "Zapas powtórzeń: $rir" else "Zapas powtórzeń: nie podano",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (rir != null) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf(0, 1, 2, 3).forEach { v ->
-                        // Ponowne naciśnięcie zdejmuje zapas - tak samo jak
-                        // przy świeżej serii i tak samo jak na zegarku.
-                        if (rir == v) {
-                            Button(
-                                onClick = { rir = null },
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                                modifier = Modifier.weight(1f)
-                            ) { Text(if (v >= 3) "3+" else v.toString()) }
-                        } else {
-                            OutlinedButton(
-                                onClick = { rir = v },
-                                contentPadding = PaddingValues(horizontal = 4.dp),
-                                modifier = Modifier.weight(1f)
-                            ) { Text(if (v >= 3) "3+" else v.toString()) }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                    Text("Usuń tę serię", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(weight, reps, rir) }) { Text("Zapisz") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
-    )
 }
 
 /**

@@ -41,7 +41,6 @@ import pl.gymbro.data.FoodLogEntry
 import pl.gymbro.data.Meal
 import pl.gymbro.data.Nutrients
 import pl.gymbro.data.Recipe
-import pl.gymbro.data.TdeeMethod
 import pl.gymbro.data.todayEpochDay
 import pl.gymbro.net.Barcodes
 import pl.gymbro.net.OpenFoodFacts
@@ -53,7 +52,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * Zakładka Jedzenie: dziennik i zapotrzebowanie.
+ * Zakładka Kalorie: dziennik jedzenia i zapotrzebowanie.
  *
  * Projekt i uzasadnienie liczb: `docs/kalorie.md`.
  *
@@ -424,7 +423,7 @@ private fun DayView(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Jedzenie", style = MaterialTheme.typography.headlineMedium)
+            Text("Kalorie", style = MaterialTheme.typography.headlineMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { onDay(day - 1) }) { Text("‹") }
                 Text(dayLabel(day), style = MaterialTheme.typography.bodyMedium)
@@ -568,7 +567,7 @@ private fun MealHeader(meal: Meal, suma: Nutrients?, onAdd: () -> Unit) {
     }
 }
 
-/** Karta podsumowania: kalorie, makro i skąd się wzięła liczba wydatku. */
+/** Karta podsumowania: kalorie i makro wobec celu. */
 @Composable
 private fun SummaryCard(today: NutritionReview.Today?) {
     Card(
@@ -631,19 +630,10 @@ private fun SummaryCard(today: NutritionReview.Today?) {
             MacroRow("Węgle", eaten.carbsG, target.carbsG, MaterialTheme.colorScheme.tertiary)
             MacroRow("Tłuszcz", eaten.fatG, target.fatG, MaterialTheme.colorScheme.secondary)
 
-            today.tdee?.let { tdee ->
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "wydatek %.0f kcal %s".format(tdee.kcal, methodLabel(tdee.method)),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    tdee.note,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            // Wydatku tu nie ma i nie ma go celowo. Stała tu linijka „wydatek
+            // ... kcal (ze wzoru)" z dopiskiem, ile ważeń brakuje do pomiaru -
+            // liczba, z którą nic się nie robi, w karcie, na którą patrzy się
+            // kilka razy dziennie. Cel powyżej już z niej wynika.
 
             // Błonnik osobno, bo nie wchodzi do bilansu kalorii, a brak danych
             // u części wpisów trzeba pokazać wprost - inaczej suma czytałaby
@@ -718,12 +708,6 @@ private fun ProgressBar(fraction: Float, color: Color) {
                 .background(if (over) MaterialTheme.colorScheme.error else color)
         )
     }
-}
-
-private fun methodLabel(method: TdeeMethod): String = when (method) {
-    TdeeMethod.FORMULA -> "(ze wzoru)"
-    TdeeMethod.BLENDED -> "(wzór i pomiar)"
-    TdeeMethod.MEASURED -> "(z pomiaru)"
 }
 
 private fun wpisy(n: Int): String = when {

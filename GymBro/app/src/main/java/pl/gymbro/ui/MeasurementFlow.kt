@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -102,6 +103,12 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
     var impedance by remember { mutableStateOf<Double?>(null) }
     var source by remember { mutableStateOf("waga BLE") }
     var measuredAt by remember { mutableStateOf(System.currentTimeMillis()) }
+    // Data wybrana ręcznie. null znaczy „dzisiaj, teraz" - i wtedy liczy się
+    // chwila odczytu z wagi, nie chwila otwarcia kreatora.
+    //
+    // Pomiar wstecz miał osobne okno pod osobnym przyciskiem, bez wagi i bez
+    // kroku z obwodami na rysunku. Teraz to ten sam kreator z inną datą.
+    var pickedAt by remember { mutableStateOf<Long?>(null) }
 
     val girths = remember { mutableStateMapOf<MeasurementSite, String>() }
     var previous by remember { mutableStateOf<Map<MeasurementSite, BodyMetric>>(emptyMap()) }
@@ -184,7 +191,44 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
         }
 
         StepBar(step)
-        Spacer(Modifier.height(10.dp))
+
+        // Data nad krokami, nie w ostatnim: kto dopisuje pomiar sprzed
+        // tygodnia, ten wie o tym od początku, a na podsumowaniu łatwo ją
+        // przeoczyć i zapisać stary wynik z dzisiejszą datą.
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Data pomiaru",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    pickedAt?.let { dateOnly(it) + ", " + timeOnly(it) } ?: "dzisiaj",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (pickedAt != null) MaterialTheme.colorScheme.tertiary
+                    else MaterialTheme.colorScheme.onSurface
+                )
+            }
+            TextButton(onClick = {
+                pickDate(context, pickedAt ?: System.currentTimeMillis()) { day ->
+                    if (isToday(day)) {
+                        // Dzisiejsza data to powrót do ustawienia domyślnego,
+                        // nie „dzisiaj o godzinie, o której otwarto okno".
+                        pickedAt = null
+                    } else {
+                        pickedAt = day
+                        // Przy pomiarze wstecz godzina też jest do podania -
+                        // bieżąca rzadko się zgadza. Anulowanie zostawia ją.
+                        pickTime(context, day) { pickedAt = it }
+                    }
+                }
+            }) { Text(if (pickedAt == null) "Wybierz datę" else "Zmień datę") }
+        }
+        Spacer(Modifier.height(6.dp))
 
         Crossfade(targetState = step, label = "krok") { current ->
             when (current) {
@@ -227,19 +271,20 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
                     profile = profile,
                     onSave = {
                         val kg = weightKg
+                        val at = pickedAt ?: measuredAt
                         if (kg != null) scope.launch {
                             withContext(Dispatchers.IO) {
                                 bodyRepo.record(
                                     weightKg = kg,
                                     impedanceOhm = impedance,
                                     source = source,
-                                    at = measuredAt
+                                    at = at
                                 )
                                 // Ten sam znacznik czasu co masa - jeden pomiar.
                                 girths.forEach { (site, text) ->
                                     text.trim().replace(',', '.').toDoubleOrNull()
                                         ?.takeIf { it in 10.0..250.0 }
-                                        ?.let { metricsRepo.record(site, it, measuredAt) }
+                                        ?.let { metricsRepo.record(site, it, at) }
                                 }
                             }
                             onDone()
@@ -249,6 +294,14 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
             }
         }
     }
+}
+
+/** Czy znacznik czasu wypada dzisiaj - według kalendarza telefonu, nie UTC. */
+private fun isToday(ms: Long): Boolean {
+    val a = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+    val b = java.util.Calendar.getInstance()
+    return a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+        a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR)
 }
 
 // ---- Pasek postępu -------------------------------------------------------
@@ -377,8 +430,12 @@ private fun ScaleStep(
     // Nasłuch.
     var manual by remember { mutableStateOf("") }
 
+    // Przewijane i z imePadding: pole ręcznego wpisu stoi na samym dole,
+    // czyli dokładnie tam, gdzie wyjeżdża klawiatura. Odkąd nad krokami jest
+    // wiersz z datą, przy wpisywaniu wstecz to pole jest główną drogą,
+    // a nie zapasową.
     Column(
-        Modifier.fillMaxSize(),
+        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(20.dp))

@@ -84,7 +84,6 @@ fun WeightScreen() {
         showDiagnostics = false
         showMeasurements = false
     }
-    var manualDialog by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<BodyMeasurement?>(null) }
 
     var measurements by remember {
@@ -188,7 +187,7 @@ fun WeightScreen() {
                 if (latest == null) {
                     Text("Brak pomiarów", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Naciśnij Zmierz i wejdź na wagę, albo wpisz masę ręcznie.",
+                        "Naciśnij Nowy pomiar i wejdź na wagę albo wpisz masę ręcznie.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 } else {
@@ -254,22 +253,13 @@ fun WeightScreen() {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
         }
 
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Jedna ścieżka pomiaru: waga i obwody jako jedna sesja, zapisane
-            // ze wspólnym znacznikiem czasu.
-            Button(
-                onClick = { status = null; showFlow = true },
-                modifier = Modifier.weight(1f)
-            ) { Text("Zmierz") }
-
-            OutlinedButton(
-                onClick = { manualDialog = true },
-                modifier = Modifier.weight(1f)
-            ) { Text("Wpisz wstecz") }
-        }
+        // Jedna ścieżka pomiaru: waga i obwody jako jedna sesja, zapisane
+        // ze wspólnym znacznikiem czasu. Pomiar wstecz to ta sama ścieżka
+        // z inną datą, wybieraną już w kreatorze - nie osobny przycisk.
+        Button(
+            onClick = { status = null; showFlow = true },
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+        ) { Text("Nowy pomiar") }
 
         // ---- Historia ----
         Text("Historia", style = MaterialTheme.typography.titleMedium)
@@ -319,30 +309,6 @@ fun WeightScreen() {
                 }
             }
         }
-    }
-
-    if (manualDialog) {
-        ManualWeightDialog(
-            onDismiss = { manualDialog = false },
-            onSave = { kg, whenMs, composition, newGirths ->
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        repo.record(
-                            weightKg = kg,
-                            impedanceOhm = null,
-                            source = "ręcznie",
-                            at = whenMs,
-                            composition = composition
-                        )
-                        // Ten sam znacznik czasu co masa - jeden pomiar.
-                        metricsRepo.replaceAt(whenMs, newGirths)
-                    }
-                    manualDialog = false
-                    status = "Zapisano %.2f kg".format(kg)
-                    reload()
-                }
-            }
-        )
     }
 
     editing?.let { m ->

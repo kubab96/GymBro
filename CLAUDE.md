@@ -68,7 +68,7 @@ W Git Bashu ścieżki androidowe wymagają `MSYS_NO_PATHCONV=1`, inaczej bash pr
 
 Serwer adb też dziedziczy katalog roboczy i trzyma folder - `adb kill-server`, gdy przeszkadza.
 
-`GymBro/tools/bench.sh` mierzy płynność przez `dumpsys gfxinfo`. Ma zaszyte pięć pozycji zakładek (`XS="98 319 540 761 980"`) i od czasu dołożenia Jedzenia zgadza się to z aplikacją - wcześniej wymagał poprawki. Płynność oceniaj na wariancie release; debug Compose jest kilkukrotnie wolniejszy i pomiar z niego nic nie znaczy.
+`GymBro/tools/bench.sh` mierzy płynność przez `dumpsys gfxinfo`. Ma zaszyte pięć pozycji zakładek (`XS="98 319 540 761 980"`) i od czasu dołożenia dziennika jedzenia (zakładka Kalorie) zgadza się to z aplikacją - wcześniej wymagał poprawki. Płynność oceniaj na wariancie release; debug Compose jest kilkukrotnie wolniejszy i pomiar z niego nic nie znaczy.
 
 ## Architektura
 
@@ -178,9 +178,11 @@ jest niewidoczny dokładnie wtedy, gdy się go potrzebuje.
 
 ### Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 23. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
+`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 28. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
 
 Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia jeden tabel; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
+
+**`onCreate` i `onUpgrade` to dwie drogi do tej samej bazy i nic poza `GymBro/tools/schemat.sh` nie pilnuje, żeby kończyły się w tym samym miejscu.** Skrypt składa świeżą bazę z SQL-a wyciągniętego z `Schema.kt` i porównuje ją z kopią z telefonu - kolumny, typy, klucze, indeksy. Puszczaj go po każdej zmianie schematu, na kopii ściągniętej już po migracji: `GymBro/tools/schemat.sh GymBro/kopie/<plik>.db`. Nową listę `Vn_STATEMENTS` wołaną z `onCreate` trzeba dopisać do `LISTY` w skrypcie. Testu jednostkowego na to nie ma, bo `SQLiteOpenHelper` wymaga Androida.
 
 Zapisując ciężary, przepuszczaj je przez `data/Kg.kt` (`roundKg`). Arytmetyka zmiennoprzecinkowa wpisywała do bazy wartości w rodzaju `81.39999999999999`.
 
@@ -207,11 +209,29 @@ Nie ma protokołu wspólnego dla wszystkich wag - „łączy się z każdą" zna
 
 ### Zakładki
 
-Pięć: Trening, Jedzenie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`).
+Pięć: Trening, Kalorie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`). „Kalorie" to dziennik jedzenia - w kodzie i w dokumentach dalej `Food*` i „Jedzenie". Numer zakładki Plan to `PLAN_TAB` w `ui/TabHost.kt`, jedna stała dla paska i dla skoków z ekranów.
+
+**Na ekranie „plan", w kodzie `Program`.** Użytkownik mówi „plan treningowy" na FBW czy PPL, więc tak brzmi każdy napis. W kodzie `Plan` to już jednostka (A, B, Push), a schemat nazywa się `Program` - w modelu, w bazie i w protokole zegarka. Nie zamieniaj nazw w kodzie; pisząc nowy napis, pisz „plan" i „jednostka".
+
+**Gotowe plany to wzorce w kodzie, nie wiersze w bazie.** `data/PlanLibrary.kt` trzyma typy i wyszukiwarkę, treść leży w `PlanCatalogGym.kt`, `PlanCatalogHome.kt` i `PlanCatalogMore.kt` (ponad pięćdziesiąt planów, ponad sto pięćdziesiąt jednostek; trzeci plik celuje w konkretne zestawy sprzętu). Dodanie przepisuje wzorzec do bazy jako zwykły plan użytkownika, bez śladu pochodzenia, więc edytor, trening i zegarek nie mają dla niego osobnej ścieżki. Ćwiczenia wskazywane są nazwą z `Seed.LIBRARY` (kilkaset pozycji), a `PlanLibraryTest` pilnuje nazw, zakresów i tego, żeby żaden filtr nie zwracał pustki. **Aplikacja nie zgaduje, gdzie kto trenuje** - dwa podejścia („dom bez sztangi", potem „dom bez wyciągu") za każdym razem trafiały obok. Są dwie ścieżki z przełącznika „Dostosuj sprzęt oraz obciążenia" w Profilu: wyłączony - dostęp do wszystkiego, widać każdy plan, jednostkę i ćwiczenie; włączony - domyślnie tylko to, co da się zrobić sprzętem z listy (`profile::canDoExercise` jako `fits` w `PlanLibrary.search`/`searchUnits` - po ćwiczeniu, nie po rodzaju sprzętu), z przełącznikiem „pokaż wszystkie". Na karcie planu stoi wymagany sprzęt (`gearSummary`), nie miejsce. **Zakładka Plan bez okienek do pracy** - wszystko, co tworzy albo zmienia plan, to pełne ekrany w krokach, jak pomiar w Wadze (`ui/WizardParts.kt`: nagłówek z paskiem, karty wyboru). „Stwórz nowy plan" (`PlanLibraryScreen.kt`) rozchodzi się na dwie ścieżki: własny (nazwa → `NewUnitFlow`: nazwa jednostki i opcjonalny dzień 1-7 → ćwiczenia) i gotowy (dni → lista z filtrem poziomu i sprzętu → plan rozpisany → „Wybierz ten plan" zapisuje i otwiera do dostosowania). Gdy nic nie pasuje, `PlanLibrary.match` zdejmuje najpierw poziom, potem dni - sprzętu nigdy. Ćwiczenia jednostki ustawia **jeden** edytor, `UnitEditorScreen` (karty w stylu Hevy, każda zmiana zapisuje się od razu), z wyborem kilku ćwiczeń naraz w `ExercisePickerScreen` - w kreatorze i przy zwykłej edycji ten sam, żeby się nie rozjechały. Okna zostały tylko jako pytanie: zmiana nazwy, potwierdzenie usunięcia, wpisanie ciężaru. Poprawka wzorca nie wymaga migracji; **nowe ćwiczenie w `Seed.LIBRARY` wymaga** - biblioteka wstawia się tylko z `onCreate` i z gałęzi w `onUpgrade` (tak doszły wersje 25, 26 i 28).
+
+**Wyszukiwanie idzie przez `data/TextSearch.kt`**: bez polskich znaków („wioslowanie" znajduje „Wiosłowanie"), od początku wyrazu, kilka słów naraz. Każde nowe pole szukania używa tego samego - użytkownik pisze bez ogonków.
+
+**Kettlebell i gumy to osobne `Equipment`**, nie odmiany hantla: hantel przy ograniczonych obciążeniach składa się z talerzy, kettlebell nie. Kettlebelle z biblioteki mają krok 4 kg (`Seed.kettlebellSteps`).
+
+**Plan oglądany w Treningu to nie plan aktywny.** Nazwa planu pod tytułem jest przełącznikiem: zmienia jednostki i historię na tym ekranie, ale `is_active` zostaje nietknięte, więc zegarek dalej dostaje jednostki planu aktywnego. Historia siły idzie z `Timeline.build(programId = …)`.
 
 Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar zostaje, bo mierzenie rozbudowanego ekranu od nowa to kilkadziesiąt milisekund zwiechy przy każdym powrocie. Głuchota jest konieczna, bo ukryty ekran nadal leży w drzewie.
 
 **Opuszczenie zakładki zwija ją do widoku głównego.** Trzy drogi zmiany zakładki - pasek, systemowe wstecz, skok z wnętrza ekranu - przechodzą przez jedną lambdę `idzDo`, która podbija licznik `reselect` opuszczanej zakładki. Ekrany reagują przez `LocalTabReselect`.
+
+**Obrót ekranu nie odtwarza aktywności** (`configChanges` przy `MainActivity` w manifeście). Bez tego obrót wyrzucał z każdego ekranu wewnątrz zakładki, bo nawigacja trzyma się w zwykłym `remember`. Nowy ekran nie musi więc niczego robić pod obrót; `rememberSaveable` jest potrzebne tylko tam, gdzie stan ma przeżyć ubicie aplikacji w tle.
+
+**Profil ma jeden przycisk Zapisz.** Ekran trzyma szkic obok stanu z bazy; przycisk w nagłówku świeci, gdy się różnią, a wyjście z zakładki z niezapisanym szkicem pyta przez `LeaveGuard` - `idzDo` woła go przed zmianą zakładki, dlatego żadna droga nie może zmieniać `tab` wprost. Nowe pole w Profilu dopisuje się do szkicu, nie zapisuje od razu. Poza szkicem są tylko przełącznik pilota, zgody systemowe i czyszczenie historii.
+
+**Sprzęt w Profilu to `data/Gear.kt`, nie `Equipment`.** `Equipment` wylicza sześć sposobów liczenia ciężaru i wisi na nim załadunek oraz protokół zegarka; `Gear` to lista do wyboru, a każda pozycja mówi przez `covers`, które rodzaje ćwiczeń odblokowuje. Nazwy stałych `Gear` są formatem zapisu (kolumna `owned_equipment`). Przełącznik „Dostosuj sprzęt oraz obciążenia" siedzi w kolumnie `limited_weights`; wyłączony znaczy pełną siłownię, a włączony bez talerzy na liście dalej daje dowolny ciężar.
+
+**Rodzaj sprzętu to za mało, liczy się ćwiczenie.** Sztanga bez stojaków nie daje przysiadu, a „maszyna" to kilkanaście różnych urządzeń. `Seed.NEEDS` mówi po nazwie ćwiczenia, czego jeszcze wymaga: lista grup, z każdej grupy wystarczy jedna pozycja (`needsMet`, `missingNeeds`). Ćwiczenie bez wpisu wymaga tylko swojego rodzaju. „Komplet maszyn (siłownia)" zastępuje każdą maszynę i do tego ławki, stojaki i drążek - inaczej lista zapisana, zanim dało się je zaznaczyć osobno, gubiła przysiad. Wpis w `NEEDS` nie wymaga migracji; `PlanLibraryTest` pilnuje, żeby każde ćwiczenie na maszynie miało swoją maszynę, a każdy gotowy zestaw z `Gear.PRESETS` dostawał plany. Sprzęt wybiera się na pełnym ekranie (`ui/GearPicker.kt`, wzorowany na „lokalizacjach" Fitboda): gotowe zestawy dokładają pozycje, nie zastępują zaznaczonych.
 
 `ui/Busy.kt` to **licznik, nie flaga** - kilka ekranów ładuje się naraz.
 

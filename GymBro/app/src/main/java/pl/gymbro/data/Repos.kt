@@ -231,6 +231,108 @@ class ProgramRepository(context: Context) {
             "SELECT COUNT(*) AS n FROM plan WHERE program_id = ?",
             arrayOf(programId.toString())
         ).mapAll { it.int("n") }.firstOrNull() ?: 0
+
+    // ---- Gotowe plany z PlanLibrary ----------------------------------------
+    //
+    // Wzorzec jest przepisywany, nie podpinany: po dodaniu to zwykły plan
+    // użytkownika, bez żadnego śladu, skąd się wziął. Dzięki temu edytor,
+    // trening, progresja i zegarek nie mają osobnej ścieżki dla „planu z bazy".
+
+    /**
+     * Dodaje gotowy plan razem z jednostkami i ćwiczeniami.
+     *
+     * Jedna transakcja, bo plan dodany do połowy - dwie jednostki z czterech -
+     * wyglądałby na cały i nikt by nie zauważył, że czegoś brakuje.
+     * Pierwszy plan w bazie staje się aktywny, tak samo jak w [insert].
+     */
+    fun addFromLibrary(template: PlanLibrary.ProgramTemplate): Long {
+        val istniejace = all()
+        val name = PlanLibrary.uniqueName(template.name, istniejace.map { it.name })
+        val w = db.writable
+        w.beginTransaction()
+        try {
+            val id = w.insert("program", null, ContentValues().apply {
+                put("name", name)
+                putNull("note")
+                put("position", istniejace.size)
+                put("is_active", if (istniejace.isEmpty()) 1 else 0)
+            })
+            template.units.forEachIndexed { i, unit -> insertUnit(w, id, unit.name, i, unit) }
+            w.setTransactionSuccessful()
+            return id
+        } finally {
+            w.endTransaction()
+        }
+    }
+
+    /** Dodaje jedną gotową jednostkę do istniejącego planu, na jego koniec. */
+    fun addUnitFromLibrary(programId: Long, unit: PlanLibrary.UnitTemplate): Long {
+        val w = db.writable
+        w.beginTransaction()
+        try {
+            val nazwy = w.rawQuery(
+                "SELECT name FROM plan WHERE program_id = ?", arrayOf(programId.toString())
+            ).mapAll { it.str("name") }
+            val id = insertUnit(
+                w, programId, PlanLibrary.uniqueName(unit.name, nazwy), nazwy.size, unit
+            )
+            w.setTransactionSuccessful()
+            return id
+        } finally {
+            w.endTransaction()
+        }
+    }
+
+    private fun insertUnit(
+        w: SQLiteDatabase,
+        programId: Long,
+        name: String,
+        position: Int,
+        unit: PlanLibrary.UnitTemplate
+    ): Long {
+        val planId = w.insert("plan", null, ContentValues().apply {
+            put("name", name)
+            put("position", position)
+            put("program_id", programId)
+        })
+        var pos = 0
+        unit.items.forEach { item ->
+            val exerciseId = libraryExerciseId(w, item.exercise) ?: return@forEach
+            w.insert("plan_item", null, ContentValues().apply {
+                put("plan_id", planId)
+                put("exercise_id", exerciseId)
+                put("position", pos)
+                // Zero znaczy „nieustawiony" - patrz PlanItem.hasTargetWeight.
+                put("target_kg", 0.0)
+                put("sets", item.sets)
+                put("reps_from", item.repsFrom)
+                put("reps_to", item.repsTo)
+                put("rest_sec", item.restSec)
+            })
+            pos += 1
+        }
+        return planId
+    }
+
+    /**
+     * Numer ćwiczenia z biblioteki - z bazy, a gdy go tam nie ma, wstawiony.
+     *
+     * Po nazwie, bo tak wskazuje je wzorzec. Ćwiczenie mogło zniknąć z bazy:
+     * niczym nietrzymane dało się skasować. Wtedy wraca ze sprzętem i partią
+     * z [Seed]. Ćwiczenie o tej nazwie poprawione przez użytkownika (inny
+     * sprzęt, własny krok) zostaje takie, jakie jest - to jego wersja.
+     */
+    private fun libraryExerciseId(w: SQLiteDatabase, name: String): Long? {
+        w.rawQuery("SELECT id FROM exercise WHERE name = ?", arrayOf(name))
+            .mapAll { it.long("id") }.firstOrNull()?.let { return it }
+        val (_, equipment, muscle) = Seed.libraryEntry(name) ?: return null
+        return w.insert("exercise", null, ContentValues().apply {
+            put("name", name)
+            put("equipment", equipment.name)
+            put("muscle_group", muscle)
+            put("is_custom", 0)
+        }).takeIf { it > 0 }
+    }
 }
 
 class PlanRepository(context: Context) {
@@ -240,7 +342,8 @@ class PlanRepository(context: Context) {
         id = c.long("id"),
         name = c.str("name"),
         position = c.int("position"),
-        programId = c.longOrNull("program_id")
+        programId = c.longOrNull("program_id"),
+        day = c.intOrNull("day")
     )
 
     /** Wszystkie jednostki, niezależnie od programu. */
@@ -298,12 +401,24 @@ class PlanRepository(context: Context) {
         }
     )
 
-    fun insertPlan(name: String, position: Int, programId: Long? = null): Long =
+    fun insertPlan(name: String, position: Int, programId: Long? = null, day: Int? = null): Long =
         db.writable.insert("plan", null, ContentValues().apply {
             put("name", name)
             put("position", position)
             if (programId != null) put("program_id", programId) else putNull("program_id")
+            if (day != null) put("day", day) else putNull("day")
         })
+
+    fun setPlanDay(id: Long, day: Int?): Int =
+        db.writable.update(
+            "plan",
+            ContentValues().apply { if (day != null) put("day", day) else putNull("day") },
+            "id = ?", arrayOf(id.toString())
+        )
+
+    fun planById(id: Long): Plan? =
+        db.readableDatabase.rawQuery("SELECT * FROM plan WHERE id = ?", arrayOf(id.toString()))
+            .mapAll(::planFrom).firstOrNull()
 
     fun renamePlan(id: Long, name: String): Int =
         db.writable.update(
@@ -619,7 +734,7 @@ class SessionRepository(context: Context) {
         db.readableDatabase.rawQuery(
             """
             SELECT s.id AS id, s.started_at AS started_at, s.ended_at AS ended_at,
-                   p.name AS plan_name,
+                   p.name AS plan_name, p.program_id AS program_id,
                    COUNT(CASE WHEN e.is_warmup = 0 THEN 1 END) AS sets,
                    COALESCE(
                        SUM(CASE WHEN e.is_warmup = 0 THEN e.weight_kg * e.reps END), 0
@@ -640,7 +755,8 @@ class SessionRepository(context: Context) {
                 startedAt = it.long("started_at"),
                 endedAt = it.long("ended_at"),
                 workingSets = it.int("sets"),
-                tonnage = it.dbl("tonnage")
+                tonnage = it.dbl("tonnage"),
+                programId = it.longOrNull("program_id")
             )
         }
 
@@ -1354,12 +1470,9 @@ class ProfileRepository(context: Context) {
                     // Pusty wpis i brak wpisu znaczą to samo: brak ograniczeń.
                     // Gdyby zapisać pustą listę, użytkownik straciłby wszystkie
                     // ćwiczenia zamiast zobaczyć wszystkie.
-                    ownedEquipment = it.strOrNull("owned_equipment")
-                        ?.split(",")
-                        ?.mapNotNull { name -> runCatching { Equipment.valueOf(name) }.getOrNull() }
-                        ?.toSet()
-                        ?.takeIf { set -> set.isNotEmpty() },
-                    limitedWeights = it.intOrNull("limited_weights") == 1,
+                    ownedGear = Gear.parse(it.strOrNull("owned_equipment")),
+                    // Kolumna nazywa się po dawnemu - patrz UserProfile.customGear.
+                    customGear = it.intOrNull("limited_weights") == 1,
                     dietRatePct = it.dblOrNull("diet_rate_pct"),
                     tdeeResetDay = it.longOrNull("tdee_reset_day")
                 )
@@ -1375,10 +1488,9 @@ class ProfileRepository(context: Context) {
                 if (p.birthYear != null) put("birth_year", p.birthYear) else putNull("birth_year")
                 put("training_goal", p.trainingGoal.name)
                 put("phase", p.phase.name)
-                val owned = p.ownedEquipment
-                if (owned.isNullOrEmpty()) putNull("owned_equipment")
-                else put("owned_equipment", owned.joinToString(",") { e -> e.name })
-                put("limited_weights", if (p.limitedWeights) 1 else 0)
+                val owned = Gear.join(p.ownedGear)
+                if (owned == null) putNull("owned_equipment") else put("owned_equipment", owned)
+                put("limited_weights", if (p.customGear) 1 else 0)
                 putOrNull("diet_rate_pct", p.dietRatePct)
                 if (p.tdeeResetDay != null) put("tdee_reset_day", p.tdeeResetDay)
                 else putNull("tdee_reset_day")
@@ -1418,30 +1530,49 @@ class GymRepository(context: Context) {
                 )
             }
 
-        return Inventory(bar, plates, unlimited = !limited)
+        // Bez talerzy na liście nie ma z czego składać - a „ograniczone do
+        // niczego" dawało sam gryf jako jedyny możliwy ciężar. Przełącznik
+        // w Profilu dotyczy teraz także sprzętu, więc włącza go również ktoś,
+        // kto talerzy nie zamierza podawać wcale.
+        return Inventory(bar, plates, unlimited = !limited || plates.isEmpty())
     }
 
-    fun setBarWeight(kg: Double) {
-        db.writable.update(
-            "gym_profile", ContentValues().apply { put("bar_kg", kg) },
-            "id = ?", arrayOf("1")
-        )
-    }
-
-    fun upsertPlate(p: Plate): Long {
-        val values = ContentValues().apply {
-            put("kg", p.kg)
-            put("count", p.count)
-            put("fits_barbell", if (p.fitsBarbell) 1 else 0)
+    /**
+     * Zapisuje gryf i cały zestaw talerzy naraz.
+     *
+     * Profil ma jeden przycisk Zapisz, więc talerze dopisane, poprawione
+     * i usunięte od ostatniego zapisu przychodzą razem. Jedna transakcja,
+     * bo połowa zestawu w bazie to ciężary, których nie da się złożyć -
+     * a liczy z nich i telefon, i zegarek.
+     *
+     * Talerz z `id <= 0` jest nowy: ekran nadaje nowym tymczasowe numery
+     * ujemne, żeby dało się je odróżnić przed zapisem.
+     */
+    fun saveGear(barKg: Double, plates: List<Plate>) {
+        val w = db.writable
+        w.beginTransaction()
+        try {
+            w.update(
+                "gym_profile", ContentValues().apply { put("bar_kg", barKg) },
+                "id = ?", arrayOf("1")
+            )
+            val zostaja = plates.filter { it.id > 0 }.map { it.id }.toSet()
+            w.rawQuery("SELECT id FROM plate", null).mapAll { it.long("id") }
+                .filterNot { it in zostaja }
+                .forEach { w.delete("plate", "id = ?", arrayOf(it.toString())) }
+            plates.forEach { p ->
+                val values = ContentValues().apply {
+                    put("kg", p.kg)
+                    put("count", p.count)
+                    put("fits_barbell", if (p.fitsBarbell) 1 else 0)
+                }
+                if (p.id > 0) w.update("plate", values, "id = ?", arrayOf(p.id.toString()))
+                else w.insert("plate", null, values)
+            }
+            w.setTransactionSuccessful()
+        } finally {
+            w.endTransaction()
         }
-        return if (p.id == 0L) {
-            db.writable.insert("plate", null, values)
-        } else {
-            db.writable.update("plate", values, "id = ?", arrayOf(p.id.toString()))
-            p.id
-        }
     }
 
-    fun deletePlate(id: Long): Int =
-        db.writable.delete("plate", "id = ?", arrayOf(id.toString()))
 }

@@ -242,6 +242,35 @@ fun TabReselectHandler(onReselect: () -> Unit) {
 }
 
 /**
+ * Która zakładka jest Planem - stąd plakietka z propozycjami i tam prowadzi
+ * skok z historii treningu.
+ *
+ * Numer, nie nazwa, bo pasek rysuje się z listy po indeksie. Jedna stała dla
+ * paska i dla ekranów: gdy była wpisana osobno w dwóch miejscach, dołożenie
+ * zakładki przed Planem przesunęło tylko jedno z nich i „otwórz plan na tym
+ * ćwiczeniu" lądowało na Wadze.
+ */
+const val PLAN_TAB = 3
+
+/**
+ * Pytanie zadawane, zanim zakładka zostanie opuszczona.
+ *
+ * Istnieje dla Profilu, który ma jeden przycisk Zapisz: wyjście z niego
+ * z niezapisanymi zmianami po cichu by je gubiło - albo po cichu zostawiało
+ * w polach na później, co jest gorsze, bo wygląda na zapisane.
+ *
+ * [ask] dostaje czynność „przejdź dalej" i zwraca, czy ją przejęło. true
+ * znaczy: zakładka sama pokaże pytanie i sama wywoła przejście, gdy pozna
+ * odpowiedź. Każda zakładka ma własny egzemplarz, bo wszystkie są złożone
+ * naraz - wspólny pytałby o Profil przy wychodzeniu z Treningu.
+ */
+class LeaveGuard {
+    var ask: ((proceed: () -> Unit) -> Boolean)? = null
+}
+
+val LocalLeaveGuard = compositionLocalOf { LeaveGuard() }
+
+/**
  * Prośba o przejście na inną zakładkę, wysyłana z wnętrza ekranu.
  *
  * Potrzebna, bo propozycje progresji pokazują się w Planie, a natrafia się

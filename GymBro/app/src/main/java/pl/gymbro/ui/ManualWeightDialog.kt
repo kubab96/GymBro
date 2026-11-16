@@ -36,14 +36,17 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Ręczny wpis pomiaru: data, godzina, masa i obwody.
+ * Poprawianie zapisanego pomiaru: data, godzina, masa i obwody.
  *
- * Ten sam dialog służy do dopisania pomiaru wstecz i do poprawienia istniejącego.
+ * Nowe pomiary - także te wstecz - idą przez kreator [MeasurementFlow], który
+ * ma własny wybór daty. Osobny przycisk „Wpisz wstecz" obok „Zmierz" kazał
+ * przed pomiarem zdecydować, którą z dwóch dróg do tego samego zapisu wybrać.
+ * Parametr [existing] zostaje opcjonalny, bo okno umie oba przypadki.
  *
  * Obwody są tu razem z masą, bo jeden pomiar to jeden moment. Wcześniej dało się
- * je podać wyłącznie w kreatorze „Zmierz" - więc wpis dopisany wstecz albo
- * poprawiony po fakcie zostawał bez centymetrów i nie dało się tego naprawić
- * inaczej niż kasując pomiar i robiąc go od nowa.
+ * je podać wyłącznie w kreatorze - więc wpis poprawiony po fakcie zostawał
+ * bez centymetrów i nie dało się tego naprawić inaczej niż kasując pomiar
+ * i robiąc go od nowa.
  *
  * Składu ciała się nie wpisuje: liczy się z obwodów. Ta waga nie oddaje
  * prawdziwej bioimpedancji - w rozgłoszeniu podaje stałą wartość zastępczą,
@@ -108,7 +111,8 @@ fun ManualWeightDialog(
                     ) { Text(timeOnly(whenMs)) }
                 }
                 Text(
-                    "Domyślnie teraz. Zmień, jeśli uzupełniasz pomiar wstecz.",
+                    if (existing == null) "Domyślnie teraz. Zmień, jeśli uzupełniasz pomiar wstecz."
+                    else "Zmień, jeśli pomiar zapisał się ze złą datą albo godziną.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -196,7 +200,7 @@ private fun DecimalField(value: String, onChange: (String) -> Unit, label: Strin
     )
 }
 
-private fun pickDate(context: Context, current: Long, onPicked: (Long) -> Unit) {
+internal fun pickDate(context: Context, current: Long, onPicked: (Long) -> Unit) {
     val cal = Calendar.getInstance().apply { timeInMillis = current }
     DatePickerDialog(
         context,
@@ -218,7 +222,7 @@ private fun pickDate(context: Context, current: Long, onPicked: (Long) -> Unit) 
     }.show()
 }
 
-private fun pickTime(context: Context, current: Long, onPicked: (Long) -> Unit) {
+internal fun pickTime(context: Context, current: Long, onPicked: (Long) -> Unit) {
     val cal = Calendar.getInstance().apply { timeInMillis = current }
     TimePickerDialog(
         context,
@@ -237,8 +241,8 @@ private fun pickTime(context: Context, current: Long, onPicked: (Long) -> Unit) 
     ).show()
 }
 
-private fun dateOnly(ms: Long): String =
+internal fun dateOnly(ms: Long): String =
     SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(ms))
 
-private fun timeOnly(ms: Long): String =
+internal fun timeOnly(ms: Long): String =
     SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))

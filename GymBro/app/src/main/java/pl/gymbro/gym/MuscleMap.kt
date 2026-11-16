@@ -30,6 +30,19 @@ object MuscleMap {
     }
 
     /**
+     * Partie, które mapa zna - w tej pisowni, w jakiej je rozpoznaje.
+     *
+     * Podawane jako podpowiedzi przy tworzeniu ćwiczenia. Partia jest wolnym
+     * tekstem, więc „Klata" albo „uda" zapisywały się bez słowa sprzeciwu,
+     * a potem ćwiczenie nie świeciło na sylwetce po treningu.
+     * Test pilnuje, żeby lista i [regionsOf] mówiły to samo.
+     */
+    val GROUPS = listOf(
+        "klatka", "plecy", "barki", "biceps", "triceps",
+        "przedramiona", "brzuch", "pośladki", "nogi", "łydki"
+    )
+
+    /**
      * Które obszary podświetla dana partia.
      *
      * Kilka partii oświetla więcej niż jeden obszar, bo nazwa z bazy jest

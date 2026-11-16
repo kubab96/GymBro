@@ -50,18 +50,38 @@ object Timeline {
         s.type.equals("Trening siłowy", ignoreCase = true) ||
             s.type.equals("Podnoszenie ciężarów", ignoreCase = true)
 
+    /**
+     * @param programId plan, którego historię siły pokazujemy; null = wszystkie.
+     *   Przy dwóch planach treningi z PPL stały na liście pod FBW i nie dało
+     *   się z niej wyczytać, kiedy ostatnio szło to, na co się patrzy.
+     *   Trening bez przynależności (skasowana jednostka albo plan) zostaje
+     *   przy każdym planie - inaczej nie byłoby skąd go otworzyć.
+     */
     fun build(
         strength: List<SessionSummary>,
         watch: List<ExternalSession>,
-        limit: Int = 30
+        limit: Int = 30,
+        programId: Long? = null
     ): Split {
         // Sesje z zegarka, które już doczepiły się do Twojego zapisu, nie mogą
         // pojawić się drugi raz jako osobna pozycja - to ten sam trening.
+        // Liczone ze WSZYSTKICH sesji, przed odsianiem po planie: inaczej
+        // zegarkowa połowa treningu z drugiego planu wracałaby na listę jako
+        // „z zegarka, bez zapisanych serii".
         val matched = strength.mapNotNull { it.watch?.externalId }.toSet()
         val loose = watch.filterNot { it.externalId in matched }
 
-        val ownAndUnlogged = strength.map { Activity.Strength(it) } +
-            loose.filter(::isStrength).map { Activity.Watch(it) }
+        val own = if (programId == null) strength
+        else strength.filter { it.programId == null || it.programId == programId }
+
+        // Siła z zegarka bez zapisanych serii nie należy do żadnego planu.
+        // Bez wyboru planu stoi obok Twoich zapisów, jak dotąd. Przy wybranym
+        // planie idzie do „Inne": pod planem robionym pierwszy raz stało
+        // szesnaście takich wpisów sprzed miesięcy i wyglądały na jego historię.
+        val unlogged = loose.filter(::isStrength)
+        val ownAndUnlogged = own.map { Activity.Strength(it) } +
+            if (programId == null) unlogged.map { Activity.Watch(it) } else emptyList()
+        val unloggedElsewhere = if (programId == null) emptyList() else unlogged
 
         return Split(
             strength = ownAndUnlogged.sortedByDescending { it.at }.take(limit),
@@ -74,7 +94,7 @@ object Timeline {
                 .map { Activity.Watch(it) },
             // Wszystko, co nie jest ani siłą, ani ruchem w terenie. O takim
             // treningu zegarek wie tylko tyle, ile zmierzy z nadgarstka.
-            other = loose.filterNot { isCardio(it) || isStrength(it) }
+            other = (loose.filterNot { isCardio(it) || isStrength(it) } + unloggedElsewhere)
                 .sortedByDescending { it.startedAt }.take(limit)
                 .map { Activity.Watch(it) }
         )

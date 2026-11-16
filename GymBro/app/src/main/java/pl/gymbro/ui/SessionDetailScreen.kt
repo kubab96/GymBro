@@ -37,6 +37,13 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.clickable
+import pl.gymbro.data.Equipment
+import pl.gymbro.data.Exercise
+import pl.gymbro.data.GymRepository
+import pl.gymbro.data.Inventory
+import pl.gymbro.data.SetEntry
+import pl.gymbro.data.stepOrDefault
 import pl.gymbro.data.PlanItem
 import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ExerciseRepository
@@ -56,9 +63,10 @@ import java.util.Locale
 /**
  * Zapis podsumowania sesji na czas odtworzenia aktywności.
  *
- * Ten sam powód co przy aktywnościach z zegarka: obrót ekranu niszczy
- * aktywność, a historia wczytuje się asynchronicznie, więc szukanie po
- * identyfikatorze wracałoby na listę. Sklejona sesja z zegarka jedzie razem,
+ * Ten sam powód co przy aktywnościach z zegarka: system potrafi ubić
+ * aplikację w tle i odtworzyć ją po powrocie, a historia wczytuje się
+ * asynchronicznie, więc szukanie po identyfikatorze wracałoby na listę.
+ * Obrót ekranu aktywności już nie niszczy - patrz configChanges w manifeście. Sklejona sesja z zegarka jedzie razem,
  * bo bez niej ekran straciłby tętno.
  */
 val SessionSummarySaver: Saver<SessionSummary?, Any> = listSaver(
@@ -139,6 +147,45 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
+    // Poprawianie po fakcie: ćwiczenie, którego serie są otwarte, i seria
+    // w trakcie zmiany. Numery, nie obiekty - po każdym zapisie bloki
+    // wczytują się od nowa i trzymany obiekt pokazywałby stan sprzed zmiany.
+    val gymRepo = remember { GymRepository(context) }
+    var exercises by remember { mutableStateOf<Map<Long, Exercise>>(emptyMap()) }
+    var inventory by remember { mutableStateOf<Inventory?>(null) }
+    var editingExercise by remember { mutableStateOf<Long?>(null) }
+    var editingSet by remember { mutableStateOf<SetEntry?>(null) }
+
+    /**
+     * Serie i wszystko, co z nich wynika. Wołane także po każdej poprawce.
+     *
+     * Tętna nie czyta się tu ponownie: to kilkaset próbek z Health Connect,
+     * a poprawienie liczby powtórzeń niczego w nich nie zmienia.
+     */
+    suspend fun reloadSets(samples: List<RunAnalysis.Sample>) {
+        val loaded = withContext(Dispatchers.IO) {
+            val sets = sessionRepo.setsFor(summary.sessionId)
+            val all = exerciseRepo.all().associateBy { it.id }
+            Triple(sets, all, sessionRepo.setsByMuscleInSession(summary.sessionId))
+        }
+        exercises = loaded.second
+        byMuscle = loaded.third
+        blocks = StrengthAnalysis.blocks(
+            loaded.first, loaded.second.mapValues { it.value.name }, samples
+        )
+        setTimes = loaded.first.map { it.doneAt }
+    }
+
+    /** Zmiana w seriach: zapis, przeładowanie i sygnał dla listy historii. */
+    fun change(action: () -> Unit) {
+        scope.launch {
+            withContext(Dispatchers.IO) { action() }
+            reloadSets(hr)
+            // Lista w zakładce Trening pokazuje liczbę serii i objętość.
+            Refresh.bump()
+        }
+    }
+
     LaunchedEffect(summary.sessionId) {
         val profile = withContext(Dispatchers.IO) { profileRepo.get() }
         profile.birthYear?.let { year ->
@@ -149,17 +196,18 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         val samples = summary.watch?.let {
             reader.load(it.startedAt, it.endedAt).heartRate
         } ?: emptyList()
-        val loaded = withContext(Dispatchers.IO) {
-            val sets = sessionRepo.setsFor(summary.sessionId)
-            val names = exerciseRepo.all().associate { it.id to it.name }
-            byMuscle = sessionRepo.setsByMuscleInSession(summary.sessionId)
-            StrengthAnalysis.blocks(sets, names, samples) to sets.map { it.doneAt }
-        }
-        blocks = loaded.first
-        setTimes = loaded.second
+        inventory = withContext(Dispatchers.IO) { gymRepo.inventory() }
+        reloadSets(samples)
         hr = samples
         loading = false
     }
+
+    // Liczby w nagłówku z serii, nie z podsumowania, z którym tu weszliśmy:
+    // tamto powstało przed poprawką i po zmianie ciężaru pokazywałoby
+    // objętość treningu, którego już nie ma. Póki serie się wczytują,
+    // zostaje podsumowanie - inaczej nagłówek mignąłby zerem.
+    val workingSets = if (loading) summary.workingSets else blocks.sumOf { it.sets.size }
+    val tonnage = if (loading) summary.tonnage else blocks.sumOf { it.tonnage }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
@@ -184,7 +232,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         )
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
-                "${summary.tonnage.toInt()}",
+                "${tonnage.toInt()}",
                 fontSize = 54.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -201,7 +249,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         StatCard(
             listOfNotNull(
                 "Czas" to if (summary.durationMin < 1) "<1 min" else "${summary.durationMin} min",
-                "Serie" to "${summary.workingSets}",
+                "Serie" to "$workingSets",
                 "Powtórzenia" to "${blocks.sumOf { it.totalReps }}",
                 w?.hrAvg?.let { "Tętno śr." to "${it.toInt()}" },
                 w?.hrMax?.let { "Tętno maks." to "${it.toInt()}" },
@@ -257,6 +305,13 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        if (blocks.isNotEmpty()) {
+            Text(
+                "Dotknij ćwiczenia, żeby poprawić jego serie.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(8.dp))
 
         if (blocks.isEmpty()) {
@@ -267,7 +322,14 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             )
         } else {
             val hardest = blocks.mapNotNull { it.hrAvg }.maxOrNull()
-            blocks.forEach { ExerciseBlockRow(it, maxHr, it.hrAvg != null && it.hrAvg == hardest) }
+            blocks.forEach { b ->
+                ExerciseBlockRow(
+                    block = b,
+                    maxHr = maxHr,
+                    hardest = b.hrAvg != null && b.hrAvg == hardest,
+                    onClick = { editingExercise = b.exerciseId }
+                )
+            }
         }
 
         if (fromHere.isNotEmpty()) {
@@ -279,7 +341,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
                     // jednostce to cwiczenie lezy.
                     val pierwsze = fromHere.first()
                     PlanJump.to(pierwsze.planId, pierwsze.id)
-                    goToTab(2)
+                    goToTab(PLAN_TAB)
                 },
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -351,10 +413,10 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             title = { Text("Usunąć trening?") },
             text = {
                 Text(
-                    if (summary.workingSets == 0)
+                    if (workingSets == 0)
                         "Ten trening nie ma zapisanych serii - zniknie bez śladu."
                     else "Zniknie razem z " +
-                        plural(summary.workingSets, "serią", "seriami", "seriami") +
+                        plural(workingSets, "serią", "seriami", "seriami") +
                         ". Tego nie da się cofnąć."
                 )
             },
@@ -376,6 +438,143 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             }
         )
     }
+
+    // ---- Poprawianie serii ----
+    //
+    // Blok szukany przy każdym składaniu, po numerze ćwiczenia. Gdy usunięto
+    // jego ostatnią serię, bloku już nie ma i okno zamyka się samo.
+    val openBlock = blocks.firstOrNull { it.exerciseId == editingExercise }
+    val inv = inventory
+    if (openBlock != null && inv != null) {
+        val exercise = exercises[openBlock.exerciseId]
+        SetsDialog(
+            block = openBlock,
+            unit = exercise?.equipment?.weightUnitLabel ?: "kg",
+            onDismiss = { editingExercise = null },
+            onEdit = { editingSet = it },
+            onAdd = {
+                // Dopisana seria dziedziczy ciężar i powtórzenia po ostatniej -
+                // zapomniana seria to prawie zawsze powtórka poprzedniej,
+                // a poprawić ją można od razu. Godzina sekundę po ostatniej:
+                // prawdziwej nikt nie zna, a ta trzyma kolejność i nie
+                // dostawia kreski w przypadkowym miejscu wykresu tętna.
+                val last = openBlock.sets.last()
+                change {
+                    sessionRepo.addSet(
+                        last.copy(
+                            id = 0,
+                            setIndex = openBlock.sets.maxOf { it.setIndex } + 1,
+                            rir = null,
+                            doneAt = last.doneAt + 1_000
+                        )
+                    )
+                }
+            }
+        )
+
+        editingSet?.let { s ->
+            val equipment = exercise?.equipment ?: Equipment.MACHINE
+            EditSetDialog(
+                entry = s,
+                exerciseName = openBlock.name,
+                equipment = equipment,
+                step = stepOrDefault(exercise?.stepKg),
+                // Zero przy masie ciała to „bez obciążenia", nie pomyłka do
+                // poprawienia. Gdy ciężar jednak zapisano, da się go zmienić.
+                showWeight = equipment != Equipment.BODYWEIGHT || s.weightKg > 0.0,
+                inventory = inv,
+                onDismiss = { editingSet = null },
+                onSave = { w, r, rir ->
+                    editingSet = null
+                    change { sessionRepo.updateSet(s.id, w, r, rir) }
+                },
+                onDelete = {
+                    editingSet = null
+                    change { sessionRepo.deleteSet(s.id) }
+                }
+            )
+        }
+    }
+    // W efekcie, nie wprost w składaniu: zapis stanu w trakcie rysowania
+    // wymusza drugie składanie i potrafi się zapętlić.
+    val zniknal = openBlock == null && editingExercise != null && !loading
+    LaunchedEffect(zniknal) {
+        if (zniknal) {
+            editingExercise = null
+            editingSet = null
+        }
+    }
+}
+
+/**
+ * Serie jednego ćwiczenia z zakończonego treningu - do poprawienia.
+ *
+ * Historia była dotąd tylko do czytania: pomyłkę zauważoną po naciśnięciu
+ * „Zakończ" dało się naprawić wyłącznie kasując cały trening. A to z niej
+ * liczy się następny ciężar, więc seria wpisana z 80 zamiast 60 kg psuła
+ * propozycję na kolejny raz.
+ *
+ * Lista, a nie od razu jedno okno poprawiania: ćwiczenie ma kilka serii
+ * i najpierw trzeba wskazać, o którą chodzi.
+ */
+@Composable
+private fun SetsDialog(
+    block: StrengthAnalysis.Block,
+    unit: String,
+    onDismiss: () -> Unit,
+    onEdit: (SetEntry) -> Unit,
+    onAdd: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(block.name) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "Dotknij serii, żeby zmienić ciężar, powtórzenia albo zapas - " +
+                        "albo ją usunąć.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                block.sets.forEachIndexed { i, s ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onEdit(s) }
+                            .padding(vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "${i + 1}.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 12.dp)
+                        )
+                        Text(
+                            // Przy zerowym ciężarze same powtórzenia: „0 kg × 12"
+                            // przy podciąganiu czyta się jak błąd zapisu.
+                            if (s.weightKg > 0.0) "${Loading.fmt(s.weightKg)} $unit × ${s.reps}"
+                            else "${s.reps} powt.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            s.rir?.let { "zapas " + if (it >= 3) "3+" else "$it" } ?: "",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
+                    Text("Dodaj serię")
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Gotowe") } }
+    )
 }
 
 // ---- Elementy ------------------------------------------------------------
@@ -458,10 +657,11 @@ private fun HrWithSets(
 private fun ExerciseBlockRow(
     block: StrengthAnalysis.Block,
     maxHr: Double,
-    hardest: Boolean
+    hardest: Boolean,
+    onClick: () -> Unit
 ) {
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable(onClick = onClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )

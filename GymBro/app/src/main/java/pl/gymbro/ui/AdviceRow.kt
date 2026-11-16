@@ -108,4 +108,4 @@ fun adviceText(item: PlanItem, advice: StoredAdvice): String = when (advice.kind
 
 private fun fmtKg(v: Double): String =
     if (kotlin.math.abs(v - Math.round(v)) < 0.01) Math.round(v).toString()
-    else String.format("%.1f", v)
+    else String.format(java.util.Locale.getDefault(), "%.1f", v)
