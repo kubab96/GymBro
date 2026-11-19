@@ -196,6 +196,17 @@ function makePhone() {
       return out
     },
     setGlucha(on) { phone.glucha = on },
+    // Jak LiveSession na telefonie: na nastepna serie idzie to, co stoi
+    // w ostatniej zapisanej. Za przelacznikiem, bo reszta scenariuszy
+    // liczy na staly ciezar z planu.
+    jakOstatnia: false,
+    setJakOstatnia(on) { phone.jakOstatnia = on },
+    zOstatniej(e) {
+      const wpisy = phone.wpisy[e.id] || []
+      const ost = wpisy[wpisy.length - 1]
+      if (!phone.jakOstatnia || !ost) return e
+      return Object.assign({}, e, { weight: ost.weight, reps: ost.reps })
+    },
     // Odpowiedzi czekaja, zamiast wracac od razu. Tak zachowuje sie telefon,
     // gdy odpowiedz juz leci, a w miedzyczasie dzieje sie cos na zegarku.
     wstrzymajOdpowiedzi(on) { phone.wstrzymane = on },
@@ -233,9 +244,10 @@ function makePhone() {
       }))
     },
     state() {
-      if (!phone.active) return { active: false }
+      if (!phone.active) return { active: false, next: phone.kolejna() }
+      phone.stany += 1
       const lista = phone.duzo ? plan.concat(dodatkowe) : plan
-      const exercises = lista.map((e) => ({
+      const exercises = lista.map((e) => phone.zOstatniej(e)).map((e) => ({
         id: e.id, name: phone.dluga && e.id === 1 ? DLUGA : e.name,
         done: phone.done[e.id] || 0,
         sets: e.sets, weight: e.weight, reps: e.reps, step: e.step,
@@ -260,7 +272,8 @@ function makePhone() {
         paused: !!phone.paused,
         sessionId: 101,
         localId: phone.lokalny || '',
-        next: { id: 2, name: 'B - hantle' },
+        planId: phone.planId || 1,
+        next: phone.kolejna(),
         hrZones: { max: 187, easy: 112, aerobic: 131, tempo: 150, anaerobic: 168 },
         current: current,
         totals: {
@@ -273,6 +286,35 @@ function makePhone() {
     // Telefon sprzed paczek: BATCH to dla niego nieznane zadanie.
     starePaczki: false,
     paczki: 0,
+    // Telefon sprzed odpowiedzi samym potwierdzeniem - na lite 2 odsyla stan.
+    bezPotwierdzen: false,
+    // Ile pelnych stanow telefon wyslal w odpowiedzi na polecenia.
+    stany: 0,
+    // Kiedy jednostka byla ostatnio robiona - jak lastFinishedAll w telefonie.
+    lastDone: { 1: 3000, 2: 1000, 3: 2000 },
+    planId: null,
+    jednostki: [
+      { id: 1, name: 'A - sztanga' },
+      { id: 2, name: 'B - hantle' },
+      { id: 3, name: 'C - wyciągi' }
+    ],
+    // Jak nextPlanId: najdawniej robiona, pierwsza przy remisie.
+    kolejna() {
+      let k = phone.jednostki[0]
+      phone.jednostki.forEach((u) => { if ((phone.lastDone[u.id] || 0) < (phone.lastDone[k.id] || 0)) k = u })
+      return { id: k.id, name: k.name }
+    },
+    // Jak ack() w WatchApi.
+    potwierdzenie() {
+      if (!phone.active) return { ok: true, active: false, next: phone.kolejna() }
+      let sets = 0
+      let reps = 0
+      Object.keys(phone.wpisy).forEach((k) => phone.wpisy[k].forEach((w) => { sets += 1; reps += w.reps || 0 }))
+      return {
+        ok: true, ack: true, active: true, sessionId: 101, localId: phone.lokalny || '',
+        sets: sets, reps: reps, paused: !!phone.paused
+      }
+    },
     // Znaczniki polecen -> numer serii, ktora zalozyly. Jak w WatchApi.
     serieZnacznikow: {},
     setIdOf(params) {
@@ -291,9 +333,20 @@ function makePhone() {
           if (r && r.setId) w.setId = r.setId
           return w
         })
-        return { results: results, state: phone.state() }
+        const ack = req.params.lite === 2 && !phone.bezPotwierdzen
+        return { results: results, state: ack ? phone.potwierdzenie() : phone.state() }
       }
-      return phone.wykonaj(req)
+      const wynik = phone.wykonaj(req)
+      // Samo potwierdzenie zamiast stanu - jak stan() w WatchApi przy lite 2.
+      // START i odpowiedzi bez stanu (odmowa, FINISH) zostaja jak byly.
+      const ack = req.params && req.params.lite === 2 && !phone.bezPotwierdzen
+      if (ack && wynik && !wynik.error && wynik.exercises) {
+        const p = phone.potwierdzenie()
+        if (wynik.setId) p.setId = wynik.setId
+        phone.stany -= 1
+        return p
+      }
+      return wynik
     },
     wykonaj(req) {
       const cid = req.params && req.params.cid
@@ -324,11 +377,12 @@ function makePhone() {
             program: 'FBW',
             hrZones: { max: 187, easy: 112, aerobic: 131, tempo: 150, anaerobic: 168 },
             burn: { k0: -6.1, k1: 0.116 },
-            units: [
-              { id: 1, name: 'A - sztanga', exercises: 3, next: false, plan: phone.podglad() },
-              { id: 2, name: 'B - hantle', exercises: 3, next: true, plan: phone.podglad() },
-              { id: 3, name: 'C - wyciągi', exercises: 3, next: false, plan: phone.podglad() }
-            ]
+            units: phone.jednostki.map((u) => ({
+              id: u.id, name: u.name, exercises: 3,
+              next: u.id === phone.kolejna().id,
+              lastDone: phone.lastDone[u.id] || 0,
+              plan: phone.podglad()
+            }))
           }
         case 'START': {
           // Sesja moze przyjsc ze znacznikiem nadanym na zegarku. Powtorzone
@@ -338,6 +392,7 @@ function makePhone() {
           if (lid && phone.localIds[lid]) return phone.state()
           if (lid) phone.localIds[lid] = true
           phone.active = true
+          phone.planId = req.params.planId || null
           phone.lokalny = lid || ''
           phone.done = {}
           phone.wpisy = {}
@@ -412,7 +467,8 @@ function makePhone() {
         case 'FINISH':
           phone.active = false
           phone.endedAt = req.params.endedAt || null
-          return { active: false, next: { id: 2, name: 'B - hantle' } }
+          if (phone.planId) phone.lastDone[phone.planId] = Date.now()
+          return { active: false, next: phone.kolejna() }
         case 'PAUSE':
           phone.paused = true
           phone.polecenia.push('PAUSE')
@@ -647,6 +703,26 @@ async function zapiszSerie(page) {
 
 const BUZZ_GUARD = 1200
 
+// Cisza po dotyku, na ktora czeka wysylka (WYSYLKA_MS w index.js).
+const WYSYLKA = 2500
+
+/**
+ * Wysylka czekajaca na cisze po dotyku - puszczona tak, jakby palec
+ * odpoczal. Czas przesuwa tylko wtedy, gdy wysylka faktycznie czeka;
+ * scenariusze bez dotyku zostaja z zegarem tam, gdzie byly.
+ */
+async function puscWysylke(page, h) {
+  for (let i = 0; i < 4; i++) {
+    const id = page.drainTimer
+    const z = id ? h.zegary[id - 1] : null
+    if (!z || !z.zywy || !z.ms || z.ms > WYSYLKA) break
+    jump(z.ms)
+    z.zywy = false
+    z.fn()
+    await flush(); await flush()
+  }
+}
+
 /**
  * Widgety każdego widoku, żeby dało się sprawdzić, że sąsiedzi są schowani.
  *
@@ -711,6 +787,7 @@ async function main() {
     // Kilka obrotow: wysylka jest teraz odroczona, wiec budzik zadania
     // powstaje dopiero po tym, jak petla zdarzen ja odpali.
     for (let i = 0; i < 4; i++) {
+      await puscWysylke(page, handlers)
       handlers.zegary.filter((z) => z.zywy && z.ms >= 5000)
         .forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
@@ -743,6 +820,7 @@ async function main() {
   // tylko za chwile - wiec potrzeba kilku obrotow petli zdarzen.
   const osusz = async () => {
     for (let i = 0; i < 12; i++) {
+      await puscWysylke(page, handlers)
       // Zadanie, ktore wisi po gluchym telefonie, trzyma wysylke zajeta -
       // dopiero jego budzik ja zwalnia.
       handlers.zegary.filter((z) => z.zywy && z.ms >= 5000)
@@ -796,14 +874,14 @@ async function main() {
 
   section('Przejscie przez caly plan')
   let guard = 0
-  while (!(page.state.data && page.state.data.totals && page.state.data.totals.complete) && guard < 40) {
+  while (!page.sumy().complete && guard < 40) {
     guard += 1
     jump(1500)
     if (page.state.phase === 'rest') { page.press(); continue }
     page.press()
     await flush(); await flush()
   }
-  ok('plan wykonany', !!(page.state.data.totals && page.state.data.totals.complete))
+  ok('plan wykonany', page.sumy().complete === true)
   ok('szesc serii w dzienniku', phone.log.length === 6, 'jest ' + phone.log.length)
   // Po ostatniej serii pada jeszcze pytanie o zapas - podsumowanie czeka.
   ok('po ostatniej serii najpierw pytanie o zapas', page.state.view === VIEW.SETS &&
@@ -1038,6 +1116,7 @@ async function main() {
   const przejete = handlers.key(KEY_SHORTCUT, KEY_EVENT_CLICK)
   await flush(); await flush()
   ok('klawisz nie wypada do systemu', przejete === true)
+  await puscWysylke(page, handlers)
   ok('zapisalo serie', phone.log.length === przed + 1, 'przybylo ' + (phone.log.length - przed))
   const ostatnia = phone.log[phone.log.length - 1]
   ok('z ustawionym ciezarem', ostatnia && ostatnia.weight === ciezar,
@@ -1057,6 +1136,8 @@ async function main() {
     if (r !== true) { wszystkie = false; console.log('       wypada na: ' + nazwa(v)) }
   }
   ok('zaden ekran nie oddaje klawisza systemowi', wszystkie)
+  // Klawisz na ekranie serii zapisal serie, ktore czekaja na cisze po dotyku.
+  await puscWysylke(page, handlers)
   ok('klawisz domowy zostaje systemowi', handlers.key(KEY_HOME, KEY_EVENT_CLICK) === false)
   ok('wstecz zostaje systemowi', handlers.key(KEY_BACK, KEY_EVENT_CLICK) === false)
 
@@ -1365,6 +1446,7 @@ async function main() {
     noweRepsy + ' z ' + pierwsza.reps)
   page.w.fixSave.onClick()
   await flush(); await flush()
+  await puscWysylke(page, handlers)
   ok('po zapisie wraca do dziennika', page.state.view === VIEW.LOG,
     nazwa(page.state.view))
 
@@ -2585,8 +2667,9 @@ async function main() {
   // Te same trzy pomocniki, ale dla dowolnej strony - nowa strona ma wlasne
   // zegary i budziki, a sterowanie zegarami pierwszej strony tylko wygladalo
   // jak uplyw czasu.
-  const ciszaNa = async (h) => {
+  const ciszaNa = async (h, strona) => {
     for (let i = 0; i < 4; i++) {
+      if (strona) await puscWysylke(strona, h)
       h.zegary.filter((z) => z.zywy && z.ms >= 5000)
         .forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
@@ -2601,6 +2684,7 @@ async function main() {
   }
   const osuszNa = async (h, strona) => {
     for (let i = 0; i < 12; i++) {
+      await puscWysylke(strona, h)
       h.zegary.filter((z) => z.zywy && z.ms >= 5000)
         .forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
@@ -2758,19 +2842,25 @@ async function main() {
     phone.serieZnacznikow = {}
     phone.setDuzoCwiczen(false)
     phone.setDlugaNazwa(false)
+    phone.bezPotwierdzen = false
+    phone.stany = 0
+    phone.lastDone = { 1: 3000, 2: 1000, 3: 2000 }
+    phone.planId = null
     const r = loadPage(phone)
     r.page.build()
     await flush(); await flush(); await flush()
     return r
   }
-  const cichoW = async (h) => {
+  const cichoW = async (h, strona) => {
     for (let i = 0; i < 4; i++) {
+      if (strona) await puscWysylke(strona, h)
       h.zegary.filter((z) => z.zywy && z.ms >= 5000).forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
     }
   }
   const suszW = async (q, h) => {
     for (let i = 0; i < 15; i++) {
+      await puscWysylke(q, h)
       h.zegary.filter((z) => z.zywy && z.ms >= 5000).forEach((z) => { z.zywy = false; z.fn() })
       await flush(); await flush()
       q.drain()
@@ -2986,6 +3076,81 @@ async function main() {
   await suszW(q, h)
   ok('i na telefonie', ((phone.wpisy[1] || [])[0] || {}).reps === 7, JSON.stringify(phone.wpisy[1]))
 
+  section('Poprawka ostatniej serii nie przestawia ekranu serii')
+  // Zgloszone 16.11: po poprawce ostatniej serii ekran glowny bral jej
+  // ciezar i powtorzenia. Telefon podstawia na nastepna serie to, co stoi
+  // w ostatniej zapisanej - poprawiona seria wracala wiec jako nowy cel.
+  phone.setJakOstatnia(true)
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await seriaW(q)
+  await suszW(q, h)
+  const celW = q.state.weight
+  const celR = q.state.reps
+  q.showView(VIEW.LOG)
+  q.openFix(0)
+  q.fixStep('r', -1)
+  q.fixStep('r', -1)
+  q.fixStep('w', -1)
+  q.saveFix()
+  await suszW(q, h)
+  const poprawiona = (phone.wpisy[1] || [])[0] || {}
+  ok('telefon ma poprawiona serie', poprawiona.reps === celR - 2 && poprawiona.weight < celW,
+    JSON.stringify(poprawiona))
+  // Propozycja na nastepna serie bierze sie z ostatniej serii - liczy ja
+  // zegarek (ustawPropozycje), tak jak telefon. Po poprawce to juz poprawione
+  // liczby, wiec bez trzymania ekranu wrocilyby jako nowy cel.
+  const wpisyPo = q.nakladka().ex[q.current().id].entries
+  ok('propozycja z ostatniej serii to juz poprawione liczby',
+    (wpisyPo[wpisyPo.length - 1] || {}).reps === celR - 2,
+    JSON.stringify(wpisyPo[wpisyPo.length - 1]))
+  ok('powtorzenia na ekranie serii bez zmian', q.state.reps === celR,
+    q.state.reps + ' zamiast ' + celR)
+  ok('ciezar na ekranie serii bez zmian', q.state.weight === celW,
+    q.state.weight + ' zamiast ' + celW)
+
+  // Restart strony tez nie moze oddac ekranu telefonowi.
+  await zapisW(h)
+  q.onDestroy()
+  {
+    const r = loadPage(phone)
+    r.page.build()
+    await flush(); await flush(); await flush()
+    q = r.page
+    h = r.handlers
+  }
+  ok('po restarcie te same powtorzenia', q.state.reps === celR, q.state.reps + ' zamiast ' + celR)
+  ok('po restarcie ten sam ciezar', q.state.weight === celW, q.state.weight + ' zamiast ' + celW)
+
+  // Nastepna seria idzie z tym, co stalo na ekranie, i dopiero ona zwalnia
+  // ekran: po zwyklym zapisie telefon znowu jest zrodlem.
+  q.showView(VIEW.SETS)
+  await seriaW(q)
+  await suszW(q, h)
+  const kolejna = (phone.wpisy[1] || [])[1] || {}
+  ok('kolejna seria zapisana z ekranu, nie z poprawki',
+    kolejna.reps === celR && kolejna.weight === celW, JSON.stringify(kolejna))
+  ok('po zapisie ekran znowu slucha telefonu', q.state.editedFor === null,
+    String(q.state.editedFor))
+
+  // Skasowanie ostatniej serii: telefon cofa propozycje do serii sprzed niej.
+  q.state.index = 0
+  q.state.weight = celW
+  q.state.reps = celR
+  q.showView(VIEW.LOG)
+  q.openFix(1)
+  q.fixDelete()
+  q.fixDelete()
+  await suszW(q, h)
+  ok('seria skasowana na telefonie', (phone.wpisy[1] || []).length === 1,
+    String((phone.wpisy[1] || []).length))
+  ok('kasowanie tez nie przestawia ekranu serii',
+    q.state.reps === celR && q.state.weight === celW, q.state.weight + ' x ' + q.state.reps)
+  phone.setJakOstatnia(false)
+
   section('Serie i zapas bez telefonu, wszystkie w dzienniku')
   // Zgloszone: trzy serie zrobione, w dzienniku dwie, zapasu do drugiej
   // nie ma, a przy innych cwiczeniach dziennik pusty, choc licznik mowi
@@ -3161,6 +3326,214 @@ async function main() {
   ok('po przejezdzie tam i z powrotem nazwa stoi', animacjeNazwy() === poPrzejazdach,
     poPrzejazdach + ' -> ' + animacjeNazwy())
   phone.setDlugaNazwa(false)
+
+  section('Telefon odpowiada samym potwierdzeniem')
+  // Pelny stan po kazdej serii to byl kilobajt lub dwa przez Bluetooth,
+  // rozkladany na zegarku w watku, ktory obsluguje palec - a potem
+  // przemalowanie ekranu, ktory juz to wszystko pokazywal.
+  const zapisyW = (strona) => Object.keys(strona.w).reduce((n, k) => {
+    const x = strona.w[k]
+    if (x && typeof x.writes === 'number') return n + x.writes
+    if (Array.isArray(x)) return n + x.reduce((m, y) => m + ((y && y.writes) || 0), 0)
+    return n
+  }, 0)
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await suszW(q, h)
+  phone.stany = 0
+  await seriaW(q)
+  await suszW(q, h)
+  ok('seria doszla do telefonu', (phone.wpisy[1] || []).length === 1,
+    JSON.stringify(phone.wpisy[1]))
+  ok('telefon nie liczyl stanu treningu', phone.stany === 0, phone.stany + ' stanow')
+  const potwierdzona = (q.state.data.exercises[0].entries || [])[0] || {}
+  ok('seria ma numer od telefonu', potwierdzona.id > 0, JSON.stringify(potwierdzona))
+  ok('licznik nie zgubil serii', q.shownDone(q.state.data.exercises[0]) === 1,
+    String(q.shownDone(q.state.data.exercises[0])))
+  ok('licznik w kolorze "w bazie"', q.w.count.props.color === 0x6aa9ff,
+    (q.w.count.props.color || 0).toString(16))
+
+  // Koszt samej odpowiedzi: zmienia sie tylko kolor licznika.
+  phone.wstrzymajOdpowiedzi(true)
+  await seriaW(q)
+  await puscWysylke(q, h)
+  ok('seria czeka - licznik turkusowy', q.w.count.props.color === 0x37d6c0,
+    (q.w.count.props.color || 0).toString(16))
+  const przedOdp = zapisyW(q)
+  phone.wstrzymajOdpowiedzi(false)
+  phone.puscOdpowiedzi()
+  await flush(); await flush()
+  ok('odpowiedz kosztuje jeden zapis do widgetow', zapisyW(q) - przedOdp <= 1,
+    (zapisyW(q) - przedOdp) + ' zapisow')
+  ok('licznik wrocil do koloru "w bazie"', q.w.count.props.color === 0x6aa9ff,
+    (q.w.count.props.color || 0).toString(16))
+
+  section('Telefon sprzed potwierdzen dalej dziala')
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  phone.bezPotwierdzen = true
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await seriaW(q)
+  await suszW(q, h)
+  ok('seria doszla', (phone.wpisy[1] || []).length === 1, JSON.stringify(phone.wpisy[1]))
+  ok('licznik jak trzeba', q.shownDone(q.state.data.exercises[0]) === 1,
+    String(q.shownDone(q.state.data.exercises[0])))
+  phone.bezPotwierdzen = false
+
+  section('Wysylka czeka, az palec odpocznie')
+  // Bluetooth pracuje w tym samym watku co dotyk. Zadanie puszczone zaraz
+  // po serii trafialo w nastepne nacisniecie - zapas, plus przy ciezarze.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await suszW(q, h)
+  h.zadania = 0
+  jump(3000)
+  q.state.phase = 'set'
+  q.dotyk()
+  q.press()
+  await flush(); await flush()
+  ok('zaraz po dotyku nic nie leci', h.zadania === 0, h.zadania + ' zadan')
+  q.w.rirRow[2].onClick()
+  await flush(); await flush()
+  const seriaWKolejce = (q.state.outbox || []).filter((x) => x.m === 'SET')[0]
+  ok('zapas doklejony do serii, ktora jeszcze nie wyszla',
+    seriaWKolejce && seriaWKolejce.p.rir === 2 &&
+    !(q.state.outbox || []).some((x) => x.m === 'RIR'), kolejka(q))
+  jump(1000)
+  await flush(); await flush()
+  ok('sekunde po dotyku dalej cisza', h.zadania === 0, h.zadania + ' zadan')
+  await puscWysylke(q, h)
+  ok('po chwili ciszy jedno zadanie', h.zadania === 1, h.zadania + ' zadan')
+  ok('telefon ma serie z zapasem', ((phone.wpisy[1] || [])[0] || {}).rir === 2,
+    JSON.stringify(phone.wpisy[1]))
+  h.zadania = 0
+  q.dotyk()
+  q.finishWorkout()
+  await flush(); await flush()
+  ok('koniec treningu nie czeka na cisze', phone.active === false && h.zadania >= 1,
+    h.zadania + ' zadan, aktywny: ' + phone.active)
+
+  section('Nastepna jednostka zaraz po zakonczeniu')
+  // Zgloszone 18.11: po treningu B zegarek jeszcze przez minute proponowal B.
+  // Pytanie o jednostki szlo przed samym zakonczeniem i wracalo ze stara
+  // kolejnoscia, a odpowiedz na zakonczenie byla odrzucana.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  ok('przed treningiem wypada B', q.state.nextUnit === 'B - hantle', q.state.nextUnit)
+  q.startUnit(1)
+  await flush(); await flush(); await flush()
+  await seriaW(q)
+  await suszW(q, h)
+  phone.setGlucha(true)
+  q.finishWorkout()
+  await flush(); await flush()
+  ok('od razu C, bez telefonu', q.state.nextUnit === 'C - wyciągi', q.state.nextUnit)
+  ok('C zaznaczone na wyborze',
+    (q.state.units || []).filter((u) => u.next).map((u) => u.name).join() === 'C - wyciągi',
+    JSON.stringify((q.state.units || []).map((u) => u.name + ':' + u.next)))
+  // Telefon wraca, ale zakonczenie jeszcze nie wyszlo - jego lista jest stara.
+  phone.setGlucha(false)
+  q.askUnits()
+  await flush(); await flush()
+  ok('stara lista od telefonu nie cofa na B', q.state.nextUnit === 'C - wyciągi',
+    q.state.nextUnit)
+  await suszW(q, h)
+  ok('telefon zamknal trening', phone.active === false)
+  ok('po potwierdzeniu dalej C', q.state.nextUnit === 'C - wyciągi', q.state.nextUnit)
+  ok('i telefon mowi to samo', phone.kolejna().name === 'C - wyciągi', phone.kolejna().name)
+  await zapisW(h)
+  const poRestarcie = loadPage(phone)
+  phone.setGlucha(true)
+  poRestarcie.page.build()
+  await flush(); await flush()
+  await ciszaNa(poRestarcie.handlers, poRestarcie.page)
+  ok('po restarcie bez telefonu dalej C', poRestarcie.page.state.nextUnit === 'C - wyciągi',
+    poRestarcie.page.state.nextUnit)
+  phone.setGlucha(false)
+
+  section('Restart nie gubi serii potwierdzonych bez stanu')
+  // Seria potwierdzona samym "zrobione" schodzi z kolejki i zostaje tylko
+  // w planie zapisanym na zegarku. Restart bez telefonu musi ja widziec.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  // Plan zapisany od startu - dalej liczy sie tylko to, co zrobi potwierdzenie.
+  await zapisW(h)
+  await seriaW(q)
+  await seriaW(q)
+  await suszW(q, h)
+  ok('kolejka pusta', !q.czeka(), kolejka(q))
+  // Zegarek ubija aplikacje bez onDestroy - zostaje to, co zdazylo sie
+  // zapisac w chwili ciszy.
+  await zapisW(h)
+  phone.setGlucha(true)
+  const poZgasnieciu = loadPage(phone)
+  poZgasnieciu.page.build()
+  await flush(); await flush()
+  const pierwszeCw = poZgasnieciu.page.state.data && poZgasnieciu.page.state.data.exercises[0]
+  ok('obie serie sa po restarcie', pierwszeCw && poZgasnieciu.page.shownDone(pierwszeCw) === 2,
+    pierwszeCw ? String(poZgasnieciu.page.shownDone(pierwszeCw)) : 'brak planu')
+  phone.setGlucha(false)
+
+  section('Seria zmieniona na telefonie dociera na zegarek')
+  // Odpowiedz bez stanu niesie sume kontrolna. Seria dopisana na telefonie
+  // w trakcie treningu nie dotarlaby inaczej na nadgarstek do samego konca.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  await seriaW(q)
+  await suszW(q, h)
+  phone.wpisy[1].push({ id: 99, weight: 80, reps: 8 })
+  phone.done[1] = (phone.done[1] || 0) + 1
+  phone.stany = 0
+  await seriaW(q)
+  await suszW(q, h)
+  ok('rozjazd sumy - jeden pelny stan', phone.stany === 1, phone.stany + ' stanow')
+  ok('seria z telefonu widoczna na zegarku', q.shownDone(q.state.data.exercises[0]) === 3,
+    String(q.shownDone(q.state.data.exercises[0])))
+  phone.stany = 0
+  jump(15000)
+  await seriaW(q)
+  await suszW(q, h)
+  ok('zgodna suma - znowu bez stanu', phone.stany === 0, phone.stany + ' stanow')
+
+  section('Powrot do cwiczenia bierze liczby z ostatniej serii')
+  // Dotad przychodzily z odpowiedzia telefonu. Teraz liczy je zegarek -
+  // ta sama regula co LiveSession.nextWeight.
+  r1 = await swieza()
+  q = r1.page
+  h = r1.handlers
+  q.startUnit(0)
+  await flush(); await flush(); await flush()
+  q.state.view = VIEW.EDIT
+  q.applyVisibility()
+  q.stepWeight(-1)
+  q.stepReps(-1)
+  const zmienionyW = q.state.weight
+  const zmienioneR = q.state.reps
+  q.state.view = VIEW.SETS
+  await seriaW(q)
+  await suszW(q, h)
+  q.state.phase = 'set'
+  q.move(1)
+  q.move(-1)
+  ok('ciezar z ostatniej serii', q.state.weight === zmienionyW,
+    q.state.weight + ' zamiast ' + zmienionyW)
+  ok('powtorzenia z ostatniej serii', q.state.reps === zmienioneR,
+    q.state.reps + ' zamiast ' + zmienioneR)
 
   section('Most do telefonu przekazuje parametry')
   // Zgloszone 02.11: podany zapas wracal jako "nie podano". Dwa polecenia

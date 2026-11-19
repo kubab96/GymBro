@@ -7,6 +7,7 @@ import org.junit.Test
 import pl.gymbro.data.Equipment
 import pl.gymbro.data.Inventory
 import pl.gymbro.data.Plate
+import pl.gymbro.data.ProgressMode
 import pl.gymbro.data.SetEntry
 
 /**
@@ -40,14 +41,16 @@ class ProgressionEngineTest {
     private fun suggest(
         history: List<List<SetEntry>>,
         equipment: Equipment = Equipment.BARBELL,
-        target: Double = 60.0
+        target: Double = 60.0,
+        progress: ProgressMode = ProgressMode.ALL
     ) = ProgressionEngine.suggest(
         equipment = equipment,
         targetKg = target,
         repsFrom = 8,
         repsTo = 12,
         history = history,
-        inventory = inv
+        inventory = inv,
+        progress = progress
     )
 
     // ---- Brak historii ----
@@ -233,6 +236,85 @@ class ProgressionEngineTest {
         )
         assertEquals(ProgressionEngine.Reason.STALLED, s.reason)
         assertEquals(32.5, s.weightKg, 0.001)
+    }
+
+    // ---- Progresja wyłączona w całości albo w części ----
+
+    @Test
+    fun `wylaczona progresja powtarza ostatni trening`() {
+        val s = suggest(listOf(sets(60.0, 10, 9, 9)), progress = ProgressMode.OFF)
+        assertEquals(ProgressionEngine.Reason.KEEP, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        // W trybie pelnym celem byloby 10 - patrz "celujemy w jedno wiecej".
+        assertEquals(9, s.reps)
+    }
+
+    @Test
+    fun `wylaczona progresja nie podbija nawet po komplecie`() {
+        val s = suggest(listOf(sets(60.0, 12, 12, 12, rir = 4)), progress = ProgressMode.OFF)
+        assertEquals(ProgressionEngine.Reason.KEEP, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(12, s.reps)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru komplet powtorzen zostaje na tym samym ciezarze`() {
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), progress = ProgressMode.NO_WEIGHT)
+        assertEquals(ProgressionEngine.Reason.KEEP, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(12, s.reps)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru powtorzenia dalej rosna`() {
+        val s = suggest(listOf(sets(60.0, 10, 9, 9)), progress = ProgressMode.NO_WEIGHT)
+        assertEquals(ProgressionEngine.Reason.HOLD, s.reason)
+        assertEquals(10, s.reps)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru wysokie RIR go nie podbija`() {
+        val s = suggest(listOf(sets(60.0, 9, 9, 9, rir = 4)), progress = ProgressMode.NO_WEIGHT)
+        assertEquals(ProgressionEngine.Reason.HOLD, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(10, s.reps)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru stanie na ciezarze to nie zastoj`() {
+        // W trybie pelnym cztery takie sesje koncza sie cofnieciem.
+        val wZakresie = suggest(List(4) { sets(60.0, 10, 10, 9) }, progress = ProgressMode.NO_WEIGHT)
+        assertEquals(ProgressionEngine.Reason.HOLD, wZakresie.reason)
+        assertEquals(60.0, wZakresie.weightKg, 0.001)
+
+        val naSzczycie = suggest(List(4) { sets(60.0, 12, 12, 12) }, progress = ProgressMode.NO_WEIGHT)
+        assertEquals(ProgressionEngine.Reason.KEEP, naSzczycie.reason)
+        assertEquals(60.0, naSzczycie.weightKg, 0.001)
+    }
+
+    @Test
+    fun `blokada dokladania nie blokuje cofniecia po spadku ponizej zakresu`() {
+        val spadek = listOf(sets(60.0, 7, 6, 6), sets(60.0, 8, 7, 7))
+        listOf(ProgressMode.NO_WEIGHT, ProgressMode.NO_REPS).forEach { tryb ->
+            val s = suggest(spadek, progress = tryb)
+            assertEquals("tryb $tryb", ProgressionEngine.Reason.DELOAD, s.reason)
+            assertTrue(s.weightKg < 60.0)
+        }
+    }
+
+    @Test
+    fun `bez dokladania powtorzen cel zostaje tam, gdzie byl`() {
+        val s = suggest(listOf(sets(60.0, 10, 9, 9)), progress = ProgressMode.NO_REPS)
+        assertEquals(ProgressionEngine.Reason.KEEP, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(9, s.reps)
+    }
+
+    @Test
+    fun `bez dokladania powtorzen komplet dalej podbija ciezar`() {
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), progress = ProgressMode.NO_REPS)
+        assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
+        assertEquals(62.5, s.weightKg, 0.001)
     }
 
     // ---- Brak wyższego progu ----

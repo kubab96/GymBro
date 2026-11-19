@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -38,6 +40,7 @@ import pl.gymbro.data.FoodLogEntry
 import pl.gymbro.data.FoodSource
 import pl.gymbro.data.Meal
 import pl.gymbro.data.Nutrients
+import pl.gymbro.data.roundGram
 import pl.gymbro.nutrition.NutritionRepos
 import pl.gymbro.nutrition.Portions
 
@@ -59,6 +62,18 @@ import pl.gymbro.nutrition.Portions
  * więc w większości przypadków właściwy produkt jest na tej liście jeszcze
  * przed pierwszą literą.
  */
+/**
+ * Produkt zaznaczony na liście, z ilością, z jaką pójdzie do dziennika.
+ *
+ * Zaznaczanie jest po to, żeby posiłek z pięciu rzeczy nie wymagał pięciu
+ * wejść w produkt i pięciu okien porcji. Ilość podstawia się sama (ostatnia
+ * gramatura albo pierwsza porcja), a gdy trzeba inną - dotknięcie produktu
+ * ją zmienia.
+ */
+internal data class Picked(val food: Food, val grams: Double, val label: String) {
+    val kcal: Double get() = Portions.nutrientsFor(food, grams).kcal
+}
+
 @Composable
 internal fun FoodSearchView(
     meal: Meal,
@@ -67,7 +82,11 @@ internal fun FoodSearchView(
     onScan: () -> Unit,
     onQuickAdd: () -> Unit,
     onMyMeals: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    selected: Map<Long, Picked> = emptyMap(),
+    onToggle: (Food) -> Unit = {},
+    onAddSelected: () -> Unit = {},
+    onClearSelected: () -> Unit = {}
 ) {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<Food>>(emptyList()) }
@@ -154,6 +173,24 @@ internal fun FoodSearchView(
                 .focusRequester(focus)
         )
 
+        // Zaznaczone - nad listą, nie pod nią. Pod listą przycisk leżałby
+        // pod klawiaturą, która tu podnosi się sama.
+        if (selected.isNotEmpty()) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(onClick = onAddSelected, modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Dodaj " + plural(selected.size, "produkt", "produkty", "produktów") +
+                            " · %.0f kcal".format(selected.values.sumOf { it.kcal })
+                    )
+                }
+                TextButton(onClick = onClearSelected) { Text("Wyczyść") }
+            }
+        }
+
         val pusto = query.isBlank()
         val lista = if (pusto) recent else results
 
@@ -172,38 +209,58 @@ internal fun FoodSearchView(
 
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             items(lista, key = { "produkt-${it.id}" }) { food ->
-                FoodRow(food) { onPick(food) }
+                FoodRow(
+                    food = food,
+                    picked = selected[food.id],
+                    onClick = { onPick(food) },
+                    onToggle = { onToggle(food) }
+                )
             }
         }
 
     }
 }
 
+/**
+ * Wiersz produktu: dotknięcie otwiera porcje, pole z prawej zaznacza.
+ *
+ * Zaznaczony pokazuje ilość, z jaką pójdzie do dziennika - bez tego
+ * dodawało się "coś" i dopiero w dzienniku było widać, ile.
+ */
 @Composable
-private fun FoodRow(food: Food, onClick: () -> Unit) {
+private fun FoodRow(food: Food, picked: Picked?, onClick: () -> Unit, onToggle: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(1f)) {
+        Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
             Text(food.name, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                buildString {
-                    food.brand?.takeIf { it.isNotBlank() }?.let { append("$it · ") }
-                    append(sourceLabel(food.source))
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (picked != null) {
+                Text(
+                    picked.label + " · %.0f kcal".format(picked.kcal),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            } else {
+                Text(
+                    buildString {
+                        food.brand?.takeIf { it.isNotBlank() }?.let { append("$it · ") }
+                        append(sourceLabel(food.source))
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         Text(
             "%.0f kcal/100 g".format(food.per100.kcal),
             style = MaterialTheme.typography.bodySmall
         )
+        Checkbox(checked = picked != null, onCheckedChange = { onToggle() })
     }
 }
 
@@ -218,7 +275,87 @@ private fun sourceLabel(source: FoodSource): String = when (source) {
 // ---- Ilość ---------------------------------------------------------------
 
 /** Jednostka, w której podaje się ilość. [gramsPerUnit] null = wpisujesz gramy. */
-private data class AmountUnit(val label: String, val gramsPerUnit: Double?)
+internal data class AmountUnit(val label: String, val gramsPerUnit: Double?)
+
+/**
+ * Jednostki produktu: gramy, porcje nazwane, porcja producenta, opakowanie.
+ *
+ * Jedna lista dla dodawania i dla poprawiania wpisu. Poprawka znała dotąd
+ * tylko gramy - wpis dodany jako "2 kromki" dało się zmienić wyłącznie
+ * przeliczając kromki na gramy w głowie.
+ */
+internal fun amountUnits(food: Food): List<AmountUnit> = buildList {
+    add(AmountUnit("gramy", null))
+    food.portions.forEach { add(AmountUnit(it.label, it.grams)) }
+    food.servingG?.let { add(AmountUnit("porcja", it)) }
+    food.packageG?.let { add(AmountUnit("opakowanie", it)) }
+}
+
+/**
+ * Jednostka, w której najprościej opisać gramaturę: "2 kromki" zamiast "70 g".
+ *
+ * Porcja pasuje, gdy gramatura to jej wielokrotność co pół - tak, jak
+ * wpisuje się porcje w oknie dodawania. Inaczej zostają gramy, bo "1,37
+ * kromki" jest gorsze niż "48 g".
+ */
+internal fun bestUnitFor(units: List<AmountUnit>, grams: Double): Pair<AmountUnit, Double> {
+    units.forEach { u ->
+        val g = u.gramsPerUnit ?: return@forEach
+        if (g <= 0.0) return@forEach
+        val ile = grams / g
+        val polowki = Math.round(ile * 2) / 2.0
+        if (polowki in 0.5..20.0 && kotlin.math.abs(ile - polowki) * g < 0.6) return u to polowki
+    }
+    return units.first() to grams
+}
+
+/** Ilość słowami - "2 × kromka · 70 g" albo "180 g". */
+internal fun amountLabel(units: List<AmountUnit>, grams: Double): String {
+    val (u, ile) = bestUnitFor(units, grams)
+    return if (u.gramsPerUnit == null) "${fmtG(grams)} g"
+    else "${fmtG(ile)} × ${u.label} · ${fmtG(grams)} g"
+}
+
+/**
+ * Wybór jednostki i pole na liczbę - wspólne dla dodawania i poprawki.
+ *
+ * Przy zmianie jednostki liczba przestaje mieć sens ("70" gramów to nie
+ * "70" kromek), więc wraca do jednej sztuki albo stu gramów.
+ */
+@Composable
+private fun AmountInput(
+    units: List<AmountUnit>,
+    unit: AmountUnit,
+    text: String,
+    onUnit: (AmountUnit) -> Unit,
+    onText: (String) -> Unit
+) {
+    if (units.size > 1) {
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            units.forEach { u ->
+                if (u.label == unit.label) {
+                    Button(onClick = {}) { Text(u.label) }
+                } else {
+                    OutlinedButton(onClick = {
+                        onUnit(u)
+                        onText(if (u.gramsPerUnit == null) "100" else "1")
+                    }) { Text(u.label) }
+                }
+            }
+        }
+    }
+    OutlinedTextField(
+        value = text,
+        onValueChange = onText,
+        label = { Text(if (unit.gramsPerUnit == null) "gramy" else "ile") },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+    )
+}
 
 /**
  * Okno wpisywania ilości.
@@ -237,27 +374,28 @@ internal fun PortionDialog(
     meal: Meal,
     lastGrams: Double?,
     onAdd: (grams: Double) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** Ilość już wybrana - przy zmianie ilości zaznaczonego produktu. */
+    startGrams: Double? = null,
+    /** Napis na przycisku, gdy okno nie dodaje, tylko ustawia ilość. */
+    confirmLabel: String? = null
 ) {
-    val units = remember(food.id) {
-        buildList {
-            add(AmountUnit("gramy", null))
-            food.portions.forEach { add(AmountUnit(it.label, it.grams)) }
-            food.servingG?.let { add(AmountUnit("porcja", it)) }
-            food.packageG?.let { add(AmountUnit("opakowanie", it)) }
-        }
-    }
+    val units = remember(food.id) { amountUnits(food) }
 
-    // Gramy, gdy wiadomo, ile wzięto ostatnio; w przeciwnym razie pierwsza
-    // porcja nazwana, bo „dwie kromki" jest łatwiejsze niż „70 g".
+    // Ilość już wybrana - w tej jednostce, w której najprościej ją opisać.
+    // Inaczej gramy, gdy wiadomo, ile wzięto ostatnio; w przeciwnym razie
+    // pierwsza porcja nazwana, bo „dwie kromki" jest łatwiejsze niż „70 g".
+    val start = remember(food.id) { startGrams?.let { bestUnitFor(units, it) } }
     var unit by remember(food.id) {
         mutableStateOf(
-            if (lastGrams != null || units.size == 1) units.first() else units[1]
+            start?.first
+                ?: if (lastGrams != null || units.size == 1) units.first() else units[1]
         )
     }
     var text by remember(food.id) {
         mutableStateOf(
             when {
+                start != null -> fmtG(start.second)
                 unit.gramsPerUnit == null && lastGrams != null -> fmtG(lastGrams)
                 unit.gramsPerUnit == null -> "100"
                 else -> "1"
@@ -289,33 +427,7 @@ internal fun PortionDialog(
 
                 Spacer(Modifier.height(10.dp))
 
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    units.forEach { u ->
-                        val wybrana = u.label == unit.label
-                        if (wybrana) {
-                            Button(onClick = {}) { Text(u.label) }
-                        } else {
-                            OutlinedButton(onClick = {
-                                unit = u
-                                // Przy zmianie jednostki liczba przestaje mieć
-                                // sens: „70" gramów nie jest „70" kromkami.
-                                text = if (u.gramsPerUnit == null) "100" else "1"
-                            }) { Text(u.label) }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text(if (unit.gramsPerUnit == null) "gramy" else "ile") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-                )
+                AmountInput(units, unit, text, onUnit = { unit = it }, onText = { text = it })
 
                 Spacer(Modifier.height(10.dp))
 
@@ -341,7 +453,7 @@ internal fun PortionDialog(
             Button(
                 onClick = { grams?.let(onAdd) },
                 enabled = grams != null && grams > 0.0
-            ) { Text("Dodaj do: ${meal.label.lowercase()}") }
+            ) { Text(confirmLabel ?: "Dodaj do: ${meal.label.lowercase()}") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Anuluj") }
@@ -457,23 +569,38 @@ private fun MacroField(
 @Composable
 internal fun EntryEditDialog(
     entry: FoodLogEntry,
+    /**
+     * Produkt z katalogu - tylko po to, żeby znać jego porcje. Makro liczy
+     * się dalej z migawki wpisu. Null, gdy produktu już nie ma albo wpis
+     * powstał bez niego.
+     */
+    food: Food?,
     onSave: (FoodLogEntry) -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val gramsMode = (entry.grams ?: 0.0) > 0.0
-    var text by remember(entry.id) {
+    val units = remember(entry.id, food?.id) {
+        if (gramsMode && food != null) amountUnits(food) else listOf(AmountUnit("gramy", null))
+    }
+    // Wpis dodany jako "2 kromki" wraca jako dwie kromki, nie jako 70 g.
+    val start = remember(entry.id, food?.id) {
+        if (gramsMode) bestUnitFor(units, entry.grams!!) else null
+    }
+    var unit by remember(entry.id, food?.id) { mutableStateOf(start?.first ?: units.first()) }
+    var text by remember(entry.id, food?.id) {
         mutableStateOf(
-            if (gramsMode) fmtG(entry.grams!!) else fmtG(entry.nutrients.kcal)
+            if (start != null) fmtG(start.second) else fmtG(entry.nutrients.kcal)
         )
     }
 
     val value = text.replace(',', '.').toDoubleOrNull()
     val updated = value?.takeIf { it > 0.0 }?.let { v ->
         if (gramsMode) {
+            val g = roundGram(v * (unit.gramsPerUnit ?: 1.0))
             entry.copy(
-                grams = v,
-                nutrients = entry.nutrients.scaled(v / entry.grams!!)
+                grams = g,
+                nutrients = entry.nutrients.scaled(g / entry.grams!!)
             )
         } else {
             entry.copy(nutrients = entry.nutrients.copy(kcal = v))
@@ -485,19 +612,26 @@ internal fun EntryEditDialog(
         title = { Text(entry.name) },
         text = {
             Column {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    label = { Text(if (gramsMode) "gramy" else "kcal") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (gramsMode) {
+                    AmountInput(units, unit, text, onUnit = { unit = it }, onText = { text = it })
+                } else {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        label = { Text("kcal") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
                 val n: Nutrients = updated?.nutrients ?: entry.nutrients
                 Text("%.0f kcal".format(n.kcal), style = MaterialTheme.typography.titleLarge)
                 Text(
-                    "B %.1f · W %.1f · T %.1f".format(n.proteinG, n.carbsG, n.fatG),
+                    buildString {
+                        if (gramsMode) append("%.0f g · ".format(updated?.grams ?: entry.grams))
+                        append("B %.1f · W %.1f · T %.1f".format(n.proteinG, n.carbsG, n.fatG))
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -547,6 +681,8 @@ internal fun OwnProductDialog(
     var protein by remember { mutableStateOf("") }
     var carbs by remember { mutableStateOf("") }
     var fat by remember { mutableStateOf("") }
+    var serving by remember { mutableStateOf("") }
+    var pack by remember { mutableStateOf("") }
 
     fun liczba(s: String): Double? = s.replace(',', '.').toDoubleOrNull()
 
@@ -557,7 +693,9 @@ internal fun OwnProductDialog(
         onDismissRequest = onDismiss,
         title = { Text("Nowy produkt") },
         text = {
-            Column {
+            // Przewijane: z polami porcji okno jest wyzsze niz to, co zostaje
+            // nad klawiatura.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (barcode != null) {
                     Text(
                         "kod $barcode - zapamiętamy go, więc następnym razem " +
@@ -607,6 +745,24 @@ internal fun OwnProductDialog(
                     MacroField("W", carbs, Modifier.weight(1f)) { carbs = it }
                     MacroField("T", fat, Modifier.weight(1f)) { fat = it }
                 }
+
+                // Porcja z etykiety. Bez niej zeskanowana zupka 70 g dawala sie
+                // wpisac tylko w gramach - a na opakowaniu stoi "1 porcja",
+                // nie waga, i za kazdym razem trzeba bylo ja przepisywac.
+                Text(
+                    "Ile waży porcja i całe opakowanie - nieobowiązkowe. Potem " +
+                        "wystarczy wybrać \"1 porcja\" zamiast wpisywać gramy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    MacroField("porcja, g", serving, Modifier.weight(1f)) { serving = it }
+                    MacroField("opakowanie, g", pack, Modifier.weight(1f)) { pack = it }
+                }
             }
         },
         confirmButton = {
@@ -615,6 +771,8 @@ internal fun OwnProductDialog(
                 onClick = {
                     onSave(
                         Food(
+                            servingG = liczba(serving)?.takeIf { it > 0.0 },
+                            packageG = liczba(pack)?.takeIf { it > 0.0 },
                             barcode = barcode?.takeIf { it.isNotBlank() },
                             name = name.trim(),
                             brand = brand.trim().takeIf { it.isNotBlank() },

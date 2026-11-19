@@ -92,6 +92,7 @@ import pl.gymbro.ui.theme.GymBroTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         // Pilot na zegarku wstaje razem z aplikacją, nie dopiero z treningiem:
         // trening zaczyna się teraz na zegarku, więc pierwsze pytanie o
         // jednostki przychodzi, gdy żadnej sesji jeszcze nie ma.

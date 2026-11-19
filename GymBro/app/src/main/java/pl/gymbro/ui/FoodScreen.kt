@@ -82,6 +82,12 @@ fun FoodScreen() {
     var picking by remember { mutableStateOf<Pair<Food, Meal>?>(null) }
     var pickingLastGrams by remember { mutableStateOf<Double?>(null) }
     var editing by remember { mutableStateOf<FoodLogEntry?>(null) }
+    // Produkt poprawianego wpisu - po jego porcje. Null, gdy go juz nie ma.
+    var editingFood by remember { mutableStateOf<Food?>(null) }
+    // Zaznaczone na liscie produktow, do dodania jednym przyciskiem.
+    var selected by remember { mutableStateOf<Map<Long, Picked>>(emptyMap()) }
+    // Okno porcji otwarte dla zaznaczonego produktu: ustawia ilosc, nie dodaje.
+    var pickingForSelection by remember { mutableStateOf(false) }
     var newProduct by remember { mutableStateOf<NewProduct?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
 
@@ -91,6 +97,22 @@ fun FoodScreen() {
     var myMeals by remember { mutableStateOf(false) }
     var editingRecipe by remember { mutableStateOf<Recipe?>(null) }
     var recipeNew by remember { mutableStateOf(false) }
+
+    /**
+     * Ilosc podstawiana przy zaznaczeniu: ostatnia gramatura, a gdy produkt
+     * jedzony jest pierwszy raz - pierwsza porcja nazwana, dopiero potem 100 g.
+     * Ta sama kolejnosc co w oknie porcji, wiec zaznaczenie i okno daja to samo.
+     */
+    suspend fun defaultPick(food: Food): Picked {
+        val full = withContext(Dispatchers.IO) { repos.foods.byId(food.id) } ?: food
+        val last = withContext(Dispatchers.IO) { repos.foods.lastGrams(food.id) }
+        val units = amountUnits(full)
+        val grams = last ?: units.getOrNull(1)?.gramsPerUnit ?: 100.0
+        return Picked(full, grams, amountLabel(units, grams))
+    }
+
+    // Zaznaczenia nie przechodza na nastepne wejscie w szukanie ani na inny posilek.
+    LaunchedEffect(searchFor) { selected = emptyMap() }
 
     suspend fun reload() {
         today = withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
@@ -288,11 +310,47 @@ fun FoodScreen() {
             // Porcje i ostatnia gramatura dociągane dopiero przy wyborze:
             // przy liście wyników byłoby to kilkadziesiąt zapytań na każde
             // wpisane słowo.
-            onPick = { food -> scope.launch { openPortion(food, meal) } },
+            // Gdy cos jest juz zaznaczone, dotkniecie produktu ustawia jego
+            // ilosc w zaznaczeniu - dodanie od razu przerwaloby skladanie
+            // posilku w polowie.
+            onPick = { food ->
+                scope.launch {
+                    pickingForSelection = selected.isNotEmpty()
+                    openPortion(food, meal)
+                }
+            },
             onScan = { scan(meal) },
             onQuickAdd = { quickAddTo = meal },
             onMyMeals = { myMeals = true },
-            onBack = { searchFor = null }
+            onBack = { searchFor = null },
+            selected = selected,
+            onToggle = { food ->
+                if (selected.containsKey(food.id)) {
+                    selected = selected - food.id
+                } else {
+                    scope.launch {
+                        val p = defaultPick(food)
+                        selected = selected + (food.id to p)
+                    }
+                }
+            },
+            onAddSelected = {
+                scope.launch {
+                    val lista = selected.values.toList()
+                    // Kolejnosc zaznaczania zostaje kolejnoscia w posilku.
+                    val teraz = System.currentTimeMillis()
+                    withContext(Dispatchers.IO) {
+                        lista.forEachIndexed { i, p ->
+                            repos.diary.add(Portions.entry(day, meal, p.food, p.grams, at = teraz + i))
+                        }
+                    }
+                    selected = emptyMap()
+                    searchFor = null
+                    status = "Dodano: " + plural(lista.size, "produkt", "produkty", "produktów")
+                    reload()
+                }
+            },
+            onClearSelected = { selected = emptyMap() }
         )
     } else {
         DayView(
@@ -301,17 +359,33 @@ fun FoodScreen() {
             status = status,
             onDay = { day = it; status = null },
             onAdd = { m -> status = null; searchFor = m },
-            onEntry = { editing = it }
+            onEntry = { e ->
+                scope.launch {
+                    editingFood = e.foodId?.let { id ->
+                        withContext(Dispatchers.IO) { repos.foods.byId(id) }
+                    }
+                    editing = e
+                }
+            }
         )
     }
 
     picking?.let { (food, m) ->
+        val wZaznaczeniu = pickingForSelection
         PortionDialog(
             food = food,
             meal = m,
             lastGrams = pickingLastGrams,
-            onDismiss = { picking = null },
+            startGrams = if (wZaznaczeniu) selected[food.id]?.grams else null,
+            confirmLabel = if (wZaznaczeniu) "Zaznacz" else null,
+            onDismiss = { picking = null; pickingForSelection = false },
             onAdd = { grams ->
+                if (wZaznaczeniu) {
+                    selected = selected + (food.id to Picked(food, grams, amountLabel(amountUnits(food), grams)))
+                    picking = null
+                    pickingForSelection = false
+                    return@PortionDialog
+                }
                 scope.launch {
                     withContext(Dispatchers.IO) {
                         repos.diary.add(Portions.entry(day, m, food, grams))
@@ -348,6 +422,7 @@ fun FoodScreen() {
     editing?.let { entry ->
         EntryEditDialog(
             entry = entry,
+            food = editingFood?.takeIf { it.id == entry.foodId },
             onDismiss = { editing = null },
             onSave = { updated ->
                 scope.launch {

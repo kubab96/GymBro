@@ -4,6 +4,7 @@ import pl.gymbro.data.GymRepository
 import pl.gymbro.data.Inventory
 import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ProfileRepository
+import pl.gymbro.data.ProgressMode
 import pl.gymbro.data.Session
 import pl.gymbro.data.StoredAdvice
 import pl.gymbro.data.SessionRepository
@@ -29,7 +30,7 @@ object ProgressionReview {
         session: Session
     ): List<ProgressionAdvisor.Advice> {
         val planId = session.planId ?: return emptyList()
-        val items = planRepo.items(planId).filter { !it.noProgress }
+        val items = planRepo.items(planId).filter { it.progress != ProgressMode.OFF }
         if (items.isEmpty()) return emptyList()
 
         val profile = profileRepo.get()

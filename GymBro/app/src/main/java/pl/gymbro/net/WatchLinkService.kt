@@ -44,6 +44,9 @@ class WatchLinkService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Usługa wstaje też bez aktywności (po restarcie telefonu, START_STICKY),
+        // więc zapis awarii musi włączać się i tutaj.
+        pl.gymbro.CrashLog.install(this)
         if (intent?.action == ACTION_STOP) {
             stopSelf()
             return START_NOT_STICKY

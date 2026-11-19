@@ -176,6 +176,10 @@ const CISZA_MS = 1200
 // Ile polecen z kolejki leci jedna paczka. Po treningu bez lacznosci w kolejce
 // stoi ich kilkadziesiat, a kazda runda przez Bluetooth to sekunda.
 const PACZKA = 15
+// Ile ciszy po ostatnim dotyku, zanim polecenie pojdzie do telefonu. Dluzej niz
+// CISZA_MS, bo po serii zwykle pada jeszcze zapas - wtedy oba ida jednym
+// poleceniem, a Bluetooth nie pracuje w chwili, w ktorej palec jest na ekranie.
+const WYSYLKA_MS = 2500
 // Ile numerow potwierdzonych serii pamietamy - tyle, ile da sie jeszcze
 // poprawic albo opisac zapasem z ekranu, ktory je pokazuje.
 const ACKED_MAX = 40
@@ -365,6 +369,7 @@ Page({
     if (!this.state.zones && zapis.zones && zapis.zones.max) this.state.zones = zapis.zones
     const kolejna = units.filter((u) => u.next)[0]
     if (kolejna) this.state.nextUnit = kolejna.name
+    this.przeliczKolejna()
     return true
   },
 
@@ -580,9 +585,15 @@ Page({
         // Pytanie o zapas dotyczy serii sprzed chwili. Przerwa przeżywa
         // zgaszenie ekranu, więc pytanie musi przeżyć razem z nią.
         rirFor: this.state.rirFor,
+        // Liczby ustawione na ekranie serii, o ile ktos je tam przytrzymal -
+        // patrz [trzymajEkran]. Bez tego restart strony oddawal je telefonowi.
+        pin: this.state.editedFor
+          ? { ex: this.state.editedFor, weight: this.state.weight, reps: this.state.reps }
+          : null,
         wasComplete: this.state.wasComplete,
         pausedLocal: this.state.pausedLocal,
         localId: this.state.localId,
+        planId: this.state.planId,
         startedAt: this.state.startedAt,
         sessionSec: this.state.sessionSec,
         sessionAt: this.state.sessionAt
@@ -628,7 +639,7 @@ Page({
     if (!lista.length) return false
     this.state.firstState = false
     const ex = lista[Math.min(this.state.index, lista.length - 1)]
-    if (ex) {
+    if (ex && this.state.editedFor !== ex.id) {
       this.state.weight = ex.weight
       this.state.reps = ex.reps
     }
@@ -661,6 +672,11 @@ Page({
     this.state.kcalSeen = !!zapis.kcalSeen
     this.state.acked = zapis.acked || {}
     this.state.rirFor = zapis.rirFor || null
+    if (zapis.pin && zapis.pin.ex) {
+      this.state.editedFor = zapis.pin.ex
+      this.state.weight = zapis.pin.weight
+      this.state.reps = zapis.pin.reps
+    }
     this.state.wasComplete = !!zapis.wasComplete
     // Kolejka z zapisu sesji (wersje sprzed tej zmiany) tylko wtedy, gdy
     // wlasnej nie ma. Obie byly kopia tego samego, a zsumowane podwajaly
@@ -670,6 +686,7 @@ Page({
       this.zmienione()
     }
     this.state.localId = zapis.localId || null
+    this.state.planId = zapis.planId || null
     this.state.startedAt = zapis.startedAt || 0
     this.restoreHeavy(sessionId, zPlanem)
     const p = zapis.pausedLocal
@@ -1627,6 +1644,11 @@ Page({
     let sets = 0
     let reps = 0
     let ton = 0
+    // Plan wykonany - liczony tutaj, nie brany z telefonu. Odpowiedz samym
+    // potwierdzeniem flagi nie niesie, a stan sprzed niej by klamal.
+    const lista = (data && data.exercises) || []
+    const complete = lista.length > 0 &&
+      lista.every((e) => ex[e.id] && ex[e.id].done >= (e.sets || 0))
     for (const id in ex) {
       ex[id].entries.forEach((w) => {
         if (w.warmup) return
@@ -1639,7 +1661,7 @@ Page({
       d: data, o: outbox, v: this.wersja || 0, ex: ex,
       totals: {
         sets: sets, reps: reps, tonnage: ton,
-        complete: !!(data && data.totals && data.totals.complete)
+        complete: complete
       }
     }
     this.nakl = wynik
@@ -2031,6 +2053,9 @@ Page({
       if (view === VIEW_STATS) this.paintSync()
       else if (view === VIEW_START) this.paintStart()
       else if (view === VIEW_DONE) this.paintDone()
+      // Odpowiedz telefonu nie przemalowuje juz ekranu serii - kolor
+      // licznika (czeka / w bazie) zmienia sie wiec tutaj.
+      else if (view === VIEW_SETS && this.state.data) this.paintCount()
     }
   },
 
@@ -2066,18 +2091,9 @@ Page({
     const w = this.w
     const ex = this.current()
     if (!ex) return
-    const done = this.shownDone(ex)
-    const waiting = this.pendingCount() > 0
 
     this.paintName(ex.name)
-    this.setBtn(w.count, {
-      text: this.isSkipped(ex.id)
-        ? 'POMINIĘTE'
-        : (done >= ex.sets
-          ? 'ZROBIONE ' + done + ' z ' + ex.sets
-          : 'SERIA ' + (done + 1) + ' z ' + ex.sets),
-      color: waiting ? PENDING : ACCENT
-    })
+    this.paintCount()
     // Ciężar i powtórzenia podpisane, bez surowego "x". To są te same
     // wartości, które pójdą do dziennika po naciśnięciu - czyli to, co
     // ustawiłeś na ekranie obok, a nie zakres z planu.
@@ -2092,6 +2108,26 @@ Page({
       )
     }
     this.paintClock()
+  },
+
+  /**
+   * Licznik serii i jego kolor - turkusowy, dopoki cos czeka na telefon.
+   *
+   * Osobno od reszty ekranu, bo potwierdzenie od telefonu zmienia wylacznie
+   * kolor: nie ma po co przemalowywac nazwy ani ciezaru.
+   */
+  paintCount() {
+    const ex = this.current()
+    if (!ex || !this.w || !this.w.count) return
+    const done = this.shownDone(ex)
+    this.setBtn(this.w.count, {
+      text: this.isSkipped(ex.id)
+        ? 'POMINIĘTE'
+        : (done >= ex.sets
+          ? 'ZROBIONE ' + done + ' z ' + ex.sets
+          : 'SERIA ' + (done + 1) + ' z ' + ex.sets),
+      color: this.pendingCount() > 0 ? PENDING : ACCENT
+    })
   },
 
   /**
@@ -2435,8 +2471,7 @@ Page({
     const idx = list.findIndex((ex) => ex.name === szukana)
     if (idx < 0) return
     this.state.index = idx
-    this.state.weight = list[idx].weight
-    this.state.reps = list[idx].reps
+    this.ustawPropozycje(list[idx])
     this.state.editedFor = null
     this.state.phase = PHASE_SET
     this.state.phaseSince = Date.now()
@@ -2614,7 +2649,25 @@ Page({
     }
     const r = this.state.rirFor
     if (r && typeof r === 'object' && fix.ref && r.ref === fix.ref) this.state.rirFor = null
+    this.trzymajEkran(fix.exerciseId)
     this.showView(VIEW_LOG)
+  },
+
+  /**
+   * Poprawka dotyczy zapisu, nie nastepnej serii.
+   *
+   * Telefon podstawia na nastepna serie to, co stoi w ostatniej zapisanej.
+   * Po poprawce ostatniej serii jego odpowiedz niosla wiec poprawione liczby
+   * i ekran serii przestawial sie na nie: seria poprawiona z osmiu na szesc
+   * powtorzen zmieniala tez cel kolejnej, a skasowana - cofala go do tej
+   * sprzed niej. Trzymamy to, co stoi na ekranie, tak samo jak po recznej
+   * zmianie plusem: do nastepnej zapisanej serii albo do zmiany cwiczenia.
+   */
+  trzymajEkran(exerciseId) {
+    const ex = this.current()
+    if (!ex || ex.id !== exerciseId) return
+    this.state.editedFor = ex.id
+    this.remember()
   },
 
   fixStep(co, dir) {
@@ -2654,6 +2707,7 @@ Page({
     const zmiany = { weight: fix.weight, reps: fix.reps, rir: fix.rir }
     if (fix.id) this.queue('EDIT', Object.assign({ setId: fix.id }, zmiany))
     else if (fix.ref) this.opiszSerie(fix.ref, fix.exerciseId, zmiany)
+    this.trzymajEkran(fix.exerciseId)
     this.showView(VIEW_LOG)
   },
 
@@ -2929,8 +2983,7 @@ Page({
       const ex = list[i]
       if (this.isSkipped(ex.id) || this.shownDone(ex) >= ex.sets) continue
       this.state.index = i
-      this.state.weight = ex.weight
-      this.state.reps = ex.reps
+      this.ustawPropozycje(ex)
       this.state.editedFor = null
       return
     }
@@ -2942,11 +2995,27 @@ Page({
     if (next < 0 || next >= list.length) return
     this.state.index = next
     const ex = list[next]
-    this.state.weight = ex.weight
-    this.state.reps = ex.reps
+    this.ustawPropozycje(ex)
     this.state.editedFor = null
     this.remember()
     this.paintSets()
+  },
+
+  /**
+   * Ciezar i powtorzenia na nastepna serie cwiczenia - ta sama regula co
+   * na telefonie (LiveSession.nextWeight): to, co stoi w ostatniej serii,
+   * a przed pierwsza - plan.
+   *
+   * Dotad przychodzilo to z odpowiedzia telefonu po kazdej serii. Odkad
+   * telefon odpowiada samym potwierdzeniem, zegarek liczy to sam - z serii
+   * w kolejce i potwierdzonych, wiec tak samo z telefonem i bez niego.
+   */
+  ustawPropozycje(ex) {
+    const e = this.nakladka().ex[ex.id]
+    const wpisy = ((e && e.entries) || []).filter((w) => !w.warmup)
+    const ost = wpisy[wpisy.length - 1]
+    this.state.weight = ost && ost.weight !== undefined ? ost.weight : ex.weight
+    this.state.reps = ost && ost.reps ? ost.reps : ex.reps
   },
 
   stepReps(delta) {
@@ -3058,7 +3127,16 @@ Page({
     if (this.koniecTimer) { clearTimeout(this.koniecTimer); this.koniecTimer = null }
     // Od tej chwili wszystko, co wyszło wcześniej, jest nieaktualne.
     this.nowyBieg()
-    this.queue('FINISH', { endedAt: Date.now() })
+    const teraz = Date.now()
+    const jednostka = this.jednostkaTreningu()
+    // Numer jednostki jedzie z zakonczeniem tylko dla zegarka - po nim
+    // wie, ze ta jednostka jest juz zrobiona, zanim telefon to potwierdzi.
+    const koniec = { endedAt: teraz }
+    if (jednostka) koniec.planId = jednostka.id
+    this.queue('FINISH', koniec)
+    // Data jak na telefonie: poczatek treningu. Zostaje w zapisie jednostek,
+    // wiec nastepna jednostka zgadza sie takze po restarcie bez lacznosci.
+    if (jednostka) jednostka.lastDone = Math.max(jednostka.lastDone || 0, this.state.startedAt || teraz)
     // Zakonczenie do pliku od razu, nie za chwile. Gdy aplikacja ginie
     // w tej chwili - a zegarek potrafil ja ubic wlasnie przy koncu treningu -
     // odlozony zapis nie zdazyl, zapis sesji byl juz skasowany i trening
@@ -3078,11 +3156,31 @@ Page({
     this.state.hrMin = 0
     this.state.hrMax = 0
     this.state.startedAt = 0
+    this.state.planId = null
     this.forget()
+    // Kolejna jednostka od razu, z wlasnych danych. Pytanie telefonu poleci
+    // dopiero, gdy ten przyjmie zakonczenie - patrz [koniecDojechal].
+    const znane = (this.state.units || []).length > 0
+    if (znane) {
+      this.przeliczKolejna()
+      this.rememberUnits()
+    }
     this.state.view = VIEW_START
     this.applyVisibility()
     this.paint()
-    this.askUnits()
+    if (!znane) this.askUnits()
+  },
+
+  /** Jednostka trwajacego treningu z listy jednostek - po numerze, a gdy go nie ma, po nazwie. */
+  jednostkaTreningu() {
+    const units = this.state.units || []
+    const id = this.state.planId || (this.state.data && this.state.data.planId)
+    if (id) {
+      const u = units.filter((x) => x.id === id)[0]
+      if (u) return u
+    }
+    const nazwa = this.state.data && this.state.data.plan
+    return nazwa ? units.filter((x) => x.name === nazwa)[0] || null : null
   },
 
   togglePause() {
@@ -3129,6 +3227,8 @@ Page({
         if (data.hrZones && data.hrZones.max) this.state.zones = data.hrZones
         const kolejna = units.filter((u) => u.next)[0]
         if (kolejna) this.state.nextUnit = kolejna.name
+        // Zakonczenie, ktore jeszcze czeka w kolejce, telefonowi jest obce.
+        this.przeliczKolejna()
         this.rememberUnits()
         this.setOffline(false)
         this.state.message = null
@@ -3183,6 +3283,7 @@ Page({
     }
 
     const znacznik = 'w' + Date.now() + '-' + Math.floor(Math.random() * 100000)
+    this.state.planId = unit.id
     this.state.localId = znacznik
     this.state.sessionId = znacznik
     this.state.startedAt = Date.now()
@@ -3284,11 +3385,20 @@ Page({
     // Tylko start jednostki podaza za telefonem: on wie, od ktorego
     // cwiczenia zaczac. Przy reszcie to zegarek wie lepiej, gdzie stoi.
     if (follow === true) poz.f = true
+    // Poczatek i koniec treningu nie czekaja na cisze. Po nich palec zwykle
+    // odpoczywa, ale aplikacje zamyka sie wlasnie wtedy - a telefon ma sie
+    // dowiedziec o koncu treningu od razu, nie przy nastepnym otwarciu.
+    if (method === 'START' || method === 'FINISH') this.pilne = true
     this.state.outbox = (this.state.outbox || []).concat([poz])
     // Sam stan treningu zapisuje ten, kto go zmienil - tutaj wystarczy
     // kolejka. Dwa zapisy na jedno nacisniecie to dwa razy za duzo.
     this.rememberOutbox()
     this.zmianaKolejki()
+    // Pilne nie czeka na budzik ustawiony pod cisze po dotyku.
+    if (this.pilne && this.drainTimer && !this.draining) {
+      clearTimeout(this.drainTimer)
+      this.drainTimer = null
+    }
     this.scheduleDrain(0)
     return cid
   },
@@ -3335,6 +3445,17 @@ Page({
       this.zmianaKolejki()
       return
     }
+    // Palec pracuje - wysylka poczeka. Rozmowa przez Bluetooth to praca
+    // w tym samym watku, ktory obsluguje dotyk: wyslanie zadania, odbior
+    // i rozlozenie odpowiedzi. Puszczana zaraz po nacisnieciu trafiala
+    // w nastepne nacisniecie - zapas po serii, plus przy ciezarze - i to
+    // ono czekalo. Ekran i tak nie czeka na telefon, wiec nic nie traci.
+    const odDotyku = this.ostatniDotyk ? Date.now() - this.ostatniDotyk : WYSYLKA_MS
+    if (!this.pilne && odDotyku < WYSYLKA_MS) {
+      this.scheduleDrain(WYSYLKA_MS - odDotyku)
+      return
+    }
+    this.pilne = false
     this.draining = true
     // Cos czeka - choc paczka moze oproznic kolejke jednym zadaniem, jedna
     // wibracja po dojechaniu wszystkiego nadal sie nalezy.
@@ -3346,10 +3467,14 @@ Page({
     const pelny = paczka.some((x) => x.m === 'START')
     paczka.forEach((x) => { x.s = 1 })
     const pojedyncze = paczka.length === 1
+    // Bez startu w paczce wystarczy samo potwierdzenie (lite 2): ekran liczy
+    // sie z kolejki i z potwierdzonych serii, a stan od telefonu byl tylko
+    // kilobajtem do rozlozenia przy kazdej serii. Telefon sprzed tej zmiany
+    // zna tylko 1 i odpowie lekkim stanem - to tez dziala.
     const prosba = pojedyncze
-      ? this.ask(paczka[0].m, pelny ? paczka[0].p : Object.assign({ lite: 1 }, paczka[0].p))
+      ? this.ask(paczka[0].m, pelny ? paczka[0].p : Object.assign({ lite: 2 }, paczka[0].p))
       : this.ask('BATCH', {
-        lite: pelny ? 0 : 1,
+        lite: pelny ? 0 : 2,
         items: paczka.map((x) => ({ m: x.m, p: x.p }))
       })
     prosba
@@ -3425,9 +3550,27 @@ Page({
     const dalej = () => {
       if ((this.state.outbox || []).length) this.scheduleDrain(0)
     }
+    // Serie potwierdzone samym "zrobione" zyja juz tylko w stanie zegarka -
+    // z kolejki wlasnie zniknely. Bez zapisu planu restart strony cofalby
+    // licznik do tego, co bylo w pamieci przed nimi.
+    if (zalatwione.some((poz, i) => poz.m !== 'START' && poz.m !== 'FINISH' &&
+      (wyniki[i] || {}).ok)) {
+      this.rememberHeavyLater()
+    }
+    // Koniec treningu dojechal: dopiero teraz telefon zna nowa kolejnosc
+    // jednostek. Pytanie zadane od razu po nacisnieciu "Zakoncz" wyprzedzalo
+    // samo zakonczenie i wracalo z jednostka, ktora wlasnie zrobiles.
+    if (zalatwione.some((poz, i) => poz.m === 'FINISH' && (wyniki[i] || {}).ok)) {
+      this.koniecDojechal()
+    }
     // Polecenie doszło, ale trening zdążył się skończyć albo zacząć nowy -
     // stan z tej odpowiedzi dotyczy już czegoś innego.
     if (!stan || this.bierzBieg() !== bieg) return dalej()
+    // Samo potwierdzenie - nie ma czego rysowac, ekran juz to pokazuje.
+    if (stan.ack) {
+      this.przyjmijPotwierdzenie(stan)
+      return dalej()
+    }
     // Zaleglosc z innej sesji: dojezdza wczorajszy trening, a na ekranie
     // stoi dzisiejszy. Odpowiedz opisuje nie to, co widac, wiec wolno jej
     // zapisac historie, ale nie przestawic ekranu.
@@ -3435,6 +3578,92 @@ Page({
     if (sid && String(this.state.sessionId || '') !== String(sid)) return dalej()
     this.apply(stan, !!(ostatnie && ostatnie.f === true))
     dalej()
+  },
+
+  /**
+   * Potwierdzenie bez stanu: telefon mowi tylko, ktory trening u niego trwa.
+   *
+   * Jedyne, co z tego wynika dla zegarka, to numer nadany treningowi zaczetemu
+   * tutaj - po nim kolejne polecenia trafiaja do wlasciwej sesji. Trening
+   * cudzy (inny znacznik) nie zmienia niczego.
+   */
+  przyjmijPotwierdzenie(stan) {
+    if (this.state.localId && stan.localId === this.state.localId && stan.sessionId) {
+      const stary = this.state.localId
+      this.state.sessionId = stan.sessionId
+      this.state.localId = null
+      if (this.state.data) this.state.data.sessionId = stan.sessionId
+      this.przepiszKolejke(stary, stan.sessionId)
+      this.remember()
+      this.rememberHeavyLater()
+    }
+    if (String(stan.sessionId) !== String(this.state.sessionId || '')) return
+    // Telefon dogonil wstrzymanie ustawione na zegarku - jak w [apply].
+    if (this.state.pausedLocal !== null && stan.paused !== undefined &&
+      !!stan.paused === this.state.pausedLocal) {
+      this.state.pausedLocal = null
+      this.remember()
+    }
+    // Suma kontrolna: telefon zna serie, ktorych zegarek nie zna - dopisane
+    // albo poprawione na telefonie w trakcie treningu. Wtedy raz pelny stan.
+    if (stan.sets === undefined) return
+    const moje = this.potwierdzoneSerie()
+    if (moje.sets === stan.sets && moje.reps === stan.reps) return
+    const teraz = Date.now()
+    if (this.pelnyStanAt && teraz - this.pelnyStanAt < 10000) return
+    this.pelnyStanAt = teraz
+    this.send('STATE', {}, false)
+  },
+
+  /** Serie, ktore telefon juz potwierdzil - bez tych, ktore czekaja w kolejce. */
+  potwierdzoneSerie() {
+    let sets = 0
+    let reps = 0
+    ;((this.state.data && this.state.data.exercises) || []).forEach((e) => {
+      ;(e.entries || []).forEach((w) => {
+        if (!w.id) return
+        sets += 1
+        reps += w.reps || 0
+      })
+    })
+    return { sets: sets, reps: reps }
+  },
+
+  /**
+   * Telefon przyjal koniec treningu. Ekran wyboru dostaje swieza liste
+   * jednostek - o ile wlasnie na nim stoimy, a nie w nowym treningu.
+   */
+  koniecDojechal() {
+    if (this.state.data && this.state.data.active) return
+    if (this.state.view !== VIEW_START) return
+    this.askUnits()
+  },
+
+  /**
+   * Ktora jednostka wypada teraz - ta sama regula co na telefonie: najdawniej
+   * robiona, a nigdy nierobiona przed wszystkimi.
+   *
+   * Liczone na zegarku z dat, ktore przyslal telefon, plus treningow
+   * zakonczonych tutaj, o ktorych telefon jeszcze nie wie. Dotad nastepna
+   * jednostka przychodzila wylacznie od telefonu, a ten dowiadywal sie
+   * o koncu treningu dopiero z kolejki - wiec po zakonczeniu B zegarek przez
+   * minute proponowal B, a bez lacznosci az do powrotu telefonu.
+   */
+  przeliczKolejna() {
+    const units = this.state.units || []
+    // Telefon sprzed tej zmiany nie podaje dat - zostaje jego wybor.
+    if (!units.length || !units.some((u) => u.lastDone !== undefined)) return
+    const konce = {}
+    ;(this.state.outbox || []).forEach((x) => {
+      if (x.m === 'FINISH' && x.p && x.p.planId) {
+        konce[x.p.planId] = Math.max(konce[x.p.planId] || 0, x.p.endedAt || x.at || 1)
+      }
+    })
+    const ostatnio = (u) => Math.max(u.lastDone || 0, konce[u.id] || 0)
+    let kolejna = units[0]
+    units.forEach((u) => { if (ostatnio(u) < ostatnio(kolejna)) kolejna = u })
+    units.forEach((u) => { u.next = u === kolejna })
+    this.state.nextUnit = kolejna.name
   },
 
   /** Numer najnowszej serii ćwiczenia w stanie od telefonu. */
@@ -3636,6 +3865,7 @@ Page({
     // zakonczeniu: trening zamkniety na telefonie nie daje zegarkowi
     // odpowiedzi z FINISH, wiec podsumowanie pokazywalo wartosc sprzed sesji.
     if (data.next && data.next.name) this.state.nextUnit = data.next.name
+    if (data.planId) this.state.planId = data.planId
 
     // Zgaszenie ekranu ubija aplikację, więc pierwsza odpowiedź po starcie
     // może dotyczyć treningu, który trwa od godziny. Odtwarzamy wtedy to,

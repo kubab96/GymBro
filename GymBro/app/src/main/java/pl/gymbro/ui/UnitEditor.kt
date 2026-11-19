@@ -20,7 +20,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -45,11 +44,13 @@ import pl.gymbro.data.PlanLibrary
 import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.Program
 import pl.gymbro.data.ProgramRepository
+import pl.gymbro.data.ProgressMode
 import pl.gymbro.data.UserProfile
 import pl.gymbro.data.roundKg
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.gym.Loading
 import pl.gymbro.gym.PlateCalculator
+import pl.gymbro.gym.ProgressionAdvisor
 import pl.gymbro.gym.ProgressionReview
 
 // ---- Edytor jednostki ---------------------------------------------------------
@@ -113,9 +114,17 @@ internal fun UnitEditorScreen(
      * po każdym zapisie cofałby liczbę o krok, zanim dojdzie następny.
      */
     fun change(updated: PlanItem) {
-        items = items.map { if (it.id == updated.id) updated else it }
+        // Propozycja policzona przed zmianą trybu progresji znika razem
+        // z nim: "dołóż 2,5 kg" przy ćwiczeniu, w którym przed chwilą
+        // wyłączono dokładanie ciężaru, wyglądałoby na zignorowane ustawienie.
+        val pasuje = ProgressionAdvisor.stillFits(updated)
+        val nowa = if (pasuje) updated else updated.copy(advice = null)
+        items = items.map { if (it.id == nowa.id) nowa else it }
         scope.launch {
-            withContext(Dispatchers.IO) { planRepo.upsertItem(updated) }
+            withContext(Dispatchers.IO) {
+                planRepo.upsertItem(nowa)
+                if (!pasuje) planRepo.setAdvice(nowa.id, null)
+            }
             Refresh.bump()
         }
     }
@@ -401,11 +410,15 @@ private fun ExerciseCard(
                         }
                     )
                 }
-                Text(
-                    "Gdy wyrobisz górną granicę, aplikacja zaproponuje większy ciężar.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Tylko tam, gdzie to prawda: przy ciężarze, który ma stać,
+                // obietnica większego ciężaru kłóciła się z wyborem niżej.
+                if (item.progress.weight) {
+                    Text(
+                        "Gdy wyrobisz górną granicę, aplikacja zaproponuje większy ciężar.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 OutlinedButton(onClick = { onChange(item.copy(repsFrom = 8, repsTo = 12)) }) {
                     Text("Ustaw zakres powtórzeń")
@@ -468,25 +481,28 @@ private fun ExerciseCard(
             )
 
             // ---- Progresja ----
-            // Odznaczone domyślnie: milczenie kosztuje więcej niż propozycja,
-            // więc wyciszenie ma być decyzją, a nie stanem wyjściowym.
-            Row(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Proponuj progresję", style = MaterialTheme.typography.bodyLarge)
-                    Text(
-                        "Wyłącz przy rozgrzewkowych i rehabilitacyjnych.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = !item.noProgress,
-                    onCheckedChange = { onChange(item.copy(noProgress = !it)) }
-                )
-            }
+            // Pełna domyślnie: milczenie kosztuje więcej niż propozycja, więc
+            // każde ograniczenie ma być decyzją, a nie stanem wyjściowym.
+            //
+            // Cztery tryby zamiast przełącznika. Sam przełącznik znał tylko
+            // "wszystko albo nic", a przy jednej parze hantli chce się
+            // powtórzeń bez ciężaru, przy stałej liczbie powtórzeń - odwrotnie.
+            FieldLabel("Progresja")
+            ProgressPicker(item.progress) { onChange(item.copy(progress = it)) }
+            Text(
+                when (item.progress) {
+                    ProgressMode.ALL -> "Aplikacja dokłada powtórzeń, a po wyrobieniu zakresu " +
+                        "proponuje większy ciężar."
+                    ProgressMode.NO_WEIGHT -> "Ciężar stoi. Rosną powtórzenia, a po dobiciu " +
+                        "zakresu - sam zakres."
+                    ProgressMode.NO_REPS -> "Powtórzenia stoją. Ciężar rośnie, gdy dobijesz " +
+                        "górną granicę zakresu."
+                    ProgressMode.OFF -> "Nic nie rośnie - dla rozgrzewkowych " +
+                        "i rehabilitacyjnych."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             Row(
                 Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -498,6 +514,43 @@ private fun ExerciseCard(
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDelete) {
                     Text("Usuń", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Cztery tryby progresji w dwóch rzędach po dwa.
+ *
+ * W jednym przewijanym rzędzie, jak przerwa, się nie mieszczą: czwarty
+ * przycisk wychodził za krawędź karty i nic nie zdradzało, że rząd da się
+ * przesunąć - „bez powtórzeń" po prostu nie było widać. W lewej kolumnie
+ * całość (pełna, wyłączona), w prawej połówki.
+ */
+@Composable
+private fun ProgressPicker(selected: ProgressMode, onSelect: (ProgressMode) -> Unit) {
+    val rzedy = listOf(
+        listOf(ProgressMode.ALL, ProgressMode.NO_WEIGHT),
+        listOf(ProgressMode.OFF, ProgressMode.NO_REPS)
+    )
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        rzedy.forEach { rzad ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                rzad.forEach { tryb ->
+                    if (tryb == selected) {
+                        Button(onClick = {}, modifier = Modifier.weight(1f)) {
+                            Text(tryb.label, style = MaterialTheme.typography.labelLarge)
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { onSelect(tryb) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text(tryb.label, style = MaterialTheme.typography.labelLarge) }
+                    }
                 }
             }
         }

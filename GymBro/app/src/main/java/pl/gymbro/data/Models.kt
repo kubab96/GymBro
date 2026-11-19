@@ -138,8 +138,8 @@ data class PlanItem(
     /** null = dziedziczy z profilu. */
     val goal: TrainingGoal? = null,
 
-    /** Wyciszenie propozycji progresji dla tej pozycji. */
-    val noProgress: Boolean = false,
+    /** Co w tym ćwiczeniu wolno aplikacji podnosić - patrz [ProgressMode]. */
+    val progress: ProgressMode = ProgressMode.ALL,
 
     /** Krok ciężaru z ćwiczenia - denormalizowany, patrz [Exercise.stepKg]. */
     val stepKg: Double? = null,
@@ -339,6 +339,47 @@ enum class Sex { MALE, FEMALE }
  * (Schoenfeld 2018).
  */
 enum class TrainingGoal { STRENGTH, HYPERTROPHY, MIXED }
+
+/**
+ * Co aplikacji wolno podnosić w jednym ćwiczeniu.
+ *
+ * Najpierw był tu przełącznik „proponuj progresję", wszystko albo nic. Nie
+ * starczał: przy hantlach, których w domu jest jedna para, ciężar nie ma
+ * dokąd rosnąć, ale powtórzenia mają; przy schemacie ze stałą liczbą
+ * powtórzeń jest odwrotnie. Wyłączenie całości zabierało wtedy także tę
+ * połowę podpowiedzi, która miała sens.
+ *
+ * Blokada dotyczy **dokładania**. Propozycja zejścia z ciężaru po zastoju
+ * zostaje przy trybach częściowych - to nie progresja, tylko wyjście z dołka.
+ *
+ * [code] jest formatem zapisu w kolumnie `no_progress` (zero i jedynka
+ * znaczą to samo, co przed tą zmianą, więc migracji nie trzeba) - nie
+ * zmieniać istniejących wartości.
+ */
+enum class ProgressMode(val code: Int, val label: String) {
+    /** Ciężar i powtórzenia. Stan wyjściowy: milczenie kosztuje więcej. */
+    ALL(0, "pełna"),
+
+    /** Nic nie rośnie - rozgrzewkowe, rehabilitacyjne. */
+    OFF(1, "wyłączona"),
+
+    /** Ciężar stoi, rosną powtórzenia. */
+    NO_WEIGHT(2, "bez ciężaru"),
+
+    /** Powtórzenia stoją, rośnie ciężar. */
+    NO_REPS(3, "bez powtórzeń");
+
+    /** Czy wolno proponować większy ciężar. */
+    val weight: Boolean get() = this == ALL || this == NO_REPS
+
+    /** Czy wolno proponować więcej powtórzeń. */
+    val reps: Boolean get() = this == ALL || this == NO_WEIGHT
+
+    companion object {
+        /** Nieznana wartość to pełna progresja: lepsza zbędna propozycja niż cisza. */
+        fun fromCode(code: Int): ProgressMode = entries.firstOrNull { it.code == code } ?: ALL
+    }
+}
 
 /**
  * Faza sylwetkowa - nie zmienia tego, co podnosic, tylko jak czytac zastoj.

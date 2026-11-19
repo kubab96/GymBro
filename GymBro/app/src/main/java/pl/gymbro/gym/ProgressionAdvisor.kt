@@ -2,6 +2,7 @@ package pl.gymbro.gym
 
 import pl.gymbro.data.Phase
 import pl.gymbro.data.PlanItem
+import pl.gymbro.data.ProgressMode
 import pl.gymbro.data.roundKg
 import pl.gymbro.data.SetEntry
 import pl.gymbro.data.TrainingGoal
@@ -70,7 +71,8 @@ object ProgressionAdvisor {
         rirUseless: Boolean = false,
         daysSincePrevious: Int? = null
     ): Advice? {
-        if (item.noProgress) return null
+        val mode = item.progress
+        if (mode == ProgressMode.OFF) return null
         val now = history.firstOrNull() ?: return null
 
         // ---- Krok 0: czy w ogóle się wypowiadamy ----
@@ -100,12 +102,23 @@ object ProgressionAdvisor {
             return stallAdvice(item, history, now, phase, rir) ?: catchUp(item, now)
         }
 
+        // Ciężar ma stać - cała progresja idzie w objętość, bez względu na
+        // to, jak drobny jest próg. Tylko ze szczytu zakresu: sam zapas przy
+        // niedobitym zakresie znaczy "dołóż powtórzeń", a na to jest jeszcze
+        // miejsce bez ruszania planu.
+        if (!mode.weight) {
+            return if (atTop) {
+                volumeAdvice(item, phase, goal, "szczyt zakresu, a ciężar ma tu stać")
+            } else null
+        }
+
         // Przy grubym progu ciężar ustępuje objętości. Powtórzenia budują masę
         // tak samo jak ciężar (Mitchell 2012: 6.8% vs 7.2%, p=0.18), więc to
-        // zamiennik, nie proteza - ale tylko wtedy, gdy celem jest masa.
+        // zamiennik, nie proteza - ale tylko wtedy, gdy celem jest masa
+        // i gdy powtórzeń w ogóle wolno dokładać.
         val coarse = step != null && step > COARSE_STEP_PERCENT
-        if (coarse && goal != TrainingGoal.STRENGTH && atTop) {
-            return volumeAdvice(item, history, phase, goal)
+        if (coarse && goal != TrainingGoal.STRENGTH && atTop && mode.reps) {
+            return volumeAdvice(item, phase, goal)
         }
 
         // Regula 2-for-2 mowi o dobiciu GORY zakresu, czyli o sytuacji na styk:
@@ -119,7 +132,11 @@ object ProgressionAdvisor {
         }
 
         val target = nextWeight(item, now, ladder, rir)
-            ?: return if (coarse) volumeAdvice(item, history, phase, goal) else null
+            ?: return when {
+                !coarse -> null
+                mode.reps -> volumeAdvice(item, phase, goal)
+                else -> coarseJump(item, now, ladder) ?: volumeAdvice(item, phase, goal)
+            }
 
         return Advice(
             item = item,
@@ -145,6 +162,23 @@ object ProgressionAdvisor {
             Kind.REPS_UP.name -> item.copy(repsTo = a.repsTo ?: item.repsTo)
             Kind.SET_UP.name -> item.copy(sets = a.sets ?: item.sets)
             else -> item
+        }
+    }
+
+    /**
+     * Czy czekająca propozycja mieści się jeszcze w trybie progresji pozycji.
+     *
+     * Propozycje czekają przy planie do decyzji, a tryb da się zmienić
+     * w międzyczasie. Zejście z ciężaru i dołożenie serii zostają we
+     * wszystkich trybach poza wyłączonym - blokady dotyczą tylko dokładania
+     * ciężaru i powtórzeń.
+     */
+    fun stillFits(item: PlanItem): Boolean {
+        val a = item.advice ?: return true
+        return when (a.kind) {
+            Kind.WEIGHT_UP.name -> item.progress.weight
+            Kind.REPS_UP.name -> item.progress.reps
+            else -> item.progress != ProgressMode.OFF
         }
     }
 
@@ -186,6 +220,26 @@ object ProgressionAdvisor {
         // jednego miejsca - ale w bazie zostawal ogon, ktory potem wracal
         // w kazdym kolejnym porownaniu ciezaru.
         return roundKg(snapped)
+    }
+
+    /**
+     * Gruby skok ciężaru, gdy innej drogi nie zostawiono.
+     *
+     * Zwykle skok ponad pięć procent zamieniamy na dłuższy zakres powtórzeń.
+     * Przy wyłączonym dokładaniu powtórzeń tej wymiany nie ma, a milczenie
+     * oznaczałoby stanie w miejscu bez końca - więc mówimy o następnym progu
+     * wprost, z ostrzeżeniem w powodzie. Odznaczona, jak wszystko, co kosztuje
+     * więcej niż spojrzenie.
+     */
+    private fun coarseJump(item: PlanItem, now: Outing, ladder: List<Double>): Advice? {
+        val next = ladder.firstOrNull { it > now.topWeight + 0.001 } ?: return null
+        return Advice(
+            item = item,
+            kind = Kind.WEIGHT_UP,
+            weightKg = roundKg(next),
+            reason = "szczyt zakresu; skok jest duży, ale powtórzeń tu nie dokładasz",
+            preselected = false
+        )
     }
 
     private fun rungUp(from: Double, ladder: List<Double>, rungs: Int, item: PlanItem): Double {
@@ -255,6 +309,8 @@ object ProgressionAdvisor {
      * nie gotowosc na wiecej - takiego ciezaru nie wpisujemy do planu.
      */
     private fun catchUp(item: PlanItem, now: Outing): Advice? {
+        // Podciągnięcie planu to też dołożenie ciężaru - a ten ma stać.
+        if (!item.progress.weight) return null
         if (!item.hasTargetWeight) return null
         if (now.topWeight <= item.targetKg + 0.01) return null
         if (item.repsFrom > 0 && now.minReps < item.repsFrom) return null
@@ -297,16 +353,20 @@ object ProgressionAdvisor {
      */
     private fun volumeAdvice(
         item: PlanItem,
-        history: List<Outing>,
         phase: Phase,
-        goal: TrainingGoal
+        goal: TrainingGoal,
+        repsReason: String = "szczyt zakresu, ale skok ciężaru jest za duży"
     ): Advice? {
         if (item.repsTo in 1 until LONG_RANGE_REPS) {
+            // Krótki zakres, ale powtórzeń nie wolno dokładać. Seria nie jest
+            // tu zamiennikiem: dokładamy ją dopiero po wyczerpaniu zakresu,
+            // a ten wyczerpany nie jest - po prostu ma stać.
+            if (!item.progress.reps) return null
             return Advice(
                 item = item,
                 kind = Kind.REPS_UP,
                 repsTo = item.repsTo + REPS_BUMP,
-                reason = "szczyt zakresu, ale skok ciężaru jest za duży",
+                reason = repsReason,
                 preselected = true
             )
         }

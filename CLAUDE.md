@@ -44,7 +44,7 @@ Demon Gradle'a zostaje w tle po buildzie i **trzyma uchwyty do katalogu projektu
 
 ```sh
 cd gymbro-watch
-node tools/check.js          # 453 sprawdzenia, bez zegarka
+node tools/check.js          # 494 sprawdzenia, bez zegarka
 zeus build
 zeus preview -t "Amazfit Balance"
 ```
@@ -108,9 +108,13 @@ Zegarek działa, gdy telefon jest wyłączony albo poza zasięgiem:
 - **licznik serii, dziennik i sumy liczą się z jednego widoku** (`nakladka()`): ostatni stan od telefonu plus polecenia, które jeszcze czekają. Nie ma osobnego licznika niepotwierdzonych - rozjeżdżał się z dziennikiem
 - trening wraca po restarcie z własnej pamięci (plan w `gymbro-session-big`) także wtedy, gdy ma już numer od telefonu - inaczej bez łączności zegarek pokazywał wybór jednostki w środku treningu
 - zapas i poprawka serii, której numeru zegarek jeszcze nie zna, wskazują ją znacznikiem polecenia SET (`ref`); telefon zamienia go na numer (`seen` pamięta `cid → setId`). Seria jeszcze niewysłana dostaje zmianę wprost w swoim poleceniu
+- poprawka i skasowanie serii nie przestawiają ekranu serii (`trzymajEkran`): telefon podstawia na następną serię to, co stoi w ostatniej zapisanej, więc bez tego poprawiona seria wracała jako nowy cel
 - trzy rodzaje odpowiedzi: wykonane, odmowa (`reject`, 4xx - wypada tylko to polecenie) i awaria po drodze (`retry` - polecenie zostaje). Ustala je usługa towarzysząca; wcześniej każdy błąd wyrzucał polecenie z kolejki
 - zaległość leci paczkami (`BATCH` → `/batch`, do 15 poleceń) z lekkim stanem bez drabinek (`lite`); zegarek dokleja drabinki z poprzedniego stanu. Telefon bez `/batch` dostaje polecenia po jednym
 - START z zegarka zamyka trening, który jeszcze trwa na telefonie (`closeAbandoned`), zamiast odpowiadać 409 - odmowa kończyła się tym, że serie nowego treningu szły do starego. Stan od telefonu niesie `localId`, po którym zegarek poznaje, czy to jego trening
+- **w trakcie treningu telefon odpowiada samym potwierdzeniem** (`lite: 2` → `ack()` w `WatchApi`): numer sesji, `localId`, `paused` i suma kontrolna serii (`sets`, `reps`). Zegarek odpowiedzi nie rysuje - liczy ekran z kolejki i potwierdzonych serii, a propozycję ciężaru na następną serię bierze z ostatniej serii (`ustawPropozycje`, ta sama reguła co `LiveSession.nextWeight`). Pełny stan leci tylko przy STARcie, przy STATE po uruchomieniu i raz, gdy suma kontrolna się rozjedzie (seria zmieniona na telefonie). Pełny stan po każdej serii to był kilobajt-dwa rozkładane w wątku palca
+- **wysyłka czeka na 2,5 s ciszy po dotyku** (`WYSYLKA_MS`), poza START i FINISH. Bluetooth pracuje w tym samym wątku co dotyk; przy okazji zapas wybrany zaraz po serii dokleja się do jej polecenia. W `check.js` scenariusz po dotyku woła `puscWysylke`, a `page.press()` wołane wprost dotyku nie zostawia
+- **następną jednostkę zegarek liczy sam** (`przeliczKolejna`): z `lastDone` przysłanego w `/units` plus zakończeń czekających w kolejce (FINISH niesie `planId`). Pytanie o jednostki szło dotąd przed samym FINISH i wracało ze starą kolejnością - po treningu B zegarek przez minutę proponował B
 
 ### Progresja
 
@@ -126,6 +130,8 @@ Cztery pliki, rozdzielone celowo:
 `ProgressionAdvisor` nie dotyka bazy - dzięki temu reguły z `GymBro/docs/progresja.md` testuje się na wymyślonych danych, bez emulatora. Ten dokument jest źródłem prawdy dla liczb i wyraźnie oznacza, gdzie liczba jest konwencją, a gdzie wynikiem badania. **Zmieniając regułę, zmień i jego.**
 
 Zasada naczelna doradcy: koszt milczenia jest wyższy niż koszt zbędnej propozycji. Przy wątpliwościach mówimy; wyjątkiem są propozycje zejścia z ciężaru, bo te kosztują więcej niż spojrzenie - przychodzą odznaczone.
+
+**Tryb progresji ćwiczenia (`ProgressMode`) obowiązuje w obu miejscach naraz** - w `ProgressionEngine` i w `ProgressionAdvisor`. Cztery tryby: pełna, bez ciężaru, bez powtórzeń, wyłączona; kod trybu leży w starej kolumnie `no_progress`, więc istniejących wartości nie wolno przenumerować. Blokada dotyczy dokładania - zejście z ciężaru zostaje w trybach częściowych.
 
 `PlateCalculator` rozróżnia dwa zastosowania, które łatwo pomylić: **wybierak** (`nextUp`/`nextDown`) musi dosięgnąć każdego osiągalnego ciężaru, a **propozycja** (`handyLadder`) preferuje progi wymagające najwyżej dwóch zmian talerzy. Zlanie ich w jedno odcina użytkownika od okrągłych liczb.
 
@@ -254,6 +260,8 @@ Gałąź domyślna to `master`, zdalne `origin` to `github.com/kubab96/GymBro`.
 **Baza to jedyna kopia historii treningów.** Nie ma eksportu. `GymBro/kopie/` trzyma ręczne kopie ściągnięte z telefonu i jest poza repozytorium. Przed czymkolwiek, co dotyka danych, zrób kopię.
 
 **Diagnostyka jest tylko w wariancie debug.** Podsłuch BLE i surowy zrzut Health Connect (`ui/Diagnostics.kt`), log skanera wagi w logcacie, zgadywanie masy z nieznanych ramek i adres pilota w Profilu wiszą na `BuildConfig.DEBUG`. W release przycisków „Diagnostyka" i „Surowe" nie ma, a `adb logcat -s GymBroBLE` milczy - do rozgryzania wagi instaluj debug. Płynność dalej mierz na release.
+
+**Awarie zapisują się do pliku** (`CrashLog.kt`), bo HyperOS nie zostawia po awarii aplikacji zrzutu w systemie, a logcat nadpisuje się w kilka godzin. Odczyt: `adb exec-out run-as pl.gymbro cat files/awarie.txt`. Tam też lądują błędy złapane po drodze - liczenie propozycji po treningu nie może zatrzymać jego końca, więc jego wyjątek idzie do pliku, a trening się zamyka.
 
 **Na zegarku nic się nie animuje poza nazwą ćwiczenia** (raz tam i z powrotem). Pełnoekranowa zasłona przejścia i błysk w 60 klatkach były ćwierć sekundy głuchoty na palec przy każdej zmianie ekranu. Zapis do pamięci czeka na 1,2 s ciszy po ostatnim dotyku (`CISZA_MS`); tylko START i FINISH idą do pliku od razu.
 

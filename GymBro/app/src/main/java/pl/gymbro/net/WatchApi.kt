@@ -65,11 +65,17 @@ class WatchApi(context: Context) {
      * treningu, a w kazdej odpowiedzi na serie byly wiekszoscia ladunku -
      * kilka kilobajtow przez Bluetooth przy kazdym nacisnieciu.
      *
+     * [potwierdzenie] - zamiast stanu samo "zrobione" z numerem sesji. Zegarek
+     * liczy ekran treningu u siebie i odpowiedzi nie rysuje; nawet lekki stan
+     * to byl kilobajt lub dwa przez Bluetooth, rozkladany na zegarku w tym
+     * samym watku, ktory obsluguje palec - przy kazdej serii i kazdym zapasie.
+     *
      * [cichy] - bez stanu w ogole: polecenia z paczki dostaja jeden wspolny
      * stan na koniec, zamiast liczyc go od nowa po kazdym.
      */
     private var lekki = false
     private var cichy = false
+    private var potwierdzenie = false
 
     /** Numer serii zalozonej przez biezace polecenie. */
     private var nowaSeria = 0L
@@ -104,14 +110,47 @@ class WatchApi(context: Context) {
     }
 
     /** Odpowiedz na polecenie zmieniajace zapis. */
-    private fun stan(): JSONObject =
-        if (cichy) JSONObject().put("ok", true) else state(lekki)
+    private fun stan(): JSONObject = when {
+        cichy -> JSONObject().put("ok", true)
+        potwierdzenie -> ack()
+        else -> state(lekki)
+    }
+
+    /**
+     * Samo potwierdzenie: czy trening trwa i ktory.
+     *
+     * Tyle zegarek musi wiedziec po kazdym poleceniu - czy jego trening dalej
+     * jest tym trwajacym na telefonie (numer i znacznik), czy telefon go juz
+     * zamknal. Reszte zna sam.
+     */
+    private fun ack(): JSONObject {
+        val session = sessionRepo.active()
+            ?: return JSONObject().put("ok", true).put("active", false).put("next", nextUnit())
+        // Suma kontrolna serii: ile ich jest i ile maja powtorzen. Zegarek
+        // liczy to samo ze swoich potwierdzonych serii i przy rozjezdzie -
+        // seria dopisana albo poprawiona tutaj, na telefonie - prosi raz
+        // o pelny stan. Bez tego taka zmiana nie docieralaby na nadgarstek
+        // do konca treningu.
+        val serie = sessionRepo.setsBySessionGrouped(session.id).values.flatten()
+        return JSONObject()
+            .put("ok", true)
+            .put("ack", true)
+            .put("active", true)
+            .put("sessionId", session.id)
+            .put("localId", session.localId ?: "")
+            .put("sets", serie.size)
+            .put("reps", serie.sumOf { it.reps })
+            // Po nim zegarek wie, ze wstrzymanie albo wznowienie juz doszlo.
+            .put("paused", session.isPaused)
+    }
 
     fun handle(request: LocalServer.Request): LocalServer.Response {
         val body = runCatching { JSONObject(request.body.ifBlank { "{}" }) }
             .getOrElse { JSONObject() }
         if (request.method == "POST" && request.path == "/batch") return batch(body)
-        lekki = body.optInt("lite") == 1
+        // Tryb 2 to samo potwierdzenie; starszy zegarek zna tylko 1.
+        lekki = body.optInt("lite") >= 1
+        potwierdzenie = body.optInt("lite") == 2
         cichy = false
         return wykonaj(request.method, request.path, body)
     }
@@ -133,6 +172,7 @@ class WatchApi(context: Context) {
             ?: return LocalServer.Response.error(400, "brak polecen")
         lekki = true
         cichy = true
+        potwierdzenie = false
         val results = JSONArray()
         try {
             for (i in 0 until items.length()) {
@@ -157,9 +197,10 @@ class WatchApi(context: Context) {
         } finally {
             cichy = false
         }
-        lekki = body.optInt("lite") == 1
+        lekki = body.optInt("lite") >= 1
+        val koniec = if (body.optInt("lite") == 2) ack() else state(lekki)
         return LocalServer.Response.ok(
-            JSONObject().put("results", results).put("state", state(lekki)).toString()
+            JSONObject().put("results", results).put("state", koniec).toString()
         )
     }
 
@@ -260,7 +301,13 @@ class WatchApi(context: Context) {
                     ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
                 // Propozycje liczymy przed zamknieciem, bo potem sesja nie
                 // jest juz biezaca i nie ma z czego ich wyliczyc.
-                ProgressionReview.saveFor(planRepo, sessionRepo, profileRepo, gymRepo, s)
+                //
+                // Blad w nich nie moze zatrzymac konca treningu: polecenie
+                // wracalo z awaria, zegarek ponawial je w kolko, a trening na
+                // telefonie trwal dalej, choc na nadgarstku byl juz zamkniety.
+                runCatching {
+                    ProgressionReview.saveFor(planRepo, sessionRepo, profileRepo, gymRepo, s)
+                }.onFailure { pl.gymbro.CrashLog.note(app, "propozycje po treningu z zegarka", it) }
                 // Trening konczy sie wtedy, gdy nacisnales koniec na zegarku,
                 // a nie wtedy, gdy telefon o tym uslyszal - przy synchronizacji
                 // po fakcie to dwie rozne godziny.
@@ -536,7 +583,12 @@ class WatchApi(context: Context) {
     }
 
     private fun state(lite: Boolean = false): JSONObject {
-        val session = sessionRepo.active() ?: return JSONObject().put("active", false)
+        // Nastepna jednostka takze bez treningu. Koniec treningu przychodzi
+        // czesto w paczce z zaleglymi seriami, a paczka konczy sie wlasnie tym
+        // stanem - bez tego pola zegarek dowiadywal sie o nastepnej jednostce
+        // dopiero przy kolejnym pytaniu o jednostki, minute pozniej.
+        val session = sessionRepo.active()
+            ?: return JSONObject().put("active", false).put("next", nextUnit())
         val states = states(session) ?: return JSONObject()
             .put("active", true)
             .put("plan", "")
@@ -567,6 +619,9 @@ class WatchApi(context: Context) {
             // dopoki START nie dojedzie.
             .put("localId", session.localId ?: "")
             .put("plan", plan?.name ?: "Trening")
+            // Numer jednostki - zegarek zaznacza ja u siebie jako zrobiona
+            // w chwili zakonczenia, bez czekania na telefon.
+            .put("planId", session.planId ?: 0)
             .put("next", nextUnit())
             .put("elapsedMin", session.elapsedMs() / 60_000)
             // Sekundy, bo zegarek dolicza sobie resztę lokalnie: odpowiedzi
@@ -668,6 +723,7 @@ class WatchApi(context: Context) {
         val program = programRepo.active()
         val plans = program?.let { planRepo.plansOf(it.id) }.orEmpty()
         val counts = sessionRepo.itemCounts()
+        val last = sessionRepo.lastFinishedAll()
         val next = nextPlanId()
         val array = JSONArray()
         val teraz = System.currentTimeMillis()
@@ -684,6 +740,10 @@ class WatchApi(context: Context) {
                     .put("name", it.name)
                     .put("exercises", counts[it.id] ?: 0)
                     .put("next", it.id == next)
+                    // Kiedy jednostka byla ostatnio robiona - z tego zegarek
+                    // sam wyznacza nastepna po zakonczeniu treningu, ta sama
+                    // regula co [nextPlanId], takze bez lacznosci.
+                    .put("lastDone", last[it.id] ?: 0L)
                     .put("plan", exercisesJson(states))
             )
         }

@@ -2,6 +2,7 @@ package pl.gymbro.gym
 
 import pl.gymbro.data.Equipment
 import pl.gymbro.data.Inventory
+import pl.gymbro.data.ProgressMode
 import pl.gymbro.data.SetEntry
 import kotlin.math.abs
 
@@ -53,7 +54,13 @@ object ProgressionEngine {
         DELOAD,
 
         /** Długo bez postępu - cofnięcie i ponowne podejście. */
-        STALLED
+        STALLED,
+
+        /**
+         * To samo, co ostatnio, bo tak ustawiono ćwiczenie - patrz [ProgressMode].
+         * Osobno od [HOLD]: tamto znaczy "dołóż powtórzeń", a tu nie ma czego dokładać.
+         */
+        KEEP
     }
 
     data class Suggestion(
@@ -67,6 +74,8 @@ object ProgressionEngine {
 
     /**
      * @param history sesje z tym ćwiczeniem, od najnowszej. Każda to lista serii.
+     * @param progress co w tym ćwiczeniu wolno podnosić. Blokada dotyczy dokładania:
+     *   zejście po spadku poniżej zakresu zostaje w każdym trybie poza wyłączonym.
      */
     fun suggest(
         equipment: Equipment,
@@ -74,7 +83,8 @@ object ProgressionEngine {
         repsFrom: Int,
         repsTo: Int,
         history: List<List<SetEntry>>,
-        inventory: Inventory
+        inventory: Inventory,
+        progress: ProgressMode = ProgressMode.ALL
     ): Suggestion {
         val mode = LoadMode.of(equipment, inventory)
         val last = history.firstOrNull()?.filter { !it.isWarmup }.orEmpty()
@@ -123,14 +133,32 @@ object ProgressionEngine {
         // nawet jeśli nie wyrobiłeś jeszcze górnej granicy powtórzeń.
         val tooEasy = rirs.size == workingSets.size && rirs.isNotEmpty() && rirs.min() >= 3
 
+        // Wyłączona progresja: nie liczymy niczego, powtarzasz ostatni trening.
+        // Bez tego ćwiczenie rozgrzewkowe i tak dostawało co tydzień jedno
+        // powtórzenie więcej - wyciszone były tylko propozycje po treningu.
+        if (progress == ProgressMode.OFF) {
+            return keep(
+                equipment, workingWeight, minReps.coerceAtMost(repsTo), inventory,
+                "Progresja wyłączona - to samo, co ostatnio."
+            )
+        }
+
         return when {
+            // Komplet powtórzeń przy ciężarze, który ma stać: nie ma czego
+            // dokładać ani w górę, ani w zakresie. Przed regułą zastoju, bo
+            // stanie na jednym ciężarze jest tu zamiarem, nie problemem.
+            allAtTop && !progress.weight -> keep(
+                equipment, workingWeight, repsTo, inventory,
+                "Komplet $repsTo powtórzeń. Ciężar w tym ćwiczeniu zostaje."
+            )
+
             allAtTop -> increase(
                 equipment, workingWeight, repsFrom, inventory, mode,
                 Reason.INCREASE,
                 "Komplet $repsTo powtórzeń w każdej serii - czas na więcej."
             )
 
-            tooEasy -> increase(
+            tooEasy && progress.weight -> increase(
                 equipment, workingWeight, repsFrom, inventory, mode,
                 Reason.INCREASE_EASY,
                 "RIR 3 i więcej w każdej serii - ciężar jest za lekki."
@@ -142,10 +170,20 @@ object ProgressionEngine {
                 "Drugi raz poniżej $repsFrom powtórzeń - cofnięcie pozwoli ruszyć dalej."
             )
 
-            streak >= STALL_SESSIONS -> deload(
+            // Zastój to brak ruchu ciężaru - przy ciężarze, który ma stać,
+            // ta reguła zgłaszałaby jako problem dokładnie to, o co proszono.
+            streak >= STALL_SESSIONS && progress.weight -> deload(
                 equipment, workingWeight, repsFrom, inventory, mode,
                 Reason.STALLED,
                 "$streak sesje na tym samym ciężarze bez wyrobienia zakresu."
+            )
+
+            // Powtórzeń nie dokładamy: zostaje to, co wyszło ostatnio, a ciężar
+            // ruszy dopiero wtedy, gdy sam dobijesz do góry zakresu.
+            !progress.reps -> keep(
+                equipment, workingWeight, minReps.coerceAtMost(repsTo), inventory,
+                "Ten sam ciężar i te same powtórzenia. " +
+                    "Ciężar wzrośnie po $repsTo w każdej serii."
             )
 
             else -> {
@@ -160,6 +198,21 @@ object ProgressionEngine {
             }
         }
     }
+
+    /** Ten sam ciężar i podane powtórzenia - bez dokładania czegokolwiek. */
+    private fun keep(
+        equipment: Equipment,
+        weight: Double,
+        reps: Int,
+        inv: Inventory,
+        note: String
+    ): Suggestion = Suggestion(
+        weightKg = weight,
+        reps = reps,
+        reason = Reason.KEEP,
+        note = note,
+        loading = PlateCalculator.resolve(weight, equipment, inv).loading
+    )
 
     private fun increase(
         equipment: Equipment,

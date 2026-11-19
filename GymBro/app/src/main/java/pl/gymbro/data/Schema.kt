@@ -124,6 +124,11 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * `no_progress` wycisza ćwiczenie - rozgrzewkowe i rehabilitacyjne
          * nie mają rosnąć, a cotygodniowa propozycja przy nich to szum,
          * który uczy ignorować całą kartę.
+         *
+         * Od wyciszania częściowego kolumna trzyma kod [ProgressMode], nie
+         * flagę: 0 - pełna progresja, 1 - wyłączona, 2 - bez dokładania
+         * ciężaru, 3 - bez dokładania powtórzeń. Zero i jedynka znaczą to,
+         * co zawsze, więc obyło się bez migracji.
          */
         private val V12_COLUMNS = listOf(
             "ALTER TABLE user_profile ADD COLUMN training_goal TEXT",

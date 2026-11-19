@@ -10,6 +10,8 @@ import pl.gymbro.data.Inventory
 import pl.gymbro.data.Phase
 import pl.gymbro.data.PlanItem
 import pl.gymbro.data.Plate
+import pl.gymbro.data.ProgressMode
+import pl.gymbro.data.StoredAdvice
 import pl.gymbro.data.SetEntry
 import pl.gymbro.data.TrainingGoal
 
@@ -32,11 +34,11 @@ class ProgressionAdvisorTest {
         from: Int = 8,
         to: Int = 12,
         goal: TrainingGoal? = null,
-        noProgress: Boolean = false
+        progress: ProgressMode = ProgressMode.ALL
     ) = PlanItem(
         id = 1, planId = 1, exerciseId = 1, position = 0,
         targetKg = target, sets = sets, repsFrom = from, repsTo = to, restSec = 180,
-        equipment = Equipment.BARBELL, goal = goal, noProgress = noProgress
+        equipment = Equipment.BARBELL, goal = goal, progress = progress
     )
 
     private fun outing(weight: Double, reps: Int, n: Int = 4, rir: Int? = null) =
@@ -199,7 +201,134 @@ class ProgressionAdvisorTest {
 
     @Test
     fun `wyciszone cwiczenie nie odzywa sie wcale`() {
-        assertNull(advise(listOf(outing(80.0, 12, rir = 3)), item = item(noProgress = true)))
+        assertNull(advise(listOf(outing(80.0, 12, rir = 3)), item = item(progress = ProgressMode.OFF)))
+    }
+
+    // ---- Progresja wylaczona czesciowo ------------------------------------
+
+    @Test
+    fun `bez dokladania ciezaru szczyt zakresu wydluza zakres`() {
+        // Prog jest drobny (80 -> 81,4), wiec zwykle poszedlby ciezar.
+        val a = advise(
+            listOf(outing(80.0, 12, rir = 1)),
+            item = item(progress = ProgressMode.NO_WEIGHT)
+        )
+        assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
+        assertEquals(14, a?.repsTo)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru duzy zapas przy niedobitym zakresie to cisza`() {
+        // W trybie pelnym to samo daje podbicie ciezaru - patrz wyzej.
+        val a = advise(
+            listOf(outing(80.0, 10, rir = 3)),
+            item = item(progress = ProgressMode.NO_WEIGHT)
+        )
+        assertNull("w zakresie jest jeszcze miejsce na powtorzenia", a)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru plan nie goni ciezszego treningu`() {
+        val teraz = ProgressionAdvisor.Outing(
+            listOf(12, 9, 8).mapIndexed { i, reps ->
+                SetEntry(
+                    sessionId = 53, exerciseId = 4, setIndex = i,
+                    weightKg = 39.1, reps = reps, rir = 0, doneAt = 0
+                )
+            }
+        )
+        val a = advise(
+            listOf(teraz),
+            item = item(sets = 3, target = 36.8, progress = ProgressMode.NO_WEIGHT)
+        )
+        assertNull("podciagniecie planu to tez dolozenie ciezaru", a)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru dlugi zakres doklada serie`() {
+        val a = advise(
+            listOf(outing(80.0, 16, rir = 1)),
+            item = item(to = 16, progress = ProgressMode.NO_WEIGHT)
+        )
+        assertEquals(ProgressionAdvisor.Kind.SET_UP, a?.kind)
+        assertEquals(5, a?.sets)
+    }
+
+    @Test
+    fun `blokada dokladania nie blokuje zejscia po zastoju`() {
+        val zastoj = List(3) { outing(80.0, 10, rir = 0) }
+        listOf(ProgressMode.NO_WEIGHT, ProgressMode.NO_REPS).forEach { tryb ->
+            val a = advise(zastoj, item = item(progress = tryb))
+            assertEquals("tryb $tryb", ProgressionAdvisor.Kind.WEIGHT_DOWN, a?.kind)
+        }
+    }
+
+    @Test
+    fun `bez dokladania powtorzen drobny prog dziala jak zwykle`() {
+        val a = advise(
+            listOf(outing(80.0, 12, rir = 1)),
+            item = item(progress = ProgressMode.NO_REPS)
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+        assertEquals(81.4, a?.weightKg!!, 0.01)
+    }
+
+    @Test
+    fun `bez dokladania powtorzen gruby prog idzie w ciezar, nie w zakres`() {
+        // W trybie pelnym ten sam uklad rozszerza zakres do 14 - patrz
+        // "gruby prog rozszerza zakres zamiast dokladac ciezar".
+        val para = listOf(16.8, 18.6, 20.4)
+        val pozycja = item(sets = 3, target = 16.8, progress = ProgressMode.NO_REPS)
+
+        // Skok o jedenascie procent wymaga potwierdzenia z drugiej sesji.
+        val raz = advise(listOf(outing(16.8, 12, n = 3, rir = 1)), item = pozycja, ladder = para)
+        assertNull("jedna sesja na szczycie to za malo na taki skok", raz)
+
+        val dwa = advise(
+            List(2) { outing(16.8, 12, n = 3, rir = 1) },
+            item = pozycja, ladder = para
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, dwa?.kind)
+        assertEquals(18.6, dwa?.weightKg!!, 0.01)
+        assertTrue("skok ponad limit przychodzi odznaczony", !dwa.preselected)
+    }
+
+    @Test
+    fun `bez dokladania powtorzen i bez wyzszego progu milczymy`() {
+        val sufit = listOf(15.0, 16.8)
+        val a = advise(
+            List(2) { outing(16.8, 12, n = 3, rir = 1) },
+            item = item(sets = 3, target = 16.8, progress = ProgressMode.NO_REPS),
+            ladder = sufit
+        )
+        assertNull("nie ma ciezaru do dolozenia, a powtorzen nie wolno", a)
+    }
+
+    @Test
+    fun `propozycja sprzed zmiany trybu przestaje pasowac`() {
+        fun czeka(rodzaj: ProgressionAdvisor.Kind, tryb: ProgressMode) =
+            ProgressionAdvisor.stillFits(
+                item(progress = tryb).copy(advice = StoredAdvice(kind = rodzaj.name))
+            )
+        assertTrue(!czeka(ProgressionAdvisor.Kind.WEIGHT_UP, ProgressMode.NO_WEIGHT))
+        assertTrue(czeka(ProgressionAdvisor.Kind.WEIGHT_UP, ProgressMode.NO_REPS))
+        assertTrue(!czeka(ProgressionAdvisor.Kind.REPS_UP, ProgressMode.NO_REPS))
+        assertTrue(czeka(ProgressionAdvisor.Kind.REPS_UP, ProgressMode.NO_WEIGHT))
+        assertTrue(czeka(ProgressionAdvisor.Kind.WEIGHT_DOWN, ProgressMode.NO_WEIGHT))
+        assertTrue(!czeka(ProgressionAdvisor.Kind.WEIGHT_DOWN, ProgressMode.OFF))
+        assertTrue("bez propozycji nie ma czego kasowac",
+            ProgressionAdvisor.stillFits(item(progress = ProgressMode.OFF)))
+    }
+
+    @Test
+    fun `kod trybu w bazie nie zmienia znaczenia starych wartosci`() {
+        // Kolumna trzymala dotad flage: 0 - proponuj, 1 - wycisz.
+        assertEquals(ProgressMode.ALL, ProgressMode.fromCode(0))
+        assertEquals(ProgressMode.OFF, ProgressMode.fromCode(1))
+        assertEquals(ProgressMode.NO_WEIGHT, ProgressMode.fromCode(2))
+        assertEquals(ProgressMode.NO_REPS, ProgressMode.fromCode(3))
+        assertEquals("nieznany kod to pelna progresja", ProgressMode.ALL, ProgressMode.fromCode(9))
+        assertEquals(ProgressMode.entries.size, ProgressMode.entries.map { it.code }.toSet().size)
     }
 
     @Test

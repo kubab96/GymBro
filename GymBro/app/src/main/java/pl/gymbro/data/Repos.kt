@@ -385,7 +385,7 @@ class PlanRepository(context: Context) {
         exerciseName = c.str("ex_name"),
         equipment = Equipment.fromName(c.str("ex_equipment")),
         goal = runCatching { TrainingGoal.valueOf(c.str("goal")) }.getOrNull(),
-        noProgress = c.int("no_progress") == 1,
+        progress = ProgressMode.fromCode(c.int("no_progress")),
         stepKg = c.dblOrNull("ex_step"),
         advice = c.strOrNull("adv_kind")?.let { kind ->
             StoredAdvice(
@@ -440,7 +440,7 @@ class PlanRepository(context: Context) {
             put("reps_to", item.repsTo)
             put("rest_sec", item.restSec)
             if (item.goal != null) put("goal", item.goal.name) else putNull("goal")
-            put("no_progress", if (item.noProgress) 1 else 0)
+            put("no_progress", item.progress.code)
         }
         return if (item.id == 0L) {
             db.writable.insert("plan_item", null, values)

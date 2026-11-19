@@ -5,6 +5,7 @@ import pl.gymbro.data.SessionSummary
 import pl.gymbro.data.ExternalSession
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.gym.ProgressionReview
+import pl.gymbro.CrashLog
 import pl.gymbro.gym.ProgressionAdvisor
 import pl.gymbro.gym.WatchMatch
 import pl.gymbro.gym.Timeline
@@ -440,9 +441,17 @@ fun WorkoutScreen() {
                         withContext(Dispatchers.IO) {
                             // Propozycje lądują przy pozycjach planu;
                             // zakładka Plan pokaże plakietkę.
-                            ProgressionReview.saveFor(
-                                planRepo, sessionRepo, profileRepo, gymRepo, done
-                            )
+                            //
+                            // Osobno od zamknięcia sesji: błąd w liczeniu
+                            // propozycji wywracał całą aplikację w chwili
+                            // naciśnięcia "Zakończ", a trening zostawał
+                            // otwarty. Propozycja to dodatek, koniec treningu
+                            // musi przejść zawsze.
+                            runCatching {
+                                ProgressionReview.saveFor(
+                                    planRepo, sessionRepo, profileRepo, gymRepo, done
+                                )
+                            }.onFailure { CrashLog.note(context, "propozycje po treningu", it) }
                             sessionRepo.finish(done.id)
                         }
                         session = null
@@ -1574,6 +1583,7 @@ private fun suggestionLine(state: ExerciseState): String {
         ProgressionEngine.Reason.INCREASE_EASY -> "↑ podbicie - było za lekko$from"
         ProgressionEngine.Reason.DELOAD -> "↓ cofnięcie - spadek poniżej zakresu$from"
         ProgressionEngine.Reason.STALLED -> "↓ cofnięcie - zastój$from"
+        ProgressionEngine.Reason.KEEP -> "bez progresji - to samo, co poprzednio$from"
     }
 }
 

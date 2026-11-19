@@ -91,7 +91,8 @@ object LiveSession {
                     repsFrom = item.repsFrom,
                     repsTo = item.repsTo,
                     history = history,
-                    inventory = inventory
+                    inventory = inventory,
+                    progress = item.progress
                 )
             )
         }

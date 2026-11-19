@@ -488,6 +488,58 @@ W bazie: kolumna `no_progress` w `plan_item`, migracja dodająca ją z
 wartością 0. Ćwiczenie wyciszone nie trafia do karty propozycji w ogóle -
 nie pojawia się nawet jako „bez zmian", bo nie o to pytasz.
 
+### Wyłączenie częściowe
+
+Samo „wszystko albo nic" nie starczało. Przy jednej parze hantli ciężar nie
+ma dokąd rosnąć, ale powtórzenia mają; przy schemacie ze stałą liczbą
+powtórzeń jest odwrotnie. Wyciszenie całości zabierało wtedy także tę połowę
+podpowiedzi, która miała sens. Stąd cztery tryby (`ProgressMode`), wybierane
+na karcie ćwiczenia w edytorze jednostki:
+
+| Tryb | Kod | Ciężar | Powtórzenia |
+|---|---|---|---|
+| pełna | 0 | rośnie | rosną |
+| wyłączona | 1 | stoi | stoją |
+| bez ciężaru | 2 | stoi | rosną |
+| bez powtórzeń | 3 | rośnie | stoją |
+
+Kod leży w tej samej kolumnie `no_progress` - zero i jedynka znaczą to, co
+przed zmianą, więc migracji nie było. To konwencja zapisu, nie wynik badania.
+
+Tryb działa w obu miejscach, które liczą progresję - także w propozycji na
+dzisiejszą serię. Wcześniej wyciszenie dotyczyło tylko karty po treningu,
+więc ćwiczenie rozgrzewkowe i tak dostawało co tydzień jedno powtórzenie
+więcej na zegarku.
+
+**Propozycja na dziś** (`ProgressionEngine`):
+
+- *wyłączona* - ten sam ciężar i te same powtórzenia co ostatnio, zawsze;
+- *bez ciężaru* - powtórzenia rosną o jedno aż do góry zakresu i tam stają;
+  komplet powtórzeń ani wysoki zapas nie podbijają ciężaru, a stanie na jednym
+  ciężarze nie jest zastojem (reguła czterech sesji nie działa);
+- *bez powtórzeń* - cel powtórzeń zostaje tam, gdzie wyszedł ostatnio; ciężar
+  idzie w górę jak zwykle, czyli po dobiciu góry zakresu albo przy zapasie 3+.
+
+**Propozycja po treningu** (`ProgressionAdvisor`):
+
+- *bez ciężaru* - ze szczytu zakresu idzie dłuższy zakres, a po jego
+  wyczerpaniu seria, bez względu na to, jak drobny jest próg ciężaru. Sam
+  zapas przy niedobitym zakresie nie daje nic: na powtórzenia jest jeszcze
+  miejsce bez ruszania planu. Plan nie goni też cięższego treningu;
+- *bez powtórzeń* - zakres się nie wydłuża. Przy grubym progu, gdzie zwykle
+  ciężar ustępuje powtórzeniom, proponujemy następny próg wprost, po
+  potwierdzeniu z drugiej sesji i **odznaczony** - to skok ponad limit
+  z rozdziału 5, więc kosztuje więcej niż spojrzenie. Gdy wyższego progu nie
+  ma, milczymy.
+
+Blokada dotyczy **dokładania**. Zejście z ciężaru po spadku poniżej zakresu
+albo po zastoju zostaje w obu trybach częściowych - to nie progresja, tylko
+wyjście z dołka, i wyłącza je dopiero tryb „wyłączona".
+
+Propozycja czekająca przy pozycji planu znika, gdy zmiana trybu ją wyklucza
+(`stillFits`): „dołóż 2,5 kg" przy ćwiczeniu, w którym właśnie wyłączono
+dokładanie ciężaru, wyglądałoby na zignorowane ustawienie.
+
 ---
 
 ## 9. Gdzie to zyje
@@ -539,7 +591,8 @@ Zaimplementowane:
 - **Plakietka przy zakładce Plan**, gasnąca po zajrzeniu.
 - **Kafelek w historii treningu** z przejściem do planu.
 - **Ustawienia w Profilu** - cel treningowy i faza.
-- **Wyciszanie w edytorze planu** - pole „Nie proponuj progresji".
+- **Wyciszanie w edytorze planu** - wybór trybu „Progresja": pełna, bez
+  ciężaru, bez powtórzeń, wyłączona (rozdział 8).
 
 Niezrobione:
 
