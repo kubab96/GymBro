@@ -23,6 +23,8 @@ dosłowny z pobranego tekstu, **[?]** niepotwierdzone.
 | Mitchell 2012, PMC3404827 | 30% vs 80% 1RM do upadku |
 | Refalo 2022, PMC9935748 | bliskość upadku a hipertrofia |
 | Grgic 2021, PMC9068575 | upadek vs brak upadku, siła i hipertrofia |
+| Plotkin 2022, PMC9528903 | progresja ciężarem vs powtórzeniami, 8 tyg., wytrenowani |
+| Schoenfeld 2021, PMC7927075 | przegląd kontinuum powtórzeń, „strefa hipertrofii" |
 
 Nie udało się: Halperin (404 na SportRxiv), Russo 2025 (błąd certyfikatu),
 Schoenfeld 2017 dose-response (PDF binarny, tekstu nie wyciągnięto).
@@ -174,6 +176,122 @@ zmienia nic: 80 → 82,5 kg to dołożenie 1,25 na stronę, koszt 1.
 
 ## 4. Algorytm
 
+### Zmiana z 21.11.2026: tonaż zamiast najsłabszej serii
+
+Powód: trening C, prostowanie na wyciągu 40 kg, 18/13/11 przy zakresie
+10-15. Dwie serie ponad dołem zakresu, a karta milczała, bo liczyła się
+wyłącznie najsłabsza seria. Do tego podwójna progresja działała po cichu:
+powtórzenia miały rosnąć, ale żadna karta o tym nie mówiła.
+
+**Zakres wyczerpany** to teraz warunek tonażowy: suma powtórzeń na ciężarze
+roboczym co najmniej `serie × repsTo` (przy stałym ciężarze to ten sam
+tonaż, co pełny zakres w każdej serii) **i** żadna seria poniżej `repsFrom`.
+Dolna granica zostaje, bo 20/16/7/7 ma sumę w porządku, a dwie ostatnie serie
+mówią, że ciężar już jest na granicy. Wielkość skoku i równoważność Epleya
+liczą się od **średniej** powtórzeń, nie od najmniejszej.
+
+**Zakres niewyczerpany nigdy nie kończy się ciszą:**
+
+| tonaż względem poprzedniego razu | karta |
+|---|---|
+| wyższy albo brak poprzedniego | **cel powtórzeń** (`REPS_GOAL`): „następnym razem N powt. w serii", N = średnia + 1, nie wyżej niż góra zakresu |
+| niższy | **bez zmian** (`HOLD`) z liczbami: „tonaż 1505 → 1365 kg (-9%)" |
+
+Obie karty niczego w planie nie zmieniają, mają jeden przycisk „Rozumiem".
+Ten sam cel N idzie na zegarek jako propozycja pierwszej serii
+(`ProgressionEngine`), więc karta i zegarek się nie rozjeżdżają.
+Szczyt zakresu przy grubym progu, który czeka na potwierdzenie z drugiej
+sesji, też daje „bez zmian" z powodem zamiast ciszy.
+
+**Gruby próg sprawdzany tonażem.** Przy skoku ponad 5% najpierw liczymy
+z równoważności, ile powtórzeń wyjdzie na następnym progu. Jeśli co najmniej
+`repsFrom` - idzie ciężar, zaznaczony. Dopiero gdy skok jest nie do zrobienia,
+zostaje objętość. Przykład: para hantli 16,8 → 18,6 kg (11%). Po 15/12/12
+wychodzi 8 powtórzeń na 18,6 kg, więc ciężar idzie w górę. Po równym 3 × 12
+wychodzi 7, więc dokładamy serię.
+
+**Zakres najwyżej do 12.** Wydłużanie zakresu (`REPS_UP`) kończy się na 12,
+dalej idzie seria. Ciężar ma pierwszeństwo przed powtórzeniami.
+
+**Talerze wyczerpane.** Przy włączonym „Dostosuj sprzęt oraz obciążenia"
+sztanga i hantle idą po progach z posiadanych talerzy. Gdy powyżej nie ma
+żadnego układu, a zakres jest wyczerpany, zakres rośnie o 2 - wyjątkowo do
+**15**, bo ciężar nie ma już dokąd iść - a potem dochodzi seria. W środku
+zakresu przychodzi cel powtórzeń, także przy zapasie 3+. Zegarek celuje
+wtedy w średnią plus jedno, bez sufitu zakresu; wcześniej proponował dół
+zakresu. Do drabinki propozycji, poza wygodnymi progami (najwyżej dwa ruchy
+talerzy), zawsze trafia najbliższy prawdziwy próg w górę - inaczej układ
+wymagający przełożenia kompletu wyglądał jak koniec talerzy.
+
+**Cel na zegarku przy wyczerpanym zakresie** (`ProgressionEngine`). Ciężar
+na zegarku i na ekranie treningu bierze się z planu, więc to plan decyduje:
+
+| plan względem ostatniego treningu | ciężar | cel pierwszej serii |
+|---|---|---|
+| wyżej - podbicie przyjęte | z planu | dół zakresu |
+| tak samo - karta z podbiciem czeka | z planu | średnia + 1, najwyżej góra zakresu |
+| brak ciężaru w planie | liczy silnik (talerze, krok, przepaść) | jak wyżej, zależnie od skoku |
+
+Wcześniej silnik zakładał, że ciężar już wzrósł, i dawał dół zakresu także
+wtedy, gdy karty nikt nie przyjął. Zegarek pokazywał wtedy stary ciężar na
+8 powtórzeń po treningu 12/12/12, a telefon - ciężar, którego w planie nie było.
+
+**Przepaść między progami** (np. 10 → 18 kg) działa jak koniec talerzy,
+dopóki nie da się jej przeskoczyć. Zakres rośnie o 2 do 15, potem dochodzi
+seria. Skok sprawdzamy po każdym treningu, gdy tylko średnia sięga
+zwykłego zakresu (do 12). Wypada, gdy z równoważności Epleya (średnia
+powtórzeń plus zapas) wychodzi na wyższym progu co najmniej `repsFrom`.
+Skok zabiera ze sobą powrót zakresu do 12 - wydłużony był mostem, nie celem.
+Zakres z dołem od 12 wzwyż (np. 15-20) jest wyborem i zostaje. Zegarek
+w przepaści zostawia ciężar i celuje w średnią plus jedno.
+
+Dlaczego równoważność, a nie sam tonaż: 3 × 12 na 10 kg to 360 kg, a 3 × 8
+na 14 kg to 336 kg - tonaż „się zgadza", a z równoważności na 14 kg wychodzi
+jedno powtórzenie. Serie też nie przybliżają skoku: czwarta seria nie
+sprawia, że pojedyncza może być cięższa. Przy przepaści większej niż
+około 18% powtórzenia do 15 jej nie zamkną; zostają serie, a skok przyjdzie
+dopiero, gdy powtórzenia urosną z zapasu albo zakres przy ćwiczeniu zostanie
+wydłużony ręcznie. *Konwencja: granica 15 i warunek „co najmniej dół
+zakresu na nowym ciężarze".*
+
+**Wyciąg, maszyna i hantle bez ograniczeń chodzą po progach kroku**
+(`StepLadder`, krok z ćwiczenia, domyślnie 2,5 kg), tych samych co na
+zegarku. Wcześniej pusta drabinka znaczyła „ciężar płynny" i doradca
+proponował +2,5% - 36 kg na stosie co 2,5. Skok o jeden próg stosu to przy
+wyciągu zwykle 6-13%, więc te ćwiczenia idą ścieżką grubego progu sprawdzaną
+tonażem.
+
+Co mówią źródła, sprawdzone przy tej zmianie:
+
+- **Plotkin 2022** (8 tyg., 43 wytrenowanych, 4 serie 8-12RM do upadku):
+  progresja samymi powtórzeniami i samym ciężarem dała **podobną
+  hipertrofię**. Prosty mięsień uda lekko na korzyść powtórzeń, z przedziałem
+  przez zero. 1RM w przysiadzie lekko na korzyść ciężaru, o około 2 kg, czyli
+  różnica o wątpliwym znaczeniu. Wniosek autorów: obie drogi są skuteczne,
+  a powtórzenia są przydatne, gdy wyższego ciężaru brak. **Tonażu między
+  grupami nie raportują**, więc ta praca nie mówi, że tonaż jest właściwą
+  miarą bodźca.
+- **Schoenfeld 2021**: nie ma „strefy hipertrofii". Przy wysokim wysiłku
+  masa rośnie w szerokim zakresie obciążeń, od około 30% 1RM w górę.
+  Umiarkowany ciężar nazywają jednak **najefektywniejszą drogą**: lekki
+  wymaga więcej powtórzeń i czasu, daje więcej dyskomfortu i gorzej się go
+  trzyma, a ciężki wymaga więcej serii. Tonaż (`serie × powt. × ciężar`)
+  traktują jako zmienną projektu badania, **nie jako potwierdzony wyznacznik
+  hipertrofii**. Lepiej udokumentowana jest zależność od liczby serii.
+
+Wnioski dla nas:
+
+- Granica 12 to **wybór użytkownika**, zgodny z literaturą, ale nie jej
+  wynik. Literatura nie zabrania 15, mówi tylko, że wyżej jest drożej.
+- Tonaż liczymy **w obrębie jednego ćwiczenia, z treningu na trening**,
+  jako sygnał „zrobiłeś więcej niż ostatnio". Do porównań między
+  ćwiczeniami albo jako miara bodźca na masę się nie nadaje: wyciskanie
+  nogami zawsze ma większy tonaż niż prostowanie, a nie buduje przez to
+  więcej czworogłowego.
+- Na masę ciężar i powtórzenia są według Plotkina równorzędne. Pierwszeństwo
+  ciężaru to więc konwencja wygody, nie wynik badania: krótsze serie i mniej
+  dyskomfortu przy tym samym efekcie.
+
 ### Zasada naczelna: koszt milczenia jest wyzszy
 
 Propozycja, ktora zignorujesz, kosztuje jedno spojrzenie. Propozycja, ktorej
@@ -248,9 +366,13 @@ jeśli minR >= repsTo:
     (zapas 0 nie blokuje - zmniejsza tylko skok w kroku 3)
     jeśli krok% <= 5   -> DODAJ CIĘŻAR
     jeśli krok% > 5:
-        jeśli zakres < 15 powtórzeń -> ROZSZERZ ZAKRES o 2
+        jeśli tonaż udźwignie następny próg -> DODAJ CIĘŻAR   (od 21.11.2026)
+        jeśli zakres < 12 powtórzeń -> ROZSZERZ ZAKRES o 2 (najwyżej do 12)
         w przeciwnym razie          -> DODAJ SERIĘ
 ```
+
+`minR >= repsTo` czytaj od 21.11.2026 jako warunek tonażowy z początku
+rozdziału, a granicę 15 poniżej jako 12.
 
 Próg **5%** jest wyznaczony przez Twój sprzęt, nie przez literaturę: sztanga
 (1.8%) i wyciąg (~2.5%) wpadają poniżej, para hantli (9%) powyżej. Żadna

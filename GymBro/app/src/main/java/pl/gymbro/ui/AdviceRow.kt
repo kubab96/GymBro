@@ -80,14 +80,24 @@ fun AdviceRow(
             Modifier.fillMaxWidth().padding(top = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            TextButton(
-                onClick = onAccept,
-                contentPadding = ButtonDefaults.TextButtonContentPadding
-            ) { Text("Zastosuj") }
-            TextButton(
-                onClick = onSkip,
-                contentPadding = ButtonDefaults.TextButtonContentPadding
-            ) { Text("Pomiń") }
+            // Cel powtórzeń i „bez zmian" niczego w planie nie ruszają.
+            // Zastosuj obok Pomiń sugerowałoby, że jedno coś zmienia, a drugie
+            // nie - a oba robiłyby to samo.
+            if (isInfoOnly(advice)) {
+                TextButton(
+                    onClick = onSkip,
+                    contentPadding = ButtonDefaults.TextButtonContentPadding
+                ) { Text("Rozumiem") }
+            } else {
+                TextButton(
+                    onClick = onAccept,
+                    contentPadding = ButtonDefaults.TextButtonContentPadding
+                ) { Text("Zastosuj") }
+                TextButton(
+                    onClick = onSkip,
+                    contentPadding = ButtonDefaults.TextButtonContentPadding
+                ) { Text("Pomiń") }
+            }
         }
     }
 }
@@ -95,7 +105,11 @@ fun AdviceRow(
 /** Zmiana zapisana jako „z czego na co" - inaczej liczba wisi w próżni. */
 fun adviceText(item: PlanItem, advice: StoredAdvice): String = when (advice.kind) {
     "WEIGHT_UP", "WEIGHT_DOWN" ->
-        "ciężar ${fmtKg(item.targetKg)} na ${fmtKg(advice.weightKg ?: 0.0)} kg"
+        "ciężar ${fmtKg(item.targetKg)} na ${fmtKg(advice.weightKg ?: 0.0)} kg" +
+            // Skok przez przepaść cofa zakres wydłużony na czas przechodzenia.
+            advice.repsTo?.takeIf { it != item.repsTo }
+                ?.let { ", zakres ${item.repsFrom}-${item.repsTo} na ${item.repsFrom}-$it" }
+                .orEmpty()
 
     "REPS_UP" ->
         "zakres ${item.repsFrom}-${item.repsTo} na ${item.repsFrom}-${advice.repsTo}"
@@ -103,8 +117,16 @@ fun adviceText(item: PlanItem, advice: StoredAdvice): String = when (advice.kind
     "SET_UP" ->
         "serie ${item.sets} na ${advice.sets}"
 
-    else -> "bez zmian"
+    "REPS_GOAL" ->
+        "następnym razem: ${advice.repsTo ?: item.repsTo} powt. w serii" +
+            if (item.hasTargetWeight) " przy ${fmtKg(item.targetKg)} kg" else ""
+
+    else -> advice.repsTo?.let { "bez zmian, cel $it powt. w serii" } ?: "bez zmian"
 }
+
+/** Propozycja, która niczego w planie nie zmienia - tylko mówi, co dalej. */
+fun isInfoOnly(advice: StoredAdvice): Boolean =
+    advice.kind == "REPS_GOAL" || advice.kind == "HOLD"
 
 private fun fmtKg(v: Double): String =
     if (kotlin.math.abs(v - Math.round(v)) < 0.01) Math.round(v).toString()

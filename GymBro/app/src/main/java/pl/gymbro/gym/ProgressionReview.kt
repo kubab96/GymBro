@@ -84,13 +84,31 @@ object ProgressionReview {
         inventory: Inventory
     ): List<Double> {
         if (!item.hasTargetWeight) return emptyList()
-        val mode = LoadMode.of(item.equipment, inventory) ?: return emptyList()
-        return PlateCalculator.handyLadder(item.targetKg, mode, inventory)
+        // Wyciąg, maszyna albo hantle bez ograniczeń: te same równe progi,
+        // po których chodzi zegarek (krok z ćwiczenia, domyślnie 2,5 kg).
+        // Pusta lista znaczyła dotąd „ciężar płynny" i doradca proponował
+        // 36 kg na stosie co 2,5 - liczbę, której nie da się ustawić.
+        // Siatka od ciężaru z planu, bo od niego zaczyna zegarek; zasięg
+        // szeroki, bo trening bywa daleko od planu (25 kg przy planie 20).
+        val mode = LoadMode.of(item.equipment, inventory)
+            ?: return StepLadder.rungs(item.targetKg, item.stepKg, STEP_SPAN)
+        val wygodne = PlateCalculator.handyLadder(item.targetKg, mode, inventory)
             .map { it.totalKg }
+        // Wygodne progi to te, które osiąga się najwyżej dwoma ruchami. Gdy
+        // w górę żadnego takiego nie ma, a cięższy układ z talerzy istnieje,
+        // dokładamy ten najbliższy - inaczej doradca uznawał talerze za
+        // wyczerpane i przechodził na powtórzenia, choć ciężar dało się dołożyć.
+        if (wygodne.any { it > item.targetKg + 0.01 }) return wygodne
+        val wyzej = PlateCalculator.nextUp(item.targetKg, mode, inventory)?.totalKg
+            ?: return wygodne
+        return (wygodne + wyzej).sorted()
     }
 
     /** Ile wcześniejszych sesji bierzemy pod uwagę przy liczeniu zastoju. */
     private const val HISTORY_DEPTH = 6
+
+    /** Ile progów w każdą stronę od planu - przy 2,5 kg to pięćdziesiąt kilo. */
+    private const val STEP_SPAN = 20
 
     /**
      * Policzenie propozycji i zapisanie ich przy pozycjach planu.
@@ -194,8 +212,10 @@ object ProgressionReview {
         val item = advice.item
         val updated = when (advice.kind) {
             ProgressionAdvisor.Kind.WEIGHT_UP,
-            ProgressionAdvisor.Kind.WEIGHT_DOWN ->
-                item.copy(targetKg = advice.weightKg ?: item.targetKg)
+            ProgressionAdvisor.Kind.WEIGHT_DOWN -> item.copy(
+                targetKg = advice.weightKg ?: item.targetKg,
+                repsTo = advice.repsTo ?: item.repsTo
+            )
 
             ProgressionAdvisor.Kind.REPS_UP ->
                 item.copy(repsTo = advice.repsTo ?: item.repsTo)
@@ -203,7 +223,8 @@ object ProgressionReview {
             ProgressionAdvisor.Kind.SET_UP ->
                 item.copy(sets = advice.sets ?: item.sets)
 
-            ProgressionAdvisor.Kind.HOLD -> return
+            ProgressionAdvisor.Kind.HOLD,
+            ProgressionAdvisor.Kind.REPS_GOAL -> return
         }
         planRepo.upsertItem(updated)
     }
@@ -243,6 +264,9 @@ object ProgressionReview {
             "${advice.item.sets} na ${advice.sets} serie"
 
         ProgressionAdvisor.Kind.HOLD -> "bez zmian"
+
+        ProgressionAdvisor.Kind.REPS_GOAL ->
+            "cel ${advice.repsTo ?: advice.item.repsTo} powt. w serii"
     }
 
     private fun fmt(v: Double): String =

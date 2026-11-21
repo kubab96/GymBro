@@ -51,6 +51,15 @@ class ProgressionAdvisorTest {
             }
         )
 
+    private fun sets(weight: Double, vararg reps: Int) = ProgressionAdvisor.Outing(
+        reps.mapIndexed { i, r ->
+            SetEntry(
+                sessionId = 1, exerciseId = 1, setIndex = i,
+                weightKg = weight, reps = r, rir = null, doneAt = 0
+            )
+        }
+    )
+
     private fun advise(
         history: List<ProgressionAdvisor.Outing>,
         item: PlanItem = item(),
@@ -103,8 +112,51 @@ class ProgressionAdvisorTest {
     }
 
     @Test
-    fun `bez zapasu i bez szczytu zakresu milczymy`() {
-        assertNull(advise(listOf(outing(80.0, 10, rir = 1))))
+    fun `niedobity zakres daje cel powtorzen, nie cisze`() {
+        // Dotad tu byla cisza i podwojna progresja dzialala po cichu - nikt
+        // nie mowil, ze nastepnym razem trzeba celowac w jedenascie.
+        val a = advise(listOf(outing(80.0, 10, rir = 1)))
+        assertEquals(ProgressionAdvisor.Kind.REPS_GOAL, a?.kind)
+        assertEquals(11, a?.repsTo)
+        assertTrue(a!!.preselected)
+    }
+
+    @Test
+    fun `cel powtorzen ze sredniej, nie z najslabszej serii`() {
+        val teraz = sets(80.0, 12, 11, 8, 9)
+        val a = advise(listOf(teraz))
+        assertEquals(ProgressionAdvisor.Kind.REPS_GOAL, a?.kind)
+        assertEquals("srednia 10 plus jedno", 11, a?.repsTo)
+    }
+
+    @Test
+    fun `spadek tonazu ponizej szczytu mowi bez zmian z liczbami`() {
+        val a = advise(listOf(outing(80.0, 10), outing(80.0, 11)))
+        assertEquals(ProgressionAdvisor.Kind.HOLD, a?.kind)
+        assertTrue("powod ma niesc procent spadku: ${a?.reason}", a!!.reason.contains("-9%"))
+        assertTrue(!a.preselected)
+    }
+
+    @Test
+    fun `wzrost tonazu ponizej szczytu daje cel powtorzen`() {
+        val a = advise(listOf(outing(80.0, 11), outing(80.0, 10)))
+        assertEquals(ProgressionAdvisor.Kind.REPS_GOAL, a?.kind)
+        assertEquals(12, a?.repsTo)
+        assertTrue(a!!.reason.contains("+10%"))
+    }
+
+    @Test
+    fun `zakres liczymy z sumy powtorzen, nie z najslabszej serii`() {
+        // 13/12/12/11 to 48 powtorzen przy 4 x 12 - zakres wyczerpany, choc
+        // jedna seria wyszla jedenascie.
+        val a = advise(listOf(sets(80.0, 13, 12, 12, 11)))
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+    }
+
+    @Test
+    fun `seria ponizej dolu zakresu blokuje podbicie mimo sumy`() {
+        val a = advise(listOf(sets(80.0, 20, 16, 7, 7)))
+        assertTrue("seria ponizej osmiu to nie gotowosc", a?.kind != ProgressionAdvisor.Kind.WEIGHT_UP)
     }
 
     // ---- Duze przekroczenie zakresu ---------------------------------------
@@ -137,39 +189,104 @@ class ProgressionAdvisorTest {
     // ---- Gruby prog ciezaru -----------------------------------------------
 
     @Test
-    fun `gruby prog rozszerza zakres zamiast dokladac ciezar`() {
+    fun `gruby prog, ktory tonaz udzwignie, idzie w ciezar`() {
+        // 15/12/12 na 16,8 kg: z rownowaznosci osiem powtorzen na 18,6 kg,
+        // czyli w zakresie. Dotad skok ponad piec procent zawsze przegrywal
+        // z wydluzaniem zakresu.
+        val para = listOf(16.8, 18.6, 20.4)
+        val teraz = ProgressionAdvisor.Outing(
+            listOf(15, 12, 12).mapIndexed { i, r ->
+                SetEntry(sessionId = 1, exerciseId = 1, setIndex = i,
+                    weightKg = 16.8, reps = r, rir = 1, doneAt = 0)
+            }
+        )
+        val a = advise(listOf(teraz), item = item(sets = 3, target = 16.8), ladder = para)
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+        assertEquals(18.6, a?.weightKg!!, 0.01)
+        assertTrue(a.preselected)
+    }
+
+    @Test
+    fun `przepasc nie do przeskoczenia wydluza zakres ponad dwanascie`() {
+        // Rowne 3 x 12 na granicy (zapas 0): na 18,6 kg wychodzi siedem powtorzen.
+        // Dotad od razu szla seria, a powtorzenia - jedyne, co przybliza do
+        // skoku - nie rosly wcale.
         val para = listOf(16.8, 18.6, 20.4)
         val a = advise(
-            listOf(outing(16.8, 12, n = 3, rir = 1)),
+            listOf(outing(16.8, 12, n = 3, rir = 0)),
             item = item(sets = 3, target = 16.8),
             ladder = para
+        )
+        assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
+        assertEquals(14, a?.repsTo)
+        assertTrue(a!!.reason, a.reason.contains("przepaść"))
+    }
+
+    @Test
+    fun `przepasc 10 na 18 kg tez idzie powtorzeniami`() {
+        val a = advise(
+            listOf(outing(10.0, 12, n = 3, rir = 1)),
+            item = item(sets = 3, target = 10.0),
+            ladder = listOf(10.0, 18.0)
         )
         assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
         assertEquals(14, a?.repsTo)
     }
 
     @Test
-    fun `dlugi zakres dokłada serie`() {
-        val para = listOf(16.8, 18.6, 20.4)
+    fun `przepasc i zakres do pietnastu doklada serie`() {
+        // 3 x 15 na 10 kg to z rownowaznosci okolo 15 kg na jedno powtorzenie -
+        // do 18 dalej daleko. Powtorzenia wyczerpane, dochodzi seria.
         val a = advise(
-            listOf(outing(16.8, 16, n = 3, rir = 1)),
-            item = item(sets = 3, target = 16.8, to = 16),
-            ladder = para
+            listOf(outing(10.0, 15, n = 3, rir = 1)),
+            item = item(sets = 3, target = 10.0, to = 15),
+            ladder = listOf(10.0, 18.0)
         )
         assertEquals(ProgressionAdvisor.Kind.SET_UP, a?.kind)
         assertEquals(4, a?.sets)
     }
 
     @Test
+    fun `most przez przepasc konczy sie skokiem i powrotem zakresu`() {
+        // Zakres wydluzony na czas przepasci do 8-14. Przy 3 x 13 jest juz
+        // osiem powtorzen na 18,6 kg - skok, choc 14 nie zostalo dobite.
+        val para = listOf(16.8, 18.6, 20.4)
+        val pozycja = item(sets = 3, target = 16.8, to = 14)
+        val a = advise(listOf(outing(16.8, 13, n = 3, rir = 1)), item = pozycja, ladder = para)
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+        assertEquals(18.6, a?.weightKg!!, 0.01)
+        assertEquals("zakres wraca do dwunastu", 12, a.repsTo)
+
+        val poPrzyjeciu = ProgressionAdvisor.applyTo(
+            pozycja.copy(advice = StoredAdvice(kind = a.kind.name, weightKg = a.weightKg, repsTo = a.repsTo))
+        )
+        assertEquals(18.6, poPrzyjeciu.targetKg, 0.01)
+        assertEquals(12, poPrzyjeciu.repsTo)
+        assertEquals(8, poPrzyjeciu.repsFrom)
+    }
+
+    @Test
+    fun `zakres z dolem od dwunastu nie jest mostem i zostaje po skoku`() {
+        // Lydki 15-20: wydluzony zakres jest wyborem, nie przejsciem.
+        val a = advise(
+            listOf(outing(16.8, 20, n = 3, rir = 1)),
+            item = item(sets = 3, target = 16.8, from = 15, to = 20),
+            ladder = listOf(16.8, 18.6, 20.4)
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+        assertNull(a?.repsTo)
+    }
+
+    @Test
     fun `dla sily nie dokladamy serii`() {
         val para = listOf(16.8, 18.6, 20.4)
         val a = advise(
-            listOf(outing(16.8, 16, n = 3, rir = 1)),
-            item = item(sets = 3, target = 16.8, to = 16),
+            listOf(outing(16.8, 12, n = 3, rir = 1)),
+            item = item(sets = 3, target = 16.8),
             ladder = para,
             goal = TrainingGoal.STRENGTH
         )
-        assertNull(a)
+        assertTrue(a?.kind != ProgressionAdvisor.Kind.SET_UP)
     }
 
     // ---- Zastoj -----------------------------------------------------------
@@ -187,14 +304,14 @@ class ProgressionAdvisorTest {
         val a = advise(
             listOf(outing(80.0, 11, rir = 0), outing(80.0, 10, rir = 0), outing(80.0, 9, rir = 0))
         )
-        assertNull("powtorzenia rosly - to postep", a)
+        assertEquals("tonaz rosl - to postep", ProgressionAdvisor.Kind.REPS_GOAL, a?.kind)
     }
 
     @Test
     fun `na redukcji zastoj zglaszamy pozniej`() {
         val trzy = List(3) { outing(80.0, 10, rir = 0) }
-        assertNotNull(advise(trzy, phase = Phase.MAINTAIN))
-        assertNull(advise(trzy, phase = Phase.CUT))
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_DOWN, advise(trzy, phase = Phase.MAINTAIN)?.kind)
+        assertTrue(advise(trzy, phase = Phase.CUT)?.kind != ProgressionAdvisor.Kind.WEIGHT_DOWN)
     }
 
     // ---- Kiedy milczymy ---------------------------------------------------
@@ -210,11 +327,21 @@ class ProgressionAdvisorTest {
     fun `bez dokladania ciezaru szczyt zakresu wydluza zakres`() {
         // Prog jest drobny (80 -> 81,4), wiec zwykle poszedlby ciezar.
         val a = advise(
+            listOf(outing(80.0, 10, rir = 1)),
+            item = item(to = 10, progress = ProgressMode.NO_WEIGHT)
+        )
+        assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
+        assertEquals(12, a?.repsTo)
+    }
+
+    @Test
+    fun `bez dokladania ciezaru zakres do dwunastu doklada serie`() {
+        val a = advise(
             listOf(outing(80.0, 12, rir = 1)),
             item = item(progress = ProgressMode.NO_WEIGHT)
         )
-        assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
-        assertEquals(14, a?.repsTo)
+        assertEquals(ProgressionAdvisor.Kind.SET_UP, a?.kind)
+        assertEquals(5, a?.sets)
     }
 
     @Test
@@ -241,7 +368,8 @@ class ProgressionAdvisorTest {
             listOf(teraz),
             item = item(sets = 3, target = 36.8, progress = ProgressMode.NO_WEIGHT)
         )
-        assertNull("podciagniecie planu to tez dolozenie ciezaru", a)
+        assertTrue("podciagniecie planu to tez dolozenie ciezaru",
+            a?.kind != ProgressionAdvisor.Kind.WEIGHT_UP)
     }
 
     @Test
@@ -275,17 +403,19 @@ class ProgressionAdvisorTest {
 
     @Test
     fun `bez dokladania powtorzen gruby prog idzie w ciezar, nie w zakres`() {
-        // W trybie pelnym ten sam uklad rozszerza zakres do 14 - patrz
-        // "gruby prog rozszerza zakres zamiast dokladac ciezar".
+        // W trybie pelnym ten sam uklad wydluza zakres - patrz testy przepasci.
+        // Zapas 0, bo z zapasem 1 rownowaznosc juz pozwala na skok od razu.
         val para = listOf(16.8, 18.6, 20.4)
         val pozycja = item(sets = 3, target = 16.8, progress = ProgressMode.NO_REPS)
 
-        // Skok o jedenascie procent wymaga potwierdzenia z drugiej sesji.
-        val raz = advise(listOf(outing(16.8, 12, n = 3, rir = 1)), item = pozycja, ladder = para)
-        assertNull("jedna sesja na szczycie to za malo na taki skok", raz)
+        // Skok o jedenascie procent wymaga potwierdzenia z drugiej sesji -
+        // do tego czasu karta mowi, ze czekamy, zamiast milczec.
+        val raz = advise(listOf(outing(16.8, 12, n = 3, rir = 0)), item = pozycja, ladder = para)
+        assertEquals("jedna sesja na szczycie to za malo na taki skok",
+            ProgressionAdvisor.Kind.HOLD, raz?.kind)
 
         val dwa = advise(
-            List(2) { outing(16.8, 12, n = 3, rir = 1) },
+            List(2) { outing(16.8, 12, n = 3, rir = 0) },
             item = pozycja, ladder = para
         )
         assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, dwa?.kind)
@@ -294,14 +424,52 @@ class ProgressionAdvisorTest {
     }
 
     @Test
-    fun `bez dokladania powtorzen i bez wyzszego progu milczymy`() {
+    fun `bez dokladania powtorzen i bez wyzszego progu dochodzi seria`() {
         val sufit = listOf(15.0, 16.8)
         val a = advise(
             List(2) { outing(16.8, 12, n = 3, rir = 1) },
             item = item(sets = 3, target = 16.8, progress = ProgressMode.NO_REPS),
             ladder = sufit
         )
-        assertNull("nie ma ciezaru do dolozenia, a powtorzen nie wolno", a)
+        assertEquals("nie ma ciezaru do dolozenia, a powtorzen nie wolno",
+            ProgressionAdvisor.Kind.SET_UP, a?.kind)
+    }
+
+    // ---- Talerze wyczerpane -----------------------------------------------
+
+    private val sufit = listOf(15.0, 16.8)
+
+    @Test
+    fun `koniec talerzy na szczycie zakresu wydluza zakres ponad dwanascie`() {
+        // Dwanascie to granica wtedy, gdy ciezar moze rosnac. Tu nie moze.
+        val a = advise(
+            listOf(outing(16.8, 12, n = 3, rir = 1)),
+            item = item(sets = 3, target = 16.8), ladder = sufit
+        )
+        assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
+        assertEquals(14, a?.repsTo)
+        assertTrue(a!!.preselected)
+    }
+
+    @Test
+    fun `koniec talerzy i zakres do pietnastu doklada serie`() {
+        val a = advise(
+            listOf(outing(16.8, 15, n = 3, rir = 1)),
+            item = item(sets = 3, target = 16.8, to = 15), ladder = sufit
+        )
+        assertEquals(ProgressionAdvisor.Kind.SET_UP, a?.kind)
+        assertEquals(4, a?.sets)
+    }
+
+    @Test
+    fun `koniec talerzy w srodku zakresu daje cel powtorzen`() {
+        // Zapas 3+ zwykle podbija ciezar - ale nie ma czego dolozyc.
+        val a = advise(
+            listOf(outing(16.8, 10, n = 3, rir = 3)),
+            item = item(sets = 3, target = 16.8), ladder = sufit
+        )
+        assertEquals(ProgressionAdvisor.Kind.REPS_GOAL, a?.kind)
+        assertEquals(11, a?.repsTo)
     }
 
     @Test
@@ -337,9 +505,12 @@ class ProgressionAdvisorTest {
     }
 
     @Test
-    fun `spadek powtorzen wstrzymuje propozycje`() {
+    fun `szczyt zakresu podnosi ciezar nawet po slabszym dniu`() {
+        // Dawniej spadek z 14 na 12 wstrzymywal wszystko. Ale 4 x 12 przy
+        // zakresie 8-12 to wyczerpany zakres, niezaleznie od tego, co bylo
+        // tydzien temu - tonaz porownujemy tylko ponizej szczytu.
         val a = advise(listOf(outing(80.0, 12, rir = 0), outing(80.0, 14, rir = 0)))
-        assertNull("powtorzenia spadly z 14 na 12", a)
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
     }
 
     @Test
@@ -499,6 +670,67 @@ class ProgressionAdvisorTest {
             item(sets = 3, target = 72.3), listOf(teraz), barbell,
             TrainingGoal.HYPERTROPHY, Phase.BULK
         )
-        assertNull("ponizej dolnej granicy zakresu nie podciagamy", a)
+        assertTrue("ponizej dolnej granicy zakresu nie podciagamy",
+            a?.kind != ProgressionAdvisor.Kind.WEIGHT_UP)
+    }
+
+    // ---- Z prawdziwego treningu C z 21.11.2026 ---------------------------
+
+    private fun wyciag(weight: Double, vararg reps: Int) = ProgressionAdvisor.Outing(
+        reps.mapIndexed { i, r ->
+            SetEntry(sessionId = 68, exerciseId = 18, setIndex = i,
+                weightKg = weight, reps = r, rir = 1, doneAt = 0)
+        }
+    )
+
+    private fun pozycjaC(from: Int, to: Int) = PlanItem(
+        id = 18, planId = 3, exerciseId = 18, position = 4,
+        targetKg = 40.0, sets = 3, repsFrom = from, repsTo = to, restSec = 120,
+        equipment = Equipment.CABLE
+    )
+
+    @Test
+    fun `prostowanie 18-13-11 przy zakresie do 12 podnosi ciezar`() {
+        // Najslabsza seria 11 trzymala ten ciezar w miejscu, choc suma to 42
+        // powtorzenia na 36 z pelnego zakresu.
+        val a = ProgressionAdvisor.advise(
+            pozycjaC(8, 12), listOf(wyciag(40.0, 18, 13, 11), wyciag(40.0, 16, 15, 12)),
+            emptyList(), TrainingGoal.HYPERTROPHY, Phase.BULK
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, a?.kind)
+        assertTrue(a!!.weightKg!! > 40.0)
+    }
+
+    @Test
+    fun `wyciag dostaje ciezar ze stosu, nie z procentu`() {
+        // 36 kg na uginanie i 42 kg na prostowanie - liczby, ktorych na stosie
+        // co 2,5 kg nie ma. Drabinka ta sama, po ktorej chodzi zegarek.
+        val stos35 = StepLadder.rungs(35.0, null, 20)
+        val uginanie = ProgressionAdvisor.advise(
+            pozycjaC(8, 12).copy(targetKg = 35.0),
+            listOf(wyciag(35.0, 15, 12, 12)), stos35,
+            TrainingGoal.HYPERTROPHY, Phase.BULK
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, uginanie?.kind)
+        assertEquals(37.5, uginanie?.weightKg!!, 0.001)
+
+        val stos40 = StepLadder.rungs(40.0, null, 20)
+        val prostowanie = ProgressionAdvisor.advise(
+            pozycjaC(8, 12), listOf(wyciag(40.0, 18, 13, 11)), stos40,
+            TrainingGoal.HYPERTROPHY, Phase.BULK
+        )
+        assertEquals(ProgressionAdvisor.Kind.WEIGHT_UP, prostowanie?.kind)
+        assertEquals(42.5, prostowanie?.weightKg!!, 0.001)
+    }
+
+    @Test
+    fun `prostowanie 18-13-11 przy zakresie do 15 mowi o spadku tonazu`() {
+        // Poprzednio 16/15/12, czyli 43 powtorzenia na 40 kg - teraz 42.
+        val a = ProgressionAdvisor.advise(
+            pozycjaC(10, 15), listOf(wyciag(40.0, 18, 13, 11), wyciag(40.0, 16, 15, 12)),
+            emptyList(), TrainingGoal.HYPERTROPHY, Phase.BULK
+        )
+        assertEquals(ProgressionAdvisor.Kind.HOLD, a?.kind)
+        assertTrue(a!!.reason, a.reason.contains("1720") && a.reason.contains("1680"))
     }
 }

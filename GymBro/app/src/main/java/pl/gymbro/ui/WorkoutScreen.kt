@@ -1136,6 +1136,7 @@ private fun suggestionLine(state: ExerciseState): String {
         ProgressionEngine.Reason.HOLD -> "utrzymaj ciężar, dołóż powtórzeń$from"
         ProgressionEngine.Reason.INCREASE -> "↑ podbicie - komplet powtórzeń$from"
         ProgressionEngine.Reason.INCREASE_EASY -> "↑ podbicie - było za lekko$from"
+        ProgressionEngine.Reason.AWAITING -> "podbicie czeka w planie - ten sam ciężar$from"
         ProgressionEngine.Reason.DELOAD -> "↓ cofnięcie - spadek poniżej zakresu$from"
         ProgressionEngine.Reason.STALLED -> "↓ cofnięcie - zastój$from"
         ProgressionEngine.Reason.KEEP -> "bez progresji - to samo, co poprzednio$from"

@@ -50,6 +50,12 @@ object ProgressionEngine {
         /** Seria była wyraźnie zbyt lekka wg RIR, mimo niepełnego zakresu. */
         INCREASE_EASY,
 
+        /**
+         * Podbicie należy się, ale w planie stoi jeszcze stary ciężar - karta
+         * czeka na przyjęcie. Osobno od [INCREASE], bo tu ciężar nie rośnie.
+         */
+        AWAITING,
+
         /** Spadek poniżej dolnej granicy zakresu - cofamy się, żeby ruszyć dalej. */
         DELOAD,
 
@@ -127,7 +133,9 @@ object ProgressionEngine {
             w != null && abs(w - workingWeight) < 0.01
         }.size
 
-        val allAtTop = minReps >= repsTo
+        // Ta sama reguła co karta po treningu: suma powtórzeń, nie najsłabsza
+        // seria. Inaczej zegarek trzymał ciężar, a karta proponowała wyższy.
+        val allAtTop = ProgressionAdvisor.rangeDone(workingSets, repsFrom, repsTo)
         val belowBottom = minReps < repsFrom
         // RIR 3 i więcej w każdej serii roboczej znaczy, że ciężar jest za lekki,
         // nawet jeśli nie wyrobiłeś jeszcze górnej granicy powtórzeń.
@@ -152,14 +160,48 @@ object ProgressionEngine {
                 "Komplet $repsTo powtórzeń. Ciężar w tym ćwiczeniu zostaje."
             )
 
+            // Przy ciężarze w planie o ciężarze decyduje plan - zegarek pokazuje
+            // właśnie jego. Silnik liczący „następny próg od ostatniego razu"
+            // potrafił dać 61,25 przy przyjętych w planie 62,5, i telefon
+            // pokazywał co innego niż zegarek.
+            //
+            // Plan wyżej niż ostatni trening: podbicie przyjęte, cel od dołu.
+            (allAtTop || (tooEasy && progress.weight)) && targetKg > workingWeight + 0.01 -> {
+                val resolved = PlateCalculator.resolve(targetKg, equipment, inventory)
+                Suggestion(
+                    weightKg = resolved.actualKg,
+                    reps = repsFrom,
+                    reason = if (allAtTop) Reason.INCREASE else Reason.INCREASE_EASY,
+                    note = "Nowy ciężar z planu - od dołu zakresu, $repsFrom powtórzeń.",
+                    loading = resolved.loading
+                )
+            }
+
+            // Plan na tym samym ciężarze: karta z podbiciem czeka na przyjęcie.
+            // Cel z dołu zakresu znaczył tu: ten sam ciężar, cztery powtórzenia
+            // mniej niż ostatnio. Do przyjęcia karty - ten sam ciężar i komplet.
+            (allAtTop || (tooEasy && progress.weight)) && targetKg > 0.0 -> {
+                val cel = ProgressionAdvisor.repsGoal(workingSets, repsFrom, repsTo)
+                Suggestion(
+                    weightKg = targetKg,
+                    reps = cel,
+                    reason = Reason.AWAITING,
+                    note = "Zakres wyczerpany - zmiana czeka na przyjęcie w planie. " +
+                        "Do tego czasu ten sam ciężar, cel $cel.",
+                    loading = PlateCalculator.resolve(targetKg, equipment, inventory).loading
+                )
+            }
+
+            // Bez ciężaru w planie ciężar prowadzi sam silnik - niżej.
+
             allAtTop -> increase(
-                equipment, workingWeight, repsFrom, inventory, mode,
+                equipment, workingWeight, repsFrom, inventory, mode, workingSets,
                 Reason.INCREASE,
-                "Komplet $repsTo powtórzeń w każdej serii - czas na więcej."
+                "Średnio $repsTo powtórzeń na serię - czas na więcej."
             )
 
             tooEasy && progress.weight -> increase(
-                equipment, workingWeight, repsFrom, inventory, mode,
+                equipment, workingWeight, repsFrom, inventory, mode, workingSets,
                 Reason.INCREASE_EASY,
                 "RIR 3 i więcej w każdej serii - ciężar jest za lekki."
             )
@@ -190,9 +232,11 @@ object ProgressionEngine {
                 val resolved = PlateCalculator.resolve(workingWeight, equipment, inventory)
                 Suggestion(
                     weightKg = workingWeight,
-                    reps = (minReps + 1).coerceAtMost(repsTo),
+                    // Cel ze średniej, ten sam, który pokazuje karta po
+                    // treningu - jedna słaba seria nie cofa celu całości.
+                    reps = ProgressionAdvisor.repsGoal(workingSets, repsFrom, repsTo),
                     reason = Reason.HOLD,
-                    note = "Ten sam ciężar, dołóż powtórzeń. Cel: $repsTo w każdej serii.",
+                    note = "Ten sam ciężar, dołóż powtórzeń. Ciężar w górę po średnio $repsTo na serię.",
                     loading = resolved.loading
                 )
             }
@@ -214,26 +258,48 @@ object ProgressionEngine {
         loading = PlateCalculator.resolve(weight, equipment, inv).loading
     )
 
+    /** Najmniejszy zapas, ale tylko gdy wpisano go w każdej serii - jak w doradcy. */
+    private fun rirOf(sets: List<SetEntry>): Int? =
+        if (sets.isNotEmpty() && sets.all { it.rir != null }) sets.minOf { it.rir!! } else null
+
     private fun increase(
         equipment: Equipment,
         current: Double,
         repsFrom: Int,
         inv: Inventory,
         mode: LoadMode?,
+        lastSets: List<SetEntry>,
         reason: Reason,
         note: String
     ): Suggestion {
         if (mode != null) {
             val next = PlateCalculator.nextUp(current, mode, inv)
             if (next == null) {
-                // Wyczerpany zestaw talerzy. Proponowanie ciężaru, którego nie da się
-                // złożyć, byłoby gorsze niż brak propozycji - mówimy wprost, co blokuje.
+                // Wyczerpany zestaw talerzy. Proponowanie ciężaru, którego nie da
+                // się złożyć, byłoby gorsze niż brak propozycji. Powtórzenia rosną
+                // dalej, bez sufitu zakresu - nie ma innej drogi. Dotąd zegarek
+                // proponował tu dół zakresu, czyli cofał o kilka powtórzeń
+                // kogoś, kto właśnie dobił górę.
                 return Suggestion(
                     weightKg = current,
-                    reps = repsFrom,
+                    reps = ProgressionAdvisor.repsGoal(lastSets, repsFrom, Int.MAX_VALUE),
                     reason = Reason.HOLD,
                     note = "To najcięższy układ, jaki złożysz z posiadanych talerzy. " +
-                        "Żeby iść dalej, dołóż obciążenia albo zwiększ liczbę powtórzeń.",
+                        "Rosną powtórzenia, a po nich serie.",
+                    loading = PlateCalculator.nearest(current, mode, inv)
+                )
+            }
+            // Przepaść: następny układ istnieje, ale z równoważności wychodzi na
+            // nim mniej niż dół zakresu. Ta sama reguła co karta po treningu -
+            // zostajesz i dokładasz powtórzeń, aż skok będzie w zasięgu.
+            val naWyzszym = ProgressionAdvisor.repsAt(lastSets, current, next.totalKg, rirOf(lastSets))
+            if (repsFrom > 0 && naWyzszym < repsFrom) {
+                return Suggestion(
+                    weightKg = current,
+                    reps = ProgressionAdvisor.repsGoal(lastSets, repsFrom, Int.MAX_VALUE),
+                    reason = Reason.HOLD,
+                    note = "Do ${Loading.fmt(next.totalKg)} kg za daleko - wyszłoby około " +
+                        "$naWyzszym powtórzeń. Rosną powtórzenia, potem ciężar.",
                     loading = PlateCalculator.nearest(current, mode, inv)
                 )
             }
@@ -250,6 +316,19 @@ object ProgressionEngine {
         // Sprzęt nieładowany talerzami - stały krok, bez układu talerzy.
         val weight = current + FREE_STEP_KG
         val pct = (weight - current) / current * 100
+
+        // Lekki wyciąg ma tę samą przepaść co hantle: 20 → 22,5 kg to 12,5%.
+        val naWyzszym = ProgressionAdvisor.repsAt(lastSets, current, weight, rirOf(lastSets))
+        if (repsFrom > 0 && naWyzszym < repsFrom) {
+            return Suggestion(
+                weightKg = current,
+                reps = ProgressionAdvisor.repsGoal(lastSets, repsFrom, Int.MAX_VALUE),
+                reason = Reason.HOLD,
+                note = "Do ${Loading.fmt(weight)} kg za daleko - wyszłoby około " +
+                    "$naWyzszym powtórzeń. Rosną powtórzenia, potem ciężar.",
+                loading = null
+            )
+        }
 
         return Suggestion(
             weightKg = weight,

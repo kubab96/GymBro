@@ -95,13 +95,45 @@ class ProgressionEngineTest {
     }
 
     // ---- Podbicie ----
+    //
+    // Przy ciezarze w planie o ciezarze decyduje plan, bo to jego pokazuje
+    // zegarek. Testy wlasnej progresji silnika (talerze, przepasc, stos)
+    // ida wiec na pozycji bez ciezaru w planie - target = 0.0.
 
     @Test
     fun `komplet gornych powtorzen podbija ciezar na nastepny prog`() {
-        val s = suggest(listOf(sets(60.0, 12, 12, 12)))
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), target = 0.0)
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         assertEquals(62.5, s.weightKg, 0.001)
         assertEquals(8, s.reps)
+    }
+
+    @Test
+    fun `podbicie czekajace w planie zostawia ciezar i komplet powtorzen`() {
+        // Plan dalej 60 kg, bo karty z podbiciem nikt nie przyjal. Dotad
+        // zegarek pokazywal 60 x 8 - cztery powtorzenia mniej niz ostatnio.
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), target = 60.0)
+        assertEquals(ProgressionEngine.Reason.AWAITING, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(12, s.reps)
+    }
+
+    @Test
+    fun `przyjete podbicie bierze ciezar z planu i cel od dolu`() {
+        // Plan 65 kg, choc najblizszy prog od 60 to 62,5 - telefon ma
+        // pokazac to samo co zegarek, czyli plan.
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), target = 65.0)
+        assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
+        assertEquals(65.0, s.weightKg, 0.001)
+        assertEquals(8, s.reps)
+    }
+
+    @Test
+    fun `za lekko przy czekajacym podbiciu tez zostawia ciezar`() {
+        val s = suggest(listOf(sets(60.0, 9, 9, 9, rir = 4)), target = 60.0)
+        assertEquals(ProgressionEngine.Reason.AWAITING, s.reason)
+        assertEquals(60.0, s.weightKg, 0.001)
+        assertEquals(10, s.reps)
     }
 
     @Test
@@ -110,18 +142,36 @@ class ProgressionEngineTest {
             barKg = 20.0,
             plates = listOf(Plate(kg = 10.0, count = 4))
         )
-        // Majac tylko dziesiatki, najmniejszy mozliwy skok to 20 kg.
+        // Majac tylko dziesiatki, najmniejszy mozliwy skok to 20 kg. Po 3 x 28
+        // na 40 kg wychodzi z rownowaznosci osiem powtorzen na 60 - w zakresie.
         val s = ProgressionEngine.suggest(
-            Equipment.BARBELL, 40.0, 8, 12,
-            listOf(sets(40.0, 12, 12, 12)), rzadkie
+            Equipment.BARBELL, 0.0, 8, 12,
+            listOf(sets(40.0, 28, 28, 28)), rzadkie
         )
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         assertEquals(60.0, s.weightKg, 0.001)
     }
 
     @Test
+    fun `przepasc z talerzy zostawia ciezar, dopoki nie da sie jej przeskoczyc`() {
+        // 40 -> 60 kg to 50%. Po 3 x 12 na 60 kg wyszloby z rownowaznosci
+        // jedno-dwa powtorzenia. Dotad zegarek proponowal 60 kg na osiem.
+        val rzadkie = Inventory(
+            barKg = 20.0,
+            plates = listOf(Plate(kg = 10.0, count = 4))
+        )
+        val s = ProgressionEngine.suggest(
+            Equipment.BARBELL, 0.0, 8, 12,
+            listOf(sets(40.0, 12, 12, 12)), rzadkie
+        )
+        assertEquals(ProgressionEngine.Reason.HOLD, s.reason)
+        assertEquals(40.0, s.weightKg, 0.001)
+        assertEquals(13, s.reps)
+    }
+
+    @Test
     fun `wysokie RIR podbija ciezar mimo niepelnego zakresu`() {
-        val s = suggest(listOf(sets(60.0, 9, 9, 9, rir = 4)))
+        val s = suggest(listOf(sets(60.0, 9, 9, 9, rir = 4)), target = 0.0)
         assertEquals(ProgressionEngine.Reason.INCREASE_EASY, s.reason)
         assertEquals(62.5, s.weightKg, 0.001)
     }
@@ -206,7 +256,7 @@ class ProgressionEngineTest {
             sessionId = 1, exerciseId = 1, setIndex = 1,
             weightKg = 100.0, reps = 5, isWarmup = true, doneAt = 0
         )
-        val s = suggest(listOf(listOf(warmup) + sets(60.0, 12, 12, 12)))
+        val s = suggest(listOf(listOf(warmup) + sets(60.0, 12, 12, 12)), target = 0.0)
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         // Gdyby rozgrzewka weszla do rachunku, ciezarem roboczym byloby 100 kg.
         assertEquals(62.5, s.weightKg, 0.001)
@@ -214,7 +264,7 @@ class ProgressionEngineTest {
 
     @Test
     fun `lzejsze serie dojsciowe nie obnizaja ciezaru roboczego`() {
-        val s = suggest(listOf(sets(40.0, 10) + sets(60.0, 12, 12, 12)))
+        val s = suggest(listOf(sets(40.0, 10) + sets(60.0, 12, 12, 12)), target = 0.0)
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         assertEquals(62.5, s.weightKg, 0.001)
     }
@@ -223,9 +273,19 @@ class ProgressionEngineTest {
 
     @Test
     fun `wyciag podbija sie stalym krokiem`() {
-        val s = suggest(listOf(sets(35.0, 12, 12, 12)), equipment = Equipment.CABLE)
+        val s = suggest(listOf(sets(35.0, 12, 12, 12)), equipment = Equipment.CABLE, target = 0.0)
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         assertEquals(37.5, s.weightKg, 0.001)
+    }
+
+    @Test
+    fun `przepasc na lekkim wyciagu zostawia ciezar i dokłada powtorzen`() {
+        // 10 -> 12,5 kg to 25%: z rownowaznosci trzy powtorzenia na 12,5.
+        // Zegarek ma podpowiedziec 13 na 10 kg, nie 8 na ciezarze z przepasci.
+        val s = suggest(listOf(sets(10.0, 12, 12, 12)), equipment = Equipment.CABLE, target = 0.0)
+        assertEquals(ProgressionEngine.Reason.HOLD, s.reason)
+        assertEquals(10.0, s.weightKg, 0.001)
+        assertEquals(13, s.reps)
     }
 
     @Test
@@ -312,7 +372,7 @@ class ProgressionEngineTest {
 
     @Test
     fun `bez dokladania powtorzen komplet dalej podbija ciezar`() {
-        val s = suggest(listOf(sets(60.0, 12, 12, 12)), progress = ProgressMode.NO_REPS)
+        val s = suggest(listOf(sets(60.0, 12, 12, 12)), target = 0.0, progress = ProgressMode.NO_REPS)
         assertEquals(ProgressionEngine.Reason.INCREASE, s.reason)
         assertEquals(62.5, s.weightKg, 0.001)
     }
@@ -324,11 +384,14 @@ class ProgressionEngineTest {
         val maly = Inventory(barKg = 20.0, plates = listOf(Plate(kg = 1.25, count = 2)))
         // Maksimum to 22,5 kg - nie ma dokad podbic.
         val s = ProgressionEngine.suggest(
-            Equipment.BARBELL, 22.5, 8, 12,
+            Equipment.BARBELL, 0.0, 8, 12,
             listOf(sets(22.5, 12, 12, 12)), maly
         )
         assertEquals(ProgressionEngine.Reason.HOLD, s.reason)
         assertEquals(22.5, s.weightKg, 0.001)
+        // Dotad 8, czyli dol zakresu - cofniecie o cztery powtorzenia komus,
+        // kto wlasnie dobil gore. Bez wyzszego ciezaru rosna powtorzenia.
+        assertEquals(13, s.reps)
         assertTrue(
             "komunikat ma tlumaczyc, co blokuje progresje",
             s.note.contains("talerz", ignoreCase = true)
