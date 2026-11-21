@@ -51,8 +51,9 @@ tyle, ile ma aplikacja.
 
 ### Diagnostyka jest tylko w wariancie debug
 
-Podsłuch BLE i surowy zrzut z Health Connect (`ui/Diagnostics.kt`), log skanera
-wagi w logcacie i adres pilota w Profilu zależą od `BuildConfig.DEBUG`.
+Surowy zrzut z Health Connect (`ui/Diagnostics.kt`), log skanera wagi
+w logcacie i adres pilota w Profilu zależą od `BuildConfig.DEBUG`. Ekranu
+podsłuchu BLE w zakładce Waga już nie ma - był do testów.
 W wydaniu ich nie ma, a R8 wycina cały kod, do którego tylko one sięgają - do
 rozgryzania wagi instaluj debug.
 

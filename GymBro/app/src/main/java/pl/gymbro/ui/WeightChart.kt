@@ -53,7 +53,11 @@ fun WeightChart(
         return
     }
 
-    val allValues = raw.map { it.second } + trend.map { it.second }
+    // Trend liczy się z dłuższej historii niż ta pokazana w kropkach (żeby na
+    // lewym brzegu był już rozgrzany), więc przycinamy go do zakresu kropek -
+    // inaczej wcześniejsze punkty wychodziłyby poza wykres w lewo.
+    val shownTrend = trend.filter { it.first >= raw.first().first }
+    val allValues = raw.map { it.second } + shownTrend.map { it.second }
     val minV = allValues.min()
     val maxV = allValues.max()
     // Zapas, żeby skrajne punkty nie dotykały krawędzi. Przy płaskim wykresie
@@ -103,9 +107,9 @@ fun WeightChart(
             }
 
             // Trend - to jest właściwa informacja, więc wyraźny.
-            if (trend.size >= 2) {
+            if (shownTrend.size >= 2) {
                 val path = Path()
-                trend.forEachIndexed { i, (t, v) ->
+                shownTrend.forEachIndexed { i, (t, v) ->
                     if (i == 0) path.moveTo(x(t), y(v)) else path.lineTo(x(t), y(v))
                 }
                 drawPath(path, trendColor, style = Stroke(width = 4f))

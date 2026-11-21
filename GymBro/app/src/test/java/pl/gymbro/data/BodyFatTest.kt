@@ -132,4 +132,37 @@ class BodyFatTest {
         assertEquals(1, m.size)
         assertTrue(m.first().contains("bioder"))
     }
+
+    // ---- Instrukcje pomiaru zgodne ze wzorem ----
+
+    @Test
+    fun `obwody potrzebne do wyniku to dokladnie te, ktorych brak zglasza wzor`() {
+        // Obwód oznaczony jako potrzebny musi naprawdę blokować wynik, gdy go
+        // brakuje - inaczej instrukcja i wzór mówią co innego.
+        for (sex in Sex.entries) {
+            val all = mapOf(
+                MeasurementSite.WAIST to 85.0,
+                MeasurementSite.NECK to 38.0,
+                MeasurementSite.HIPS to 100.0
+            )
+            for (site in all.keys) {
+                val without = all - site
+                val r = BodyFat.navy(
+                    sex, 180.0,
+                    without[MeasurementSite.WAIST],
+                    without[MeasurementSite.NECK],
+                    without[MeasurementSite.HIPS]
+                )
+                assertEquals("$sex bez $site", site.usedForBodyFat(sex), r == null)
+            }
+        }
+    }
+
+    @Test
+    fun `talia mezczyzny przez pepek, kobiety w najwezszym miejscu`() {
+        // Procedura US Navy: u mężczyzn brzuch na wysokości pępka, u kobiet
+        // talia naturalna. Poprzednio obie płcie miały „tuż nad pępkiem".
+        assertTrue(MeasurementSite.WAIST.howTo(Sex.MALE).contains("pępek"))
+        assertTrue(MeasurementSite.WAIST.howTo(Sex.FEMALE).contains("najwęższym"))
+    }
 }

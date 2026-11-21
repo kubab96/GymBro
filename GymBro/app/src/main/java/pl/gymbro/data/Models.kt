@@ -278,45 +278,48 @@ data class BodyMeasurement(
  * Instrukcje nie są ozdobnikiem: przy obwodach cała wartość pomiaru leży
  * w powtarzalności. Dwa centymetry różnicy biorą się częściej ze zmiany
  * miejsca przyłożenia taśmy niż ze zmiany ciała.
+ *
+ * Szyja, talia i biodra idą do wzoru US Navy ([BodyFat.navy]), więc mierzy się
+ * je tak, jak opisuje procedura Marynarki (Navy Guide 4, Body Composition
+ * Assessment, 2016): **talię u mężczyzn przez pępek, u kobiet w najwęższym
+ * miejscu**, biodra tylko u kobiet. Wcześniejsze instrukcje były pisane
+ * z pamięci i dla obu płci kazały mierzyć „tuż nad pępkiem" - u mężczyzny za
+ * wysoko, u kobiety za nisko, a wzór był kalibrowany na tamtych miejscach.
+ * Klatka, ramię i udo do wzoru nie wchodzą - ich instrukcje to konwencja,
+ * której jedynym celem jest powtarzalność.
  */
-enum class MeasurementSite(
-    val label: String,
-    val howTo: String,
-    /** Czy wartość jest potrzebna do oszacowania tkanki tłuszczowej. */
-    val usedForBodyFat: Boolean = false
-) {
-    NECK(
-        "Szyja",
-        "Tuż pod krtanią, taśma lekko opada z przodu. Nie zaciskaj - ma przylegać, " +
-            "nie wcinać się. Patrz prosto przed siebie, barki luźno.",
-        usedForBodyFat = true
-    ),
-    CHEST(
-        "Klatka",
-        "Na wysokości sutków, taśma poziomo dookoła. Mierz na końcu normalnego " +
-            "wydechu, bez nabierania powietrza.",
-    ),
-    WAIST(
-        "Talia",
-        "W najwęższym miejscu, zwykle tuż nad pępkiem. Nie wciągaj brzucha. " +
-            "Mierz na końcu spokojnego wydechu, taśma poziomo.",
-        usedForBodyFat = true
-    ),
-    HIPS(
-        "Biodra",
-        "W najszerszym miejscu pośladków, stopy złączone. Taśma poziomo, " +
-            "sprawdź w lustrze, czy z tyłu nie opada.",
-    ),
-    ARM(
-        "Ramię",
-        "W połowie odległości między barkiem a łokciem, ramię zwieszone luźno " +
-            "wzdłuż ciała. Nie napinaj. Mierz zawsze tę samą rękę.",
-    ),
-    THIGH(
-        "Udo",
-        "Tuż pod pośladkiem, w najgrubszym miejscu. Ciężar rozłożony równo " +
-            "na obie nogi. Mierz zawsze tę samą nogę.",
-    );
+enum class MeasurementSite(val label: String) {
+    NECK("Szyja"),
+    CHEST("Klatka"),
+    WAIST("Talia"),
+    HIPS("Biodra"),
+    ARM("Ramię"),
+    THIGH("Udo");
+
+    /**
+     * Gdzie przyłożyć taśmę. Celowo jedno-dwa krótkie zdania: czyta się je
+     * z taśmą w ręku, a dłuższych wersji nikt nie czytał.
+     */
+    fun howTo(sex: Sex): String = when (this) {
+        // Procedura: tuż pod krtanią, nie na niej, taśma możliwie poziomo.
+        NECK -> "Tuż pod krtanią, nie na jabłku Adama. Patrz przed siebie."
+        CHEST -> "Na wysokości sutków, po spokojnym wydechu."
+        WAIST -> when (sex) {
+            Sex.MALE -> "Przez pępek, po spokojnym wydechu. Nie wciągaj brzucha."
+            Sex.FEMALE -> "W najwęższym miejscu, zwykle w połowie między pępkiem " +
+                "a mostkiem. Po spokojnym wydechu."
+        }
+        HIPS -> "Tam, gdzie pośladki najbardziej wystają, patrząc z boku."
+        ARM -> "W połowie między barkiem a łokciem, ręka luźno. Zawsze ta sama."
+        THIGH -> "Tuż pod pośladkiem. Zawsze ta sama noga."
+    }
+
+    /** Czy wartość wchodzi do oszacowania tkanki tłuszczowej - zgodnie z [BodyFat.navy]. */
+    fun usedForBodyFat(sex: Sex): Boolean = when (this) {
+        NECK, WAIST -> true
+        HIPS -> sex == Sex.FEMALE
+        else -> false
+    }
 }
 
 /** Pojedynczy pomiar obwodu. */

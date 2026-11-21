@@ -1212,42 +1212,28 @@ class BodyRepository(context: Context) {
     fun latest(): BodyMeasurement? = recent(1).firstOrNull()
 
     /**
-     * Trend masy wygładzony średnią wykładniczą.
+     * Najnowsze pomiary masy jako (czas, masa), od najstarszej.
      *
-     * Dzienna masa ciała waha się o ±1,5 kg z powodu nawodnienia i treści przewodu
-     * pokarmowego - surowy wykres nie mówi nic o tym, czy chudniesz. Dopiero trend
-     * pokazuje kierunek. [alpha] 0,1 odpowiada mniej więcej uśrednieniu z 10 dni.
+     * DESC z limitem i odwrócenie, nie ASC z limitem: ASC brał [limit]
+     * najstarszych ważeń, więc po stu osiemdziesięciu pomiarach trend
+     * przestałby widzieć nowe.
+     */
+    private fun series(limit: Int): List<Pair<Long, Double>> =
+        recent(limit).map { it.measuredAt to it.weightKg }.reversed()
+
+    /**
+     * Trend masy - masa bez dziennych wahań, wygładzona po dniach.
+     * Reguła i powód zmiany są w [WeightTrend].
      *
      * @return lista par (czas, masa wygładzona), od najstarszej.
      */
-    fun trend(alpha: Double = 0.1, limit: Int = 180): List<Pair<Long, Double>> {
-        val raw = db.readableDatabase.rawQuery(
-            "SELECT * FROM body_measurement ORDER BY measured_at ASC LIMIT ?",
-            arrayOf(limit.toString())
-        ).mapAll(::from)
-
-        if (raw.isEmpty()) return emptyList()
-
-        var ema = raw.first().weightKg
-        return raw.map { m ->
-            ema = alpha * m.weightKg + (1 - alpha) * ema
-            m.measuredAt to ema
-        }
-    }
+    fun trend(limit: Int = 180): List<Pair<Long, Double>> = WeightTrend.smooth(series(limit))
 
     /**
-     * Tempo zmiany masy w kilogramach na tydzień, policzone z trendu.
+     * Tempo zmiany masy w kilogramach na tydzień, z ostatnich ośmiu tygodni.
      * Dodatnia wartość to przyrost. Zwraca null, gdy danych jest za mało.
      */
-    fun weeklyChangeKg(): Double? {
-        val t = trend()
-        if (t.size < 2) return null
-        val (t0, w0) = t.first()
-        val (t1, w1) = t.last()
-        val days = (t1 - t0) / 86_400_000.0
-        if (days < 1.0) return null
-        return (w1 - w0) / days * 7.0
-    }
+    fun weeklyChangeKg(): Double? = WeightTrend.weeklyRate(series(180))
 }
 
 // ---- Dane z zegarka ------------------------------------------------------

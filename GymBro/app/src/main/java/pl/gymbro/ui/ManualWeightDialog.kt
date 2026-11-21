@@ -123,8 +123,7 @@ fun ManualWeightDialog(
                 Spacer(Modifier.height(14.dp))
                 Text("Obwody", style = MaterialTheme.typography.labelLarge)
                 Text(
-                    "Zostaw puste, jeśli nie mierzyłeś. Szyja, talia i biodra " +
-                        "wchodzą do oszacowania tkanki tłuszczowej.",
+                    "Zostaw puste, jeśli nie mierzyłeś.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

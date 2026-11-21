@@ -450,7 +450,7 @@ niż pozwolić jej udawać coś więcej.
 
 ### Wykrywanie fazy z ważenia
 
-`weeklyChangeKg()` już istnieje i liczy trend masy. Docelowo aplikacja może
+`weeklyChangeKg()` już istnieje i liczy tempo zmiany masy (nachylenie z ostatnich ośmiu tygodni, `data/WeightTrend.kt`). Docelowo aplikacja może
 sama zauważyć rozjazd: *"ustawiłeś budowę, a ważysz się na minus 0.4 kg
 tygodniowo"*.
 

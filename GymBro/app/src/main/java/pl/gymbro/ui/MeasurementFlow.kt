@@ -262,6 +262,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
                 FlowStep.GIRTHS -> GirthsStep(
                     girths = girths,
                     previous = previous,
+                    sex = profile.sex,
                     onNext = { step = FlowStep.SUMMARY }
                 )
 
@@ -392,17 +393,16 @@ private fun ScaleStep(
             Spacer(Modifier.height(4.dp))
             if (certain) {
                 Text(
-                    "Jeśli zszedłeś z wagi za wcześnie albo stałeś niepewnie, " +
-                        "zmierz jeszcze raz.",
+                    "Jeśli zszedłeś za wcześnie, zmierz jeszcze raz.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
                 // Waga zgasła bez potwierdzenia wyniku: to ostatnia liczba, jaka
                 // dotarła, i mogła nam umknąć końcowa korekta o jedną działkę.
+                // Powód zostaje w komentarzu - na ekranie wystarczy, co zrobić.
                 Text(
-                    "Waga zamilkła, zanim potwierdziła wynik. Porównaj z tym, " +
-                        "co pokazał wyświetlacz - jeśli się różni, zmierz jeszcze raz.",
+                    "Porównaj z wyświetlaczem wagi. Jeśli się różni, zmierz jeszcze raz.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiary
                 )
@@ -455,14 +455,13 @@ private fun ScaleStep(
             else -> "Stań na wadze"
         }
         val hint = when {
-            !granted -> "Bez niej telefon nie usłyszy wagi. Masę możesz też wpisać ręcznie."
+            !granted -> "Bez niej telefon nie usłyszy wagi."
             !bluetoothOn -> "Włącz go i naciśnij Szukaj wagi."
-            !scanning -> "Naciśnij, żeby szukać wagi ponownie."
-            liveKg != null -> "Stój nieruchomo - czekam, aż wynik się ustali."
-            // Tania waga często nie ma nazwy - wtedy nie ma czego pokazać.
-            scaleName != null ->
-                (if (scaleName.isBlank()) "" else "$scaleName\n") + "Wejdź na nią i stój nieruchomo."
-            else -> "Odczyt pojawi się tu sam, gdy tylko waga się odezwie."
+            !scanning -> "Naciśnij Szukaj wagi."
+            liveKg != null -> "Stój nieruchomo."
+            // Bez nazwy urządzenia: „Yoda0" nic nikomu nie mówi.
+            scaleName != null -> "Stań na niej i stój nieruchomo."
+            else -> "Wynik pojawi się tu sam."
         }
         Text(title, style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(6.dp))
@@ -577,16 +576,11 @@ private fun PulsingScale(active: Boolean) {
 private fun GirthsStep(
     girths: MutableMap<MeasurementSite, String>,
     previous: Map<MeasurementSite, BodyMetric>,
+    sex: pl.gymbro.data.Sex,
     onNext: () -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
         Text("Podaj obwody", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Wszystkie pola są opcjonalne - wypełnij tylko te, które dziś mierzysz. " +
-                "Talia i szyja wystarczą, żeby policzyć tkankę tłuszczową.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
         Spacer(Modifier.height(10.dp))
 
         Column(
@@ -602,18 +596,9 @@ private fun GirthsStep(
                     ) {
                         BodyDiagram(site, Modifier.size(62.dp, 94.dp))
                         Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(site.label, style = MaterialTheme.typography.titleMedium)
-                                if (site.usedForBodyFat) {
-                                    Text(
-                                        "  · potrzebne",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
+                            Text(site.label, style = MaterialTheme.typography.titleMedium)
                             Text(
-                                site.howTo,
+                                site.howTo(sex),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -700,12 +685,7 @@ private fun SummaryStep(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "szacowana tkanka tłuszczowa · ${BodyFat.comment(profile.sex, bf)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "metoda US Navy, z obwodów · błąd ±3-4 punkty",
+                            "tkanka tłuszczowa · ${BodyFat.comment(profile.sex, bf)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -718,7 +698,7 @@ private fun SummaryStep(
                         if (missing.isNotEmpty()) {
                             Spacer(Modifier.height(10.dp))
                             Text(
-                                "Tkanki tłuszczowej nie policzę - brakuje: " +
+                                "Do tkanki tłuszczowej brakuje: " +
                                     missing.joinToString(", "),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiary
@@ -732,7 +712,7 @@ private fun SummaryStep(
             val filled = MeasurementSite.entries.mapNotNull { s -> cm(s)?.let { s to it } }
             if (filled.isEmpty()) {
                 Text(
-                    "Bez obwodów - zapiszę samą masę.",
+                    "Bez obwodów.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
