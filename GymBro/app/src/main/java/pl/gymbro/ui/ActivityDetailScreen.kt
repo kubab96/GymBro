@@ -47,6 +47,16 @@ import pl.gymbro.data.ProfileRepository
 import pl.gymbro.gym.RunAnalysis
 import pl.gymbro.gym.Timeline
 import pl.gymbro.health.ActivityDetail
+import pl.gymbro.data.TrackRepository
+import pl.gymbro.gym.TrackMath
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,24 +107,55 @@ val ExternalSessionSaver: Saver<ExternalSession?, Any> = listSaver(
  * u siebie: są potrzebne wyłącznie w chwili patrzenia.
  */
 @Composable
-fun ActivityDetailScreen(session: ExternalSession, onBack: () -> Unit) {
+fun ActivityDetailScreen(
+    session: ExternalSession,
+    onBack: () -> Unit,
+    onDeleted: () -> Unit = onBack
+) {
     // Systemowy wstecz robi to samo co „Wróć" - bez tego wychodził z aplikacji.
     ScreenBackHandler(onBack = onBack)
     val context = LocalContext.current
     val reader = remember { ActivityDetail(context) }
     val profileRepo = remember { ProfileRepository(context) }
+    val trackRepo = remember { TrackRepository(context) }
+    val scope = rememberCoroutineScope()
 
     var series by remember { mutableStateOf<ActivityDetail.Series?>(null) }
+    var track by remember { mutableStateOf<List<TrackMath.Fix>>(emptyList()) }
     var maxHr by remember { mutableStateOf(190.0) }
     var loading by remember { mutableStateOf(true) }
+    var deleting by remember { mutableStateOf(false) }
 
     LaunchedEffect(session.externalId) {
         profileRepo.get().birthYear?.let { year ->
             val age = java.time.LocalDate.now().year - year
             if (age in 10..100) maxHr = RunAnalysis.maxHrFromAge(age)
         }
+        // Trasa z telefonu leży u nas - kilometry liczymy z niej, tak jak
+        // zegarek liczy swoje okrążenia.
+        if (session.fromPhone) {
+            track = withContext(Dispatchers.IO) { trackRepo.points(session.externalId) }
+        }
         series = reader.load(session.startedAt, session.endedAt)
         loading = false
+    }
+
+    if (deleting) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text("Usunąć tę aktywność?") },
+            text = { Text("Zniknie z historii razem z trasą. Tego nie da się cofnąć.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleting = false
+                    scope.launch {
+                        withContext(Dispatchers.IO) { trackRepo.delete(session.externalId) }
+                        onDeleted()
+                    }
+                }) { Text("Usuń", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Wróć") } }
+        )
     }
 
     Column(
@@ -149,12 +190,22 @@ fun ActivityDetailScreen(session: ExternalSession, onBack: () -> Unit) {
         }
 
         val data = series
-        val laps = RunAnalysis.lapStats(data?.laps ?: emptyList(), data?.heartRate ?: emptyList())
+        val legs = if (session.fromPhone) TrackMath.splits(track) else data?.laps ?: emptyList()
+        val laps = RunAnalysis.lapStats(legs, data?.heartRate ?: emptyList())
         val hr = RunAnalysis.downsample(data?.heartRate ?: emptyList(), 180)
         val zones = RunAnalysis.timeInZones(data?.heartRate ?: emptyList(), maxHr)
 
+        if (track.size >= 2) {
+            Section("Trasa", "Z GPS telefonu, bez mapy pod spodem.")
+            RouteSketch(track)
+        }
+
         if (laps.isNotEmpty() && Timeline.isCardio(session)) {
-            Section("Kilometry", "Zmierzone przez zegarek na okrążeniach, nie wyliczone ze średniej.")
+            Section(
+                "Kilometry",
+                if (session.fromPhone) "Z trasy nagranej telefonem, nie wyliczone ze średniej."
+                else "Zmierzone przez zegarek na okrążeniach, nie wyliczone ze średniej."
+            )
             LapTable(laps, maxHr)
         }
 
@@ -175,14 +226,78 @@ fun ActivityDetailScreen(session: ExternalSession, onBack: () -> Unit) {
         if (laps.isEmpty() && hr.size < 4 && zones.isEmpty()) {
             Spacer(Modifier.height(24.dp))
             Text(
-                "Zegarek nie przysłał dla tego treningu ani okrążeń, ani przebiegu " +
+                if (session.fromPhone)
+                    "Bez tętna - zegarek nie zapisał go w czasie tej aktywności, " +
+                        "albo nie było go na ręce."
+                else "Zegarek nie przysłał dla tego treningu ani okrążeń, ani przebiegu " +
                     "tętna - zostają same podsumowania powyżej.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
+        // Kasować da się tylko to, co nagrał telefon. Aktywność z zegarka
+        // wróciłaby przy następnej synchronizacji z Health Connect.
+        if (session.fromPhone) {
+            Spacer(Modifier.height(28.dp))
+            TextButton(onClick = { deleting = true }) {
+                Text("Usuń aktywność", color = MaterialTheme.colorScheme.error)
+            }
+        }
+
         Spacer(Modifier.height(36.dp))
+    }
+}
+
+/**
+ * Szkic trasy bez mapy.
+ *
+ * Mapa wymagałaby klucza do usługi map albo kafelków z sieci, a aplikacja
+ * niczego poza Open Food Facts z telefonu nie wysyła. Kształt trasy
+ * wystarcza, żeby rozpoznać, którędy się biegło.
+ */
+@Composable
+private fun RouteSketch(points: List<TrackMath.Fix>) {
+    val line = MaterialTheme.colorScheme.secondary
+    val start = MaterialTheme.colorScheme.primary
+    val end = MaterialTheme.colorScheme.tertiary
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(220.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(18.dp)) {
+            // Rzut równoodległościowy: przy kilku kilometrach krzywizna Ziemi
+            // nic nie zmienia, wystarczy poprawić długość o cosinus szerokości.
+            val lat0 = points.map { it.lat }.average()
+            val k = kotlin.math.cos(Math.toRadians(lat0))
+            val xs = points.map { it.lon * k }
+            val ys = points.map { it.lat }
+            val minX = xs.min(); val maxX = xs.max()
+            val minY = ys.min(); val maxY = ys.max()
+            val span = maxOf(maxX - minX, maxY - minY).takeIf { it > 0 } ?: 1e-6
+            val scale = minOf(size.width, size.height) / span
+            val offX = (size.width - (maxX - minX) * scale) / 2
+            val offY = (size.height - (maxY - minY) * scale) / 2
+            fun at(i: Int) = Offset(
+                (offX + (xs[i] - minX) * scale).toFloat(),
+                (size.height - offY - (ys[i] - minY) * scale).toFloat()
+            )
+            var path = Path()
+            for (i in points.indices) {
+                // Po pauzie nowy odcinek - bez kreski przez miejsce, w którym
+                // telefon nie nagrywał.
+                if (i == 0 || points[i].seg != points[i - 1].seg) {
+                    if (i > 0) drawPath(path, line, style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    path = Path().apply { moveTo(at(i).x, at(i).y) }
+                } else path.lineTo(at(i).x, at(i).y)
+            }
+            drawPath(path, line, style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+            drawCircle(start, radius = 7f, center = at(0))
+            drawCircle(end, radius = 7f, center = at(points.lastIndex))
+        }
     }
 }
 

@@ -169,6 +169,34 @@ class ActivityDetail(private val context: Context) {
      * oddaje te same rekordy w kółko - tu skończyłoby się to wykresem z tą samą
      * minutą powtórzoną pięćdziesiąt razy.
      */
+    /**
+     * Samo tętno z okna czasu - pod kartę w Historii.
+     *
+     * Jedno zapytanie zamiast czterech z [load]: karta potrzebuje wyłącznie
+     * przebiegu tętna, a każde zapytanie zjada przydział Health Connect.
+     * Brak zgody albo błąd to pusta lista, nie wyjątek.
+     */
+    suspend fun heartRate(startedAt: Long, endedAt: Long): List<RunAnalysis.Sample> =
+        withContext(Dispatchers.IO) {
+            val range = TimeRangeFilter.between(
+                Instant.ofEpochMilli(startedAt), Instant.ofEpochMilli(endedAt)
+            )
+            runCatching {
+                readAll(range) { token ->
+                    client.readRecords(
+                        ReadRecordsRequest(
+                            recordType = HeartRateRecord::class,
+                            timeRangeFilter = range,
+                            pageSize = 1000,
+                            pageToken = token
+                        )
+                    ).let { it.records to it.pageToken }
+                }.flatMap { rec ->
+                    rec.samples.map { RunAnalysis.Sample(it.time.toEpochMilli(), it.beatsPerMinute.toDouble()) }
+                }.sortedBy { it.at }
+            }.getOrDefault(emptyList())
+        }
+
     private suspend fun <T> readAll(
         range: TimeRangeFilter,
         page: suspend (String?) -> Pair<List<T>, String?>

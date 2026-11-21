@@ -19,7 +19,7 @@
 # Kolejność list w LISTY musi iść za onCreate. Po dopisaniu tam nowej listy
 # trzeba dopisać ją i tutaj - inaczej porównanie pokaże jej brak.
 SQ="/c/Users/kubab/AppData/Local/Android/Sdk/platform-tools/sqlite3.exe"
-LISTY="CREATE V4_TABLES V5_TABLES V6_COLUMNS V7_STATEMENTS V8_STATEMENTS V16_STATEMENTS V19_STATEMENTS V20_STATEMENTS V24_STATEMENTS V27_STATEMENTS"
+LISTY="CREATE V4_TABLES V5_TABLES V6_COLUMNS V7_STATEMENTS V8_STATEMENTS V16_STATEMENTS V19_STATEMENTS V20_STATEMENTS V24_STATEMENTS V27_STATEMENTS V29_STATEMENTS"
 
 KOPIA="$1"
 if [ -z "$KOPIA" ] || [ ! -f "$KOPIA" ]; then

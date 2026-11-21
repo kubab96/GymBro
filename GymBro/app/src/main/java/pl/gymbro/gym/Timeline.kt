@@ -57,6 +57,14 @@ object Timeline {
      *   Trening bez przynależności (skasowana jednostka albo plan) zostaje
      *   przy każdym planie - inaczej nie byłoby skąd go otworzyć.
      */
+    /** Czy dwie aktywności pokrywają się w czasie na tyle, by być jedną. */
+    private fun sameActivity(a: ExternalSession, b: ExternalSession): Boolean {
+        val shorter = minOf(a.endedAt - a.startedAt, b.endedAt - b.startedAt)
+        if (shorter <= 0) return false
+        val overlap = WatchMatch.overlapMs(a.startedAt, a.endedAt, b.startedAt, b.endedAt)
+        return overlap >= shorter * WatchMatch.MIN_OVERLAP_RATIO
+    }
+
     fun build(
         strength: List<SessionSummary>,
         watch: List<ExternalSession>,
@@ -69,7 +77,14 @@ object Timeline {
         // zegarkowa połowa treningu z drugiego planu wracałaby na listę jako
         // „z zegarka, bez zapisanych serii".
         val matched = strength.mapNotNull { it.watch?.externalId }.toSet()
-        val loose = watch.filterNot { it.externalId in matched }
+        // Bieg nagrany telefonem i ten sam bieg nagrany zegarkiem to jeden
+        // bieg. Zostaje zapis z telefonu - to ten, który świadomie zacząłeś
+        // w aplikacji, i tylko jego da się z niej skasować.
+        val phone = watch.filter { it.fromPhone }
+        val loose = watch.filterNot { w ->
+            w.externalId in matched ||
+                (!w.fromPhone && phone.any { p -> sameActivity(p, w) })
+        }
 
         val own = if (programId == null) strength
         else strength.filter { it.programId == null || it.programId == programId }

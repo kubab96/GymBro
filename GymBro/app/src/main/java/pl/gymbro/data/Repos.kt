@@ -1018,6 +1018,46 @@ class SessionRepository(context: Context) {
             null
         ).mapAll { it.long("id") to it.str("name") }
 
+    /**
+     * Wszystkie serie robocze, po ćwiczeniach, z nazwą - pod Progres.
+     *
+     * Jedno zapytanie zamiast jednego na ćwiczenie: lista boi na Progresie
+     * potrzebuje historii każdego ćwiczenia naraz, a przy czterdziestu
+     * ćwiczeniach czterdzieści zapytań było widać jako przycięcie zakładki.
+     * Rok treningów to kilka tysięcy wierszy - mieści się bez kombinowania.
+     */
+    fun workingSetsByExercise(): List<Triple<Long, String, List<SetEntry>>> {
+        val names = mutableMapOf<Long, String>()
+        val sets = db.readableDatabase.rawQuery(
+            """
+            SELECT s.*, e.name AS ex_name
+            FROM set_entry s
+            JOIN exercise e ON e.id = s.exercise_id
+            JOIN session ss ON ss.id = s.session_id
+            WHERE s.is_warmup = 0 AND ss.ended_at IS NOT NULL
+            ORDER BY s.done_at
+            """.trimIndent(),
+            null
+        ).mapAll { c ->
+            val set = setFrom(c)
+            names[set.exerciseId] = c.str("ex_name")
+            set
+        }
+        return sets.groupBy { it.exerciseId }.map { (id, list) -> Triple(id, names.getValue(id), list) }
+    }
+
+    /** Serie robocze jednego ćwiczenia z zamkniętych treningów, od najstarszej. */
+    fun workingSetsOf(exerciseId: Long): List<SetEntry> =
+        db.readableDatabase.rawQuery(
+            """
+            SELECT s.* FROM set_entry s
+            JOIN session ss ON ss.id = s.session_id
+            WHERE s.exercise_id = ? AND s.is_warmup = 0 AND ss.ended_at IS NOT NULL
+            ORDER BY s.done_at
+            """.trimIndent(),
+            arrayOf(exerciseId.toString())
+        ).mapAll(::setFrom)
+
     /** Liczba serii roboczych na grupę mięśniową - to, co realnie steruje hipertrofią. */
     fun workingSetsByMuscle(fromMs: Long, toMs: Long): Map<String, Int> =
         db.readableDatabase.rawQuery(
@@ -1260,23 +1300,28 @@ class HealthRepository(context: Context) {
      * sprawia, że synchronizację można powtarzać dowolnie często - ponowny import
      * tej samej sesji aktualizuje wiersz zamiast dokładać kopię.
      */
-    fun upsertSession(s: ExternalSession): Long =
-        db.writable.insertWithOnConflict(
-            "external_session", null,
-            ContentValues().apply {
-                put("external_id", s.externalId)
-                put("source", s.source)
-                put("type", s.type)
-                if (s.title != null) put("title", s.title) else putNull("title")
-                put("started_at", s.startedAt)
-                put("ended_at", s.endedAt)
-                putOrNull("distance_m", s.distanceM)
-                putOrNull("energy_kcal", s.energyKcal)
-                putOrNull("hr_avg", s.hrAvg)
-                putOrNull("hr_max", s.hrMax)
-            },
-            SQLiteDatabase.CONFLICT_REPLACE
-        )
+    fun upsertSession(s: ExternalSession): Long = insert(db.writable, s)
+
+    companion object {
+        /** Na podanym połączeniu - [TrackRepository.finish] robi to w swojej transakcji. */
+        internal fun insert(w: SQLiteDatabase, s: ExternalSession): Long =
+            w.insertWithOnConflict(
+                "external_session", null,
+                ContentValues().apply {
+                    put("external_id", s.externalId)
+                    put("source", s.source)
+                    put("type", s.type)
+                    if (s.title != null) put("title", s.title) else putNull("title")
+                    put("started_at", s.startedAt)
+                    put("ended_at", s.endedAt)
+                    putOrNull("distance_m", s.distanceM)
+                    putOrNull("energy_kcal", s.energyKcal)
+                    putOrNull("hr_avg", s.hrAvg)
+                    putOrNull("hr_max", s.hrMax)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE
+            )
+    }
 
     fun sessions(limit: Int = 60): List<ExternalSession> =
         db.readableDatabase.rawQuery(

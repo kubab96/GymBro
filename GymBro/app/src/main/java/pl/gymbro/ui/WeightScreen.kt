@@ -266,7 +266,7 @@ fun WeightScreen() {
  * wersja była okrągłą pigułką i odstawała od reszty kanciastej aplikacji.
  */
 @Composable
-private fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+internal fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     val outer = RoundedCornerShape(8.dp)
     val shape = RoundedCornerShape(6.dp)
     Row(

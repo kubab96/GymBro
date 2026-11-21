@@ -115,4 +115,25 @@ class TimelineTest {
         )
         assertEquals(1, split.cardio.size)
     }
+
+    @Test
+    fun `bieg nagrany i telefonem, i zegarkiem jest jednym biegiem`() {
+        val telefon = zegarek("tel", 1_000, type = "Bieg").copy(source = ExternalSession.PHONE_SOURCE)
+        // Zegarek włączony dwie minuty później - pokrywa się prawie całkiem.
+        val split = Timeline.build(
+            strength = emptyList(),
+            watch = listOf(telefon, zegarek("zeg", 121_000, type = "Bieg"))
+        )
+        assertEquals(listOf("tel"), split.cardio.map { (it as Activity.Watch).session.externalId })
+    }
+
+    @Test
+    fun `bieg z telefonu nie zjada spaceru z innej pory`() {
+        val telefon = zegarek("tel", 1_000, type = "Bieg").copy(source = ExternalSession.PHONE_SOURCE)
+        val split = Timeline.build(
+            strength = emptyList(),
+            watch = listOf(telefon, zegarek("spacer", 10_000_000, type = "Spacer"))
+        )
+        assertEquals(2, split.cardio.size)
+    }
 }

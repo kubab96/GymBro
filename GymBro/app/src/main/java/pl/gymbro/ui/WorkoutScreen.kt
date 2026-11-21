@@ -97,6 +97,9 @@ import pl.gymbro.gym.LiveSession
 import pl.gymbro.gym.Loading
 import pl.gymbro.gym.PlateCalculator
 import pl.gymbro.gym.ProgressionEngine
+import pl.gymbro.track.PhoneTracker
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.collectAsState
 
 /**
  * Ekran logowania treningu.
@@ -134,16 +137,12 @@ fun WorkoutScreen() {
     var activeProgram by remember {
         mutableStateOf(Cache.peek<Program>(Cache.ACTIVE_PROGRAM))
     }
-    // Wszystkie plany - do przełącznika pod tytułem.
-    var programs by remember { mutableStateOf<List<Program>>(emptyList()) }
-    // Plan oglądany na tym ekranie. null znaczy „ten aktywny".
+    // Pozostałe plany z jednostkami - do „Rozpocznij inny trening".
     //
-    // Osobno od aktywnego, bo to dwie różne decyzje: aktywny mówi, według
-    // czego trenujesz na co dzień (i to jego jednostki dostaje zegarek),
-    // a oglądany - co chcesz zrobić dzisiaj. Jednorazowy trening z innego
-    // planu wymagał dotąd przestawienia aktywnego w zakładce Plan i potem
-    // pamiętania, żeby przestawić go z powrotem.
-    var viewedProgramId by rememberSaveable { mutableStateOf<Long?>(null) }
+    // Zastępuje przełącznik planu pod tytułem: jednorazowy trening z innego
+    // planu robi się teraz stamtąd, a Historia pokazuje wszystkie plany naraz,
+    // więc oglądanie cudzej historii też nie potrzebuje przełączania.
+    var otherPrograms by remember { mutableStateOf<List<ProgramUnits>>(emptyList()) }
     var inventory by remember {
         mutableStateOf(Cache.peek<Inventory>(Cache.INVENTORY))
     }
@@ -151,17 +150,21 @@ fun WorkoutScreen() {
     var session by remember { mutableStateOf<Session?>(null) }
     var states by remember { mutableStateOf<List<ExerciseState>>(emptyList()) }
     var activeIndex by remember { mutableStateOf(0) }
-    var showProgress by rememberSaveable { mutableStateOf(false) }
-    // Cała sesja, nie sam identyfikator: po odtworzeniu aktywności historia
-    // jeszcze się wczytuje, więc nie byłoby w czym szukać.
     // Ktore treningi zostawily propozycje - do kropek na liscie historii.
     var adviceSessions by remember { mutableStateOf(emptySet<Long>()) }
+    // Cała sesja, nie sam identyfikator: po odtworzeniu aktywności historia
+    // jeszcze się wczytuje, więc nie byłoby w czym szukać.
     var ownDetail by rememberSaveable(stateSaver = SessionSummarySaver) {
         mutableStateOf<SessionSummary?>(null)
     }
     var detailOf by rememberSaveable(stateSaver = ExternalSessionSaver) {
         mutableStateOf<ExternalSession?>(null)
     }
+    var exerciseId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var exerciseName by rememberSaveable { mutableStateOf("") }
+    var choosingOther by rememberSaveable { mutableStateOf(false) }
+    val pager = rememberPagerState(pageCount = { TRAINING_PAGES.size })
+    val liveActivity by PhoneTracker.state.collectAsState()
 
     // Ekran świeci tylko w trakcie treningu i tylko na tej zakładce.
     //
@@ -169,6 +172,7 @@ fun WorkoutScreen() {
     // cały czas działania aplikacji - więc ekran nie gasł nigdy: ani przy
     // wpisywaniu jedzenia, ani z telefonem odłożonym na stół bez żadnego
     // treningu. Flaga jest jedna na całe okno, stąd warunek na widoczność.
+    // Bieg nagrywany telefonem ekranu nie trzyma: telefon jest w kieszeni.
     val view = LocalView.current
     val tabShown = LocalTabShown.current
     val sessionRunning = session != null
@@ -187,63 +191,64 @@ fun WorkoutScreen() {
     }
 
     /**
-     * Przeładowuje listę jednostek razem z datą ostatniego wykonania.
+     * Przeładowuje jednostki planu aktywnego i pozostałych planów razem
+     * z datą ostatniego wykonania.
      *
-     * Wywoływana także po zakończeniu treningu - bez tego podpowiedź „następny
+     * Wywoływana także po zakończeniu treningu - bez tego podpowiedź „następna
      * w kolejce" opierałaby się na stanie sprzed sesji i wskazywała jednostkę,
      * którą przed chwilą skończyłeś.
      */
     suspend fun reloadPlanOptions() {
-        val poprzedniAktywny = activeProgram?.id
-        val wybrany = viewedProgramId
         val result = withContext(Dispatchers.IO) {
-            // Ekran treningu pokazuje jednostki JEDNEGO planu. Bez tego
-            // przy dwóch schematach naraz (np. FBW i PPL) wszystkie jednostki
-            // leżałyby w jednej liście i rotacja przestałaby cokolwiek znaczyć.
             val wszystkie = programRepo.all()
             val aktywny = wszystkie.firstOrNull { it.isActive }
-            // Zmiana aktywnego planu w zakładce Plan jest świeższą decyzją
-            // niż wybór zrobiony tutaj wcześniej, więc go unieważnia. Tak
-            // samo skasowanie planu, który był oglądany.
-            val ogladany = wszystkie.firstOrNull { it.id == wybrany }
-                ?.takeIf { poprzedniAktywny == null || poprzedniAktywny == aktywny?.id }
-                ?: aktywny
-            val plans = if (ogladany != null) planRepo.plansOf(ogladany.id) else emptyList()
             // Dwa zapytania zbiorcze zamiast dwóch na każdą jednostkę.
             val counts = sessionRepo.itemCounts()
             val lastDone = sessionRepo.lastFinishedAll()
+            fun optionsOf(p: Program, details: Boolean) = planRepo.plansOf(p.id).map { plan ->
+                // Ćwiczenia czytamy tylko dla planu aktywnego - karta „następna
+                // w kolejce" je wypisuje, reszta ekranów pokazuje samą liczbę.
+                val items = if (details) planRepo.items(plan.id) else emptyList()
+                PlanOption(
+                    plan = plan,
+                    exerciseCount = counts[plan.id] ?: 0,
+                    lastDoneAt = lastDone[plan.id],
+                    exercises = items.map { it.exerciseName },
+                    sets = items.sumOf { it.sets }
+                )
+            }
             Triple(
-                wszystkie, ogladany,
-                plans.map { plan ->
-                    PlanOption(
-                        plan = plan,
-                        exerciseCount = counts[plan.id] ?: 0,
-                        lastDoneAt = lastDone[plan.id]
-                    )
-                }
+                aktywny,
+                aktywny?.let { optionsOf(it, details = true) } ?: emptyList(),
+                wszystkie.filter { !it.isActive }
+                    .map { ProgramUnits(it, optionsOf(it, details = false)) }
+                    .filter { it.units.isNotEmpty() }
             )
         }
-        programs = result.first
-        activeProgram = Cache.put(Cache.ACTIVE_PROGRAM, result.first.firstOrNull { it.isActive })
-        viewedProgramId = result.second?.takeIf { !it.isActive }?.id
-        // Pamięć podręczna trzyma jednostki tylko planu aktywnego: to z niej
-        // ekran startuje po powrocie do zakładki, zanim cokolwiek się wczyta.
-        if (viewedProgramId == null) Cache.put(Cache.PLAN_OPTIONS, result.third)
-        planOptions = result.third
+        activeProgram = Cache.put(Cache.ACTIVE_PROGRAM, result.first)
+        planOptions = Cache.put(Cache.PLAN_OPTIONS, result.second)
+        otherPrograms = result.third
     }
 
     // Naciskiem w otwarta zakladke wracamy do glownego widoku treningu.
     TabReselectHandler {
         detailOf = null
         ownDetail = null
-        showProgress = false
+        exerciseId = null
+        choosingOther = false
+        scope.launch { pager.scrollToPage(0) }
     }
 
     LaunchedEffect(Unit) {
         Busy.track {
             // Jeden skok na wątek roboczy zamiast trzech. Każdy kosztuje przełączenie
             // kontekstu, a przy szybkim przeskakiwaniu między zakładkami to się sumuje.
-            val loadedInv = withContext(Dispatchers.IO) { gymRepo.inventory() }
+            val loadedInv = withContext(Dispatchers.IO) {
+                // Bieg nagrywany telefonem przeżywa zamknięcie aplikacji -
+                // po powrocie ekran ma go pokazać, a nie wybór jednostki.
+                PhoneTracker.restore(context.applicationContext)
+                gymRepo.inventory()
+            }
             inventory = Cache.put(Cache.INVENTORY, loadedInv)
             reloadPlanOptions()
             val active = withContext(Dispatchers.IO) { sessionRepo.active() }
@@ -252,10 +257,6 @@ fun WorkoutScreen() {
             adviceSessions = withContext(Dispatchers.IO) {
                 planRepo.itemsWithAdvice().mapNotNull { it.advice?.sessionId }.toSet()
             }
-            // Trening zamykany na zegarku nie przechodzi przez przycisk
-            // w aplikacji, więc propozycji nie miał kto policzyć - a to
-            // najczęstszy sposób kończenia. Szukamy ich więc także przy
-            // wejściu na ekran, dla ostatnio zamkniętej sesji.
             loading = false
         }
     }
@@ -307,34 +308,56 @@ fun WorkoutScreen() {
         onDispose { off() }
     }
 
-    // Historia wczytywana osobno od reszty ekranu.
+    // Historia wczytywana osobno od reszty ekranu - jedna lista dla Historii
+    // i Progresu, żeby liczby w obu podzakładkach się zgadzały.
     //
     // Klucz na Refresh.version, bo zakładki żyją w tle: bez tego bieg
     // dociągnięty z zegarka po starcie aplikacji nie pojawiłby się tu nigdy.
     // Klucz na session, bo po zakończeniu treningu dochodzi nowa pozycja.
-    var history by remember {
-        mutableStateOf(Timeline.Split(emptyList(), emptyList(), emptyList()))
-    }
-    // Klucz na oglądany plan, bo historia siły dotyczy tylko jego.
-    val shownProgram = programs.firstOrNull { it.id == viewedProgramId } ?: activeProgram
-    LaunchedEffect(Refresh.version, session, shownProgram?.id) {
-        val planId = shownProgram?.id
-        history = withContext(Dispatchers.IO) {
-            val watch = healthRepo.sessions(limit = 200)
-            Timeline.build(
-                // Z zapasem, a nie dwadzieścia ostatnich: odsiewanie po
-                // planie dzieje się dopiero po sklejeniu z zegarkiem, więc
-                // przy krótkiej liście plan robiony miesiąc temu wyglądałby
-                // na nigdy nietknięty.
-                strength = sessionRepo.historySummaries(200).map { s ->
-                    s.copy(watch = WatchMatch.bestMatch(s.startedAt, s.endedAt, watch))
+    var activities by remember { mutableStateOf<List<Activity>>(emptyList()) }
+    LaunchedEffect(Refresh.version, session) {
+        activities = withContext(Dispatchers.IO) {
+            val all = healthRepo.sessions(limit = 3000)
+            // Tętno do treningu siłowego bierzemy tylko z zegarka. Bieg
+            // nagrany telefonem w tym samym czasie to inna aktywność.
+            val fromWatch = all.filterNot { it.fromPhone }
+            val split = Timeline.build(
+                strength = sessionRepo.historySummaries(3000).map { s ->
+                    s.copy(watch = WatchMatch.bestMatch(s.startedAt, s.endedAt, fromWatch))
                 },
-                watch = watch,
-                programId = planId
+                watch = all,
+                limit = Int.MAX_VALUE
             )
+            (split.strength + split.cardio + split.other).sortedByDescending { it.at }
         }
     }
-    val inv = inventory
+
+    fun startPlan(plan: Plan) {
+        val inv = inventory ?: return
+        scope.launch {
+            val id = withContext(Dispatchers.IO) { sessionRepo.start(plan.id) }
+            val s = Session(id = id, planId = plan.id, startedAt = System.currentTimeMillis())
+            choosingOther = false
+            session = s
+            reload(s, inv)
+        }
+    }
+
+    // Kolejność ekranów: trwająca aktywność z telefonu wygrywa ze wszystkim,
+    // bo tylko tu da się ją zakończyć. Trening siłowy prowadzi zegarek, więc
+    // jego ekran może poczekać.
+    val liveSnap = liveActivity
+    if (liveSnap != null) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            ActivityLiveScreen(liveSnap) { saved ->
+                // Prosto do szczegółów zapisanej aktywności - to pierwsze,
+                // co chce się zobaczyć po biegu.
+                if (saved != null) detailOf = saved
+                Refresh.bump()
+            }
+        }
+        return
+    }
 
     val own = ownDetail
     if (own != null) {
@@ -344,14 +367,41 @@ fun WorkoutScreen() {
 
     val opened = detailOf
     if (opened != null) {
-        ActivityDetailScreen(session = opened, onBack = { detailOf = null })
+        ActivityDetailScreen(
+            session = opened,
+            onBack = { detailOf = null },
+            onDeleted = {
+                detailOf = null
+                Refresh.bump()
+            }
+        )
         return
     }
 
-    if (showProgress) {
-        ProgressScreen(onBack = { showProgress = false })
+    val exId = exerciseId
+    if (exId != null) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            ExerciseProgressScreen(exId, exerciseName, onBack = { exerciseId = null })
+        }
         return
     }
+
+    if (choosingOther) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            StartOtherScreen(
+                programs = otherPrograms,
+                onBack = { choosingOther = false },
+                onStartUnit = { plan -> startPlan(plan) },
+                onStartActivity = { kind ->
+                    choosingOther = false
+                    PhoneTracker.start(context.applicationContext, kind)
+                }
+            )
+        }
+        return
+    }
+
+    val inv = inventory
 
     // Jeden odczyt na całe składanie. `session` to stan, który zegarek potrafi
     // wyzerować w każdej chwili (FINISH z pilota), więc `session!!` w gałęzi
@@ -364,32 +414,24 @@ fun WorkoutScreen() {
 
             inv == null -> Text("Brak danych o sprzęcie.", Modifier.padding(top = 16.dp))
 
-            current == null -> PlanPicker(
-                program = shownProgram,
-                programs = programs,
-                onProgram = { picked ->
-                    // Wybór aktywnego to powrót do stanu wyjściowego, nie
-                    // osobny wybór - stąd null, a nie jego numer.
-                    viewedProgramId = picked.id.takeIf { !picked.isActive }
-                    scope.launch { reloadPlanOptions() }
-                },
+            current == null -> TrainingHome(
+                pager = pager,
+                program = activeProgram,
                 options = planOptions,
-                onProgress = { showProgress = true },
-                history = history,
+                activities = activities,
+                onStart = { plan -> startPlan(plan) },
+                onOther = { choosingOther = true },
                 onOpen = { picked ->
                     when (picked) {
                         is Activity.Watch -> detailOf = picked.session
                         is Activity.Strength -> ownDetail = picked.summary
                     }
+                },
+                onExercise = { id, name ->
+                    exerciseName = name
+                    exerciseId = id
                 }
-            ) { plan ->
-                scope.launch {
-                    val id = withContext(Dispatchers.IO) { sessionRepo.start(plan.id) }
-                    val s = Session(id = id, planId = plan.id, startedAt = System.currentTimeMillis())
-                    session = s
-                    reload(s, inv)
-                }
-            }
+            )
 
             else -> ActiveSession(
                 session = current,
@@ -464,493 +506,6 @@ fun WorkoutScreen() {
             )
         }
     }
-    }
-}
-
-// ---- Wybór planu ---------------------------------------------------------
-
-/** Jednostka treningowa razem z kontekstem potrzebnym do wyboru. */
-private data class PlanOption(
-    val plan: Plan,
-    val exerciseCount: Int,
-    val lastDoneAt: Long?
-)
-
-/** Która z trzech zakładek Treningu jest otwarta. */
-private enum class Stream(val label: String) {
-    STRENGTH("Siłowy"), CARDIO("Kardio"), OTHER("Inne")
-}
-
-@Composable
-private fun PlanPicker(
-    /** Plan, którego jednostki i historię widać - niekoniecznie aktywny. */
-    program: Program?,
-    programs: List<Program>,
-    onProgram: (Program) -> Unit,
-    options: List<PlanOption>,
-    onProgress: () -> Unit,
-    history: Timeline.Split,
-    onOpen: (Activity) -> Unit,
-    // Ostatni parametr, żeby dało się go przekazać jako lambdę końcową.
-    onStart: (Plan) -> Unit
-) {
-    var confirming by remember { mutableStateOf<PlanOption?>(null) }
-    var stream by rememberSaveable { mutableStateOf(Stream.STRENGTH) }
-    var choosingProgram by remember { mutableStateOf(false) }
-    val programName = program?.name
-    val aktywny = programs.firstOrNull { it.isActive }
-
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-
-        Spacer(Modifier.height(20.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Trening", style = MaterialTheme.typography.headlineLarge)
-                if (program == null) {
-                    Text(
-                        "Wybierz jednostkę",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    // Nazwa planu jest przełącznikiem. Strzałka mówi, że da
-                    // się w nią dotknąć - sama nazwa wyglądała jak podtytuł
-                    // i nikt by tam wyboru nie szukał.
-                    Text(
-                        program.name + "  ▾",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable { choosingProgram = true }
-                            .padding(vertical = 4.dp)
-                    )
-                    // Zegarek dostaje jednostki planu aktywnego niezależnie
-                    // od tego, co tu wybrano. Bez tej linijki trening
-                    // zaczęty z nadgarstka byłby z innego planu, niż widać.
-                    if (!program.isActive && aktywny != null) {
-                        Text(
-                            "plan nieaktywny · na zegarku dalej " + aktywny.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-            // Postęp czyta się między treningami, a nie w ich trakcie - stąd wejście
-            // na ekranie wyboru, a nie w nawigacji głównej.
-            OutlinedButton(onClick = onProgress) { Text("Postęp") }
-        }
-
-        // Trzy strumienie, bo siła działa inaczej niż reszta: ciężary wpisujesz,
-        // biegi i resztę zegarek przynosi sam. Mieszanie ich na jednej liście
-        // kazało za każdym razem oddzielać wzrokiem to, co robisz, od tego,
-        // co się samo zapisało.
-        Spacer(Modifier.height(14.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stream.entries.forEach { s ->
-                val count = when (s) {
-                    Stream.STRENGTH -> history.strength.size
-                    Stream.CARDIO -> history.cardio.size
-                    Stream.OTHER -> history.other.size
-                }
-                StreamChip(
-                    label = s.label,
-                    count = count,
-                    active = s == stream,
-                    onClick = { stream = s }
-                )
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-
-        when (stream) {
-            Stream.STRENGTH -> {
-                if (options.isEmpty()) {
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
-                        Column(Modifier.padding(18.dp)) {
-                            Text(
-                                if (programName == null) "Nie masz jeszcze planu"
-                                else "Plan jest pusty",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                if (programName == null)
-                                    "Przejdź do zakładki Plan i stwórz plan - na przykład " +
-                                        "FBW z jednostkami A, B i C albo PPL z Push, Pull i Legs."
-                                else
-                                    "Plan " + programName + " nie ma jeszcze jednostek. " +
-                                        "Dodaj je w zakładce Plan.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                } else {
-                    // Przy rotacji A/B/C najdawniej robiona jednostka jest następna
-                    // w kolejce. Nigdy nierobiona wyprzedza wszystkie.
-                    val suggested = options.minByOrNull { it.lastDoneAt ?: 0L }?.plan?.id
-                    options.forEach { option ->
-                        PlanCard(
-                            option = option,
-                            suggested = option.plan.id == suggested,
-                            onClick = { confirming = option }
-                        )
-                    }
-                }
-
-                HistorySection(
-                    title = "Historia",
-                    // Przy kilku planach pusta lista nie znaczy, że nigdy
-                    // nie trenowałeś - tylko że nie według tego planu.
-                    empty = if (programs.size > 1 && programName != null)
-                        "Pusto. Żaden zapisany trening nie szedł jeszcze według planu " +
-                            programName + "."
-                    else "Pusto. Po pierwszym zapisanym treningu pojawi się tu historia.",
-                    items = history.strength,
-                    onOpen = onOpen
-                )
-            }
-
-            Stream.CARDIO -> HistorySection(
-                title = "Bieganie i chodzenie",
-                empty = "Pusto. Biegi, spacery i wycieczki pojawią się same po " +
-                    "synchronizacji z zegarkiem - nic nie musisz wpisywać.",
-                items = history.cardio,
-                onOpen = onOpen
-            )
-
-            Stream.OTHER -> HistorySection(
-                title = "Pozostałe aktywności",
-                empty = "Pusto. Trafi tu wszystko, co nagrasz zegarkiem poza siłownią " +
-                    "i ruchem w terenie - na przykład trening dowolny czy joga.",
-                items = history.other,
-                onOpen = onOpen
-            )
-        }
-
-        Spacer(Modifier.height(24.dp))
-    }
-
-    // Wybór oglądanego planu.
-    //
-    // Nie zmienia planu aktywnego - to robi się w zakładce Plan. Tutaj
-    // chodzi o jeden trening z innego schematu albo o zajrzenie w jego
-    // historię, bez przestawiania tego, co dostaje zegarek.
-    if (choosingProgram) {
-        AlertDialog(
-            onDismissRequest = { choosingProgram = false },
-            title = { Text("Który plan pokazać") },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    programs.forEach { p ->
-                        val wybrany = p.id == program?.id
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (wybrany) MaterialTheme.colorScheme.primaryContainer
-                                    else Color.Transparent
-                                )
-                                .clickable {
-                                    choosingProgram = false
-                                    if (!wybrany) onProgram(p)
-                                }
-                                .padding(horizontal = 12.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(p.name, style = MaterialTheme.typography.titleMedium)
-                                if (p.isActive) {
-                                    Text(
-                                        "aktywny",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            if (wybrany) Text("✓", style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (programs.size > 1)
-                            "Zmienia tylko to, co widać w tej zakładce. Plan aktywny " +
-                                "ustawiasz w zakładce Plan."
-                        else "Masz jeden plan. Kolejne stworzysz w zakładce Plan.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { choosingProgram = false }) { Text("Zamknij") }
-            }
-        )
-    }
-
-    // Potwierdzenie startu.
-    //
-    // Karta jednostki jest duża i leży tam, gdzie się przewija - dotknięcie
-    // przez pomyłkę zaczynało trening i uruchamiało licznik. Cofnięcie tego
-    // wymagało zakończenia pustej sesji, czyli śmiecia w historii. Jedno
-    // pytanie kosztuje dotknięcie, pomyłka kosztowała wpis.
-    val toConfirm = confirming
-    if (toConfirm != null) {
-        AlertDialog(
-            onDismissRequest = { confirming = null },
-            title = { Text("Zacząć " + toConfirm.plan.name + "?") },
-            text = {
-                Text(
-                    toConfirm.exerciseCount.toString() + " ćwiczeń · " +
-                        lastDoneLabel(toConfirm.lastDoneAt) + "\n\n" +
-                        "Licznik czasu ruszy od razu."
-                )
-            },
-            confirmButton = {
-                Button(onClick = {
-                    confirming = null
-                    onStart(toConfirm.plan)
-                }) { Text("Zacznij") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = null }) { Text("Anuluj") }
-            }
-        )
-    }
-}
-
-/** Przełącznik strumienia z licznikiem - od razu widać, gdzie coś jest. */
-@Composable
-private fun StreamChip(label: String, count: Int, active: Boolean, onClick: () -> Unit) {
-    Card(
-        Modifier.clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (active) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = if (active) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    ) {
-        Text(
-            if (count > 0) label + "  " + count else label,
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
-        )
-    }
-}
-
-@Composable
-private fun HistorySection(
-    title: String,
-    empty: String,
-    items: List<Activity>,
-    onOpen: (Activity) -> Unit
-) {
-    Spacer(Modifier.height(22.dp))
-    Text(title, style = MaterialTheme.typography.titleMedium)
-    Spacer(Modifier.height(6.dp))
-    if (items.isEmpty()) {
-        Text(
-            empty,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    } else {
-        items.forEach { ActivityRow(it, onOpen) }
-    }
-}
-/**
- * Czas trwania treningu.
- *
- * Zero minut byłoby mylące: sesja z dwudziestoma seriami zapisana w pół minuty
- * to ślad po przeklikaniu aplikacji, a nie trening, który trwał zero. Podajemy
- * więc, że trwała krócej niż minutę, zamiast twierdzić, że nie trwała wcale.
- */
-private fun durationLabel(min: Long): String = if (min < 1) "<1 min" else "$min min"
-
-/** Tempo jako minuty i sekundy, bo 5,5 min/km czyta się gorzej niż 5:30. */
-private fun paceLabel(minPerKm: Double): String {
-    val total = (minPerKm * 60).toInt()
-    return String.format(Locale.getDefault(), "%d:%02d", total / 60, total % 60)
-}
-
-/**
- * Statystyki aktywności z zegarka.
- *
- * Pokazujemy tylko to, co naprawdę przyszło. Zegarek wypełnia różne pola
- * zależnie od typu treningu - bieg ma dystans i tempo, trening dowolny zwykle
- * samo tętno. Wypisywanie pustych rubryk z kreską sugerowałoby, że czegoś
- * brakuje, podczas gdy po prostu nie ma czego mierzyć.
- */
-private fun watchStats(s: pl.gymbro.data.ExternalSession): String =
-    listOfNotNull(
-        s.distanceM?.takeIf { it > 0 }
-            ?.let { String.format(Locale.getDefault(), "%.2f km", it / 1000.0) },
-        s.paceMinPerKm?.let { paceLabel(it) + " /km" },
-        s.hrAvg?.toInt()?.let { avg ->
-            val max = s.hrMax?.toInt()
-            if (max != null && max > avg) "tętno $avg/$max" else "tętno $avg"
-        },
-        s.energyKcal?.takeIf { it > 0 }?.let { "${it.toInt()} kcal" }
-    ).joinToString(" · ")
-
-/** Jedna pozycja historii - Twój zapis albo aktywność z zegarka. */
-@Composable
-private fun ActivityRow(item: Activity, onOpen: (Activity) -> Unit) {
-    val adviceSessions = LocalAdviceSessions.current
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp)
-            .then(
-                // Każdy wpis ma teraz co pokazać: aktywność z zegarka swoje
-                // pomiary, własny trening - ćwiczenia złożone z tętnem.
-                Modifier.clickable { onOpen(item) }
-            ),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                when (item) {
-                    is Activity.Strength -> {
-                        val s = item.summary
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                s.planName ?: "Trening",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            // Kropka przy treningu, po ktorym cos czeka -
-                            // inaczej trzeba wchodzic w kazdy po kolei,
-                            // zeby sprawdzic, czy cos z niego wynikło.
-                            if (adviceSessions.contains(s.sessionId)) {
-                                Badge(Modifier.padding(start = 6.dp))
-                            }
-                        }
-                        Text(
-                            buildString {
-                                append(s.workingSets.toString() + " serii")
-                                if (s.tonnage > 0) append(" · " + s.tonnage.toInt() + " kg")
-                                s.watch?.hrAvg?.toInt()?.let { append(" · tętno " + it) }
-                            },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-
-                    is Activity.Watch -> {
-                        val w = item.session
-                        Text(
-                            w.type,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        val stats = watchStats(w)
-                        Text(
-                            // Trening siłowy, który trafił tutaj, nie został
-                            // przez Ciebie zapisany - warto to powiedzieć wprost,
-                            // bo inaczej wygląda jak zgubione serie.
-                            if (stats.isNotEmpty()) stats else "bez szczegółów",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        if (Timeline.isStrength(w)) {
-                            Text(
-                                "z zegarka, bez zapisanych serii",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    durationLabel(
-                        when (item) {
-                            is Activity.Strength -> item.summary.durationMin
-                            is Activity.Watch -> item.session.durationMin
-                        }
-                    ),
-                    style = MaterialTheme.typography.titleSmall
-                )
-                Text(
-                    SimpleDateFormat("dd.MM", Locale.getDefault()).format(Date(item.at)),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-@Composable
-private fun PlanCard(option: PlanOption, suggested: Boolean, onClick: () -> Unit) {
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (suggested) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = if (suggested) MaterialTheme.colorScheme.onPrimaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    option.plan.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    (option.plan.day?.let { "dzień $it · " } ?: "") +
-                        "${option.exerciseCount} ćwiczeń · ${lastDoneLabel(option.lastDoneAt)}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                if (suggested) {
-                    Text(
-                        "następny w kolejce",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-
-            Text("▶", style = MaterialTheme.typography.titleLarge)
-        }
-    }
-}
-
-/** Ile dni temu - czytelniejsze niż data przy rotacji co kilka dni. */
-private fun lastDoneLabel(ms: Long?): String {
-    if (ms == null) return "jeszcze nierobiony"
-    val days = ((System.currentTimeMillis() - ms) / 86_400_000L).toInt()
-    return when (days) {
-        0 -> "dzisiaj"
-        1 -> "wczoraj"
-        in 2..6 -> "$days dni temu"
-        in 7..13 -> "tydzień temu"
-        else -> "$days dni temu"
     }
 }
 

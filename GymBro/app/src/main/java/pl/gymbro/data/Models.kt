@@ -496,6 +496,17 @@ data class ExternalSession(
 ) {
     val durationMin: Long get() = (endedAt - startedAt) / 60_000
 
+    /** Nagrana telefonem w GymBro, a nie przyniesiona z zegarka. */
+    val fromPhone: Boolean get() = source == PHONE_SOURCE
+
+    companion object {
+        /**
+         * Źródło aktywności nagranej telefonem. Nazwa pakietu, bo tak samo
+         * Health Connect podpisuje źródło treningów z zegarka.
+         */
+        const val PHONE_SOURCE = "pl.gymbro"
+    }
+
     /**
      * Czy sesja ma już dane z agregacji (dystans, kalorie, tętno).
      *

@@ -42,13 +42,18 @@
     <!-- Android 10/11 wymaga lokalizacji do skanowania BLE.
          Zgrubna stoi obok dokładnej, bo samej dokładnej zadeklarować nie
          wolno: użytkownik ma prawo przyznać tylko przybliżoną, a manifest
-         bez niej nie daje mu takiej możliwości. -->
-    <uses-permission
-        android:name="android.permission.ACCESS_COARSE_LOCATION"
-        android:maxSdkVersion="30" />
-    <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:maxSdkVersion="30" />
+         bez niej nie daje mu takiej możliwości.
+
+         Od wersji 29 bazy lokalizacja służy też do trasy biegu i spaceru
+         nagrywanych telefonem, więc nie ma już górnej granicy wersji Androida.
+         Skanowanie wagi dalej jej nie używa - BLUETOOTH_SCAN ma neverForLocation.
+         Typ usługi location, bo GPS musi działać z wygaszonym ekranem. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-feature
+        android:name="android.hardware.location.gps"
+        android:required="false" />
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -129,6 +134,11 @@
             android:name=".net.WatchLinkService"
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
+
+        <service
+            android:name=".track.TrackService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!--
             Pilot ma stać także po restarcie telefonu: trening zaczyna się na

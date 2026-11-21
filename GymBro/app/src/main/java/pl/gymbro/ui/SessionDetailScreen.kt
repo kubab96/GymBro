@@ -192,10 +192,15 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             val age = java.time.LocalDate.now().year - year
             if (age in 10..100) maxHr = RunAnalysis.maxHrFromAge(age)
         }
-        // Tętno tylko wtedy, gdy ta sesja skleiła się z zapisem zegarka.
-        val samples = summary.watch?.let {
-            reader.load(it.startedAt, it.endedAt).heartRate
-        } ?: emptyList()
+        // Tętno z okna treningu zegarka, a bez niego - z okna samego zapisu.
+        //
+        // Dotąd tylko to pierwsze, więc trening prowadzony pilotem nie miał
+        // tętna nigdy: pilot nie uruchamia natywnego treningu i zegarek nie
+        // ma czego skleić. Pomiar całodobowy leży jednak w Health Connect
+        // i obejmuje także te godziny.
+        val w = summary.watch
+        val samples = if (w != null) reader.load(w.startedAt, w.endedAt).heartRate
+        else reader.load(summary.startedAt, summary.endedAt).heartRate
         inventory = withContext(Dispatchers.IO) { gymRepo.inventory() }
         reloadSets(samples)
         hr = samples
@@ -251,8 +256,10 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
                 "Czas" to if (summary.durationMin < 1) "<1 min" else "${summary.durationMin} min",
                 "Serie" to "$workingSets",
                 "Powtórzenia" to "${blocks.sumOf { it.totalReps }}",
-                w?.hrAvg?.let { "Tętno śr." to "${it.toInt()}" },
-                w?.hrMax?.let { "Tętno maks." to "${it.toInt()}" },
+                // Bez treningu z zegarka - średnia i szczyt z samych próbek.
+                (w?.hrAvg ?: hr.takeIf { it.isNotEmpty() }?.map { it.value }?.average())
+                    ?.let { "Tętno śr." to "${it.toInt()}" },
+                (w?.hrMax ?: hr.maxOfOrNull { it.value })?.let { "Tętno maks." to "${it.toInt()}" },
                 w?.energyKcal?.takeIf { it > 0 }?.let { "Energia" to "${it.toInt()} kcal" }
             )
         )
@@ -275,6 +282,21 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             )
             Spacer(Modifier.height(10.dp))
             HrWithSets(RunAnalysis.downsample(hr, 180), setTimes, maxHr)
+            // Pomiar całodobowy chodzi co kilka minut, nie co sekundę. Wykres
+            // jest wtedy prawdziwy, ale gładki - pojedyncza seria się na nim
+            // nie odbije i lepiej to powiedzieć, niż kazać szukać pików.
+            val gapMs = (hr.last().at - hr.first().at) / (hr.size - 1).coerceAtLeast(1)
+            if (summary.watch == null && gapMs > 60_000) {
+                Text(
+                    "Z pomiaru całodobowego - zegarek mierzył średnio co " +
+                        "${(gapMs / 60_000).coerceAtLeast(1)} min, więc pojedynczych " +
+                        "serii na wykresie nie widać. Gęsty pomiar daje trening siłowy " +
+                        "włączony na zegarku obok pilota.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
         }
 
 
@@ -376,18 +398,16 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             }
         }
 
-        if (summary.watch == null) {
+        if (hr.isEmpty()) {
             Spacer(Modifier.height(16.dp))
-            // Najczęstszy powód nie jest awarią: serie zapisane pilotem na
-            // zegarku nie tworzą natywnego treningu siłowego, bo mini-aplikacja
-            // nie może go uruchomić - API treningu jest tylko do odczytu.
-            // Dawny komunikat brzmiał jak błąd synchronizacji i mylił.
+            // Najpierw zgoda: bez niej żadne z poniższych wyjaśnień nie jest
+            // prawdą, a to ona była przyczyną przez cały miesiąc po zmianie nazwy.
+            HealthAccessBanner()
+            Spacer(Modifier.height(8.dp))
             Text(
-                "Brak zapisu tętna dla tego treningu. Jeśli zapisywałeś serie " +
-                    "pilotem na zegarku, to normalne: pilot nie uruchamia " +
-                    "natywnego treningu siłowego, więc zegarek nie prowadzi " +
-                    "osobnego pomiaru. Żeby mieć tętno, włącz na zegarku " +
-                    "trening siłowy obok pilota.",
+                "Brak tętna z czasu tego treningu. Przy dostępie do Health Connect " +
+                    "bierze się ono z pomiaru całodobowego zegarka - włącz go w Zepp, " +
+                    "w ustawieniach monitorowania tętna, najlepiej co minutę.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

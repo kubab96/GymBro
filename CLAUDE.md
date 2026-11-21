@@ -184,9 +184,9 @@ jest niewidoczny dokładnie wtedy, gdy się go potrzebuje.
 
 ### Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 28. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
+`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 29. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
 
-Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia jeden tabel; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
+Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia dwie tabele; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
 
 **`onCreate` i `onUpgrade` to dwie drogi do tej samej bazy i nic poza `GymBro/tools/schemat.sh` nie pilnuje, żeby kończyły się w tym samym miejscu.** Skrypt składa świeżą bazę z SQL-a wyciągniętego z `Schema.kt` i porównuje ją z kopią z telefonu - kolumny, typy, klucze, indeksy. Puszczaj go po każdej zmianie schematu, na kopii ściągniętej już po migracji: `GymBro/tools/schemat.sh GymBro/kopie/<plik>.db`. Nową listę `Vn_STATEMENTS` wołaną z `onCreate` trzeba dopisać do `LISTY` w skrypcie. Testu jednostkowego na to nie ma, bo `SQLiteOpenHelper` wymaga Androida.
 
@@ -225,7 +225,9 @@ Pięć: Trening, Kalorie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`
 
 **Kettlebell i gumy to osobne `Equipment`**, nie odmiany hantla: hantel przy ograniczonych obciążeniach składa się z talerzy, kettlebell nie. Kettlebelle z biblioteki mają krok 4 kg (`Seed.kettlebellSteps`).
 
-**Plan oglądany w Treningu to nie plan aktywny.** Nazwa planu pod tytułem jest przełącznikiem: zmienia jednostki i historię na tym ekranie, ale `is_active` zostaje nietknięte, więc zegarek dalej dostaje jednostki planu aktywnego. Historia siły idzie z `Timeline.build(programId = …)`.
+**Trening ma trzy podzakładki: Trening, Progres, Historia** (`ui/TrainingHome.kt`, przełącznik i pager jak w Wadze). Trening pokazuje jednostki planu aktywnego z dużą kartą „następna w kolejce" i przycisk „Rozpocznij inny trening" (`ui/StartOtherScreen.kt`): jednostka z innego planu albo aktywność nagrywana telefonem. Jednorazowy trening z innego planu nie rusza `is_active`, więc zegarek dalej dostaje jednostki planu aktywnego. Progres (`ui/ProgressScreen.kt`) i Historia dostają z `WorkoutScreen` tę samą listę aktywności, żeby liczby w obu się zgadzały; liczby Progresu są czystymi funkcjami w `gym/ProgressStats.kt`. „Główne boje" to najcięższe ćwiczenia z co najmniej dwiema sesjami w okresie, nie najczęstsze - w FBW akcesoria siedzą w kilku jednostkach i wygrywały z przysiadem. Historia (`ui/HistoryPage.kt`) to karty z filtrami okresu, rodzaju i treningu; najlepsze serie i rekordy na kartach liczy `ProgressStats.highlights` tą samą regułą rekordu co Progres, a tętno i trasę karta doczytuje dopiero, gdy wjedzie na ekran.
+
+**Bieg, spacer i rower nagrywa też telefon** (`track/`). Aktywność jest zwykłym wierszem `external_session` ze źródłem `ExternalSession.PHONE_SOURCE` i tą samą nazwą typu co import z zegarka („Bieg", „Spacer"), więc historia i ekran szczegółów nie mają dla niej osobnej ścieżki. Trwająca leży w `app_state`, punkty trasy w `track_point` zapisywane na bieżąco - ubity proces wstaje przez `PhoneTracker.restore` z tym samym dystansem. GPS chodzi w usłudze pierwszoplanowej typu `location` (`TrackService`), startowanej zawsze z widocznej aplikacji, więc wystarcza zgoda „podczas używania". Odsiewanie odczytów, dystans, kilometry i energia są w `gym/TrackMath.kt` z testami. Ten sam bieg nagrany i telefonem, i zegarkiem `Timeline.build` skleja w jeden - zostaje zapis z telefonu. **Niesprawdzone w terenie** - na telefonie przeszedł tylko stoper bez GPS.
 
 Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar zostaje, bo mierzenie rozbudowanego ekranu od nowa to kilkadziesiąt milisekund zwiechy przy każdym powrocie. Głuchota jest konieczna, bo ukryty ekran nadal leży w drzewie.
 
@@ -254,6 +256,8 @@ Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar z
 Gałąź domyślna to `master`, zdalne `origin` to `github.com/kubab96/GymBro`.
 
 ## Rzeczy, które łatwo zepsuć
+
+**Zgody Health Connect należą do nazwy pakietu.** Po zmianie z HybridLog na GymBro przepadły po cichu i od 2026-10-22 przez miesiąc z zegarka nie przyszło nic - import łapał `SecurityException` i pisał tylko do logu. Brak zgody pokazuje teraz `ui/HealthAccess.kt` w Treningu i w szczegółach treningu. Health Connect oddaje dane najwyżej 30 dni wstecz od pierwszej zgody. Treningi prowadzone pilotem biorą tętno z pomiaru całodobowego, bo pilot nie zakłada natywnego treningu.
 
 **Token pilota.** `gymbro-watch/utils/config/link.js` jest w `.gitignore` - paruje konkretny zegarek z konkretnym telefonem. Wzór: `link.example.js`, wartość: GymBro → Profil → Pilot na zegarku, pole „Kod parowania". Bez tego pliku paczka się zbuduje, ale telefon odrzuci każde żądanie z 401.
 

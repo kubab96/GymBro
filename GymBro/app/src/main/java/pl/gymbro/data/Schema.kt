@@ -42,8 +42,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 26 - biblioteka kilkuset cwiczen: masa ciala, kettlebell, gumy
          * 27 - opcjonalny dzien tygodnia jednostki
          * 28 - cwiczenia pod nowy sprzet: landmine, kamizelka, paralletki, pilki, sanki
+         * 29 - trasa GPS aktywnosci nagranych telefonem
          */
-        const val VERSION = 28
+        const val VERSION = 29
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -104,6 +105,32 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          */
         private val V27_STATEMENTS = listOf(
             "ALTER TABLE plan ADD COLUMN day INTEGER"
+        )
+
+        /**
+         * Trasa aktywności nagranej telefonem - bieg, spacer, rower.
+         *
+         * Sama aktywność to zwykły wiersz `external_session` ze źródłem
+         * telefonu, więc historia i szczegóły nie mają dla niej osobnej
+         * ścieżki. Punkty idą osobno, po `external_id`, i zapisują się na
+         * bieżąco, a nie dopiero na końcu: proces ubity w połowie biegu
+         * wstaje z tymi samymi punktami i tym samym dystansem.
+         *
+         * `seg` rośnie po każdej pauzie - między segmentami dystansu nie ma.
+         */
+        private val V29_STATEMENTS = listOf(
+            """
+            CREATE TABLE track_point (
+                id       INTEGER PRIMARY KEY AUTOINCREMENT,
+                activity TEXT    NOT NULL,
+                at       INTEGER NOT NULL,
+                lat      REAL    NOT NULL,
+                lon      REAL    NOT NULL,
+                accuracy REAL    NOT NULL,
+                seg      INTEGER NOT NULL DEFAULT 0
+            )
+            """.trimIndent(),
+            "CREATE INDEX idx_track_activity ON track_point(activity, at)"
         )
 
         /**
@@ -666,6 +693,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V20_STATEMENTS.forEach { db.execSQL(it) }
         V24_STATEMENTS.forEach { db.execSQL(it) }
         V27_STATEMENTS.forEach { db.execSQL(it) }
+        V29_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -840,6 +868,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         // droga co przy wersjach 25 i 26: biblioteka wstawia sie tylko z migracji.
         if (oldVersion < 28) {
             Seed.seedExerciseLibrary(db)
+        }
+
+        if (oldVersion < 29) {
+            V29_STATEMENTS.forEach { db.execSQL(it) }
         }
     }
 }
