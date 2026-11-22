@@ -3,6 +3,32 @@ package pl.gymbro.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -281,35 +307,19 @@ fun ProfileScreen() {
     // zostałoby złożone przy otwartej synchronizacji z zegarkiem - a wtedy
     // wyjście z zakładki nie robiłoby nic, bez żadnego okna.
     leaving?.let { proceed ->
-        AlertDialog(
-            // Dotknięcie obok znaczy „jednak zostaję".
-            onDismissRequest = { leaving = null },
-            title = { Text("Niezapisane zmiany") },
-            text = {
-                Text(
-                    if (canSave) "Zmieniłeś dane w Profilu i ich nie zapisałeś."
-                    else "Zmieniłeś dane w Profilu, ale część pól ma wartości, " +
-                        "których nie da się zapisać. Zostań i je popraw albo " +
-                        "wyjdź bez zapisywania."
-                )
+        UnsavedChangesDialog(
+            canSave = canSave,
+            onStay = { leaving = null },
+            onSave = {
+                leaving = null
+                save(then = proceed)
             },
-            confirmButton = {
-                TextButton(
-                    enabled = canSave,
-                    onClick = {
-                        leaving = null
-                        save(then = proceed)
-                    }
-                ) { Text("Zapisz") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    leaving = null
-                    // Szkic wraca do stanu z bazy. Zostawiony w polach
-                    // wyglądałby po powrocie jak zapisany.
-                    inventory?.let { adopt(profile, it) }
-                    proceed()
-                }) { Text("Nie zapisuj") }
+            onDiscard = {
+                leaving = null
+                // Szkic wraca do stanu z bazy. Zostawiony w polach
+                // wyglądałby po powrocie jak zapisany.
+                inventory?.let { adopt(profile, it) }
+                proceed()
             }
         )
     }
@@ -352,31 +362,25 @@ fun ProfileScreen() {
         // więc musi być widać go z każdego miejsca listy - przewinięty razem
         // z tytułem znikałby dokładnie wtedy, gdy zmieniasz coś na dole.
         Row(
-            Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
                 Text("Profil", style = MaterialTheme.typography.headlineLarge)
-                when {
-                    dirty && !canSave -> Text(
-                        "Popraw zaznaczone pola",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    dirty -> Text(
-                        "Niezapisane zmiany",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                    else -> profile.age?.let {
-                        Text(
-                            "$it lat",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                Text(
+                    when {
+                        dirty && !canSave -> "Popraw zaznaczone pola"
+                        dirty -> "Niezapisane zmiany"
+                        else -> "Wszystko zapisane"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = when {
+                        dirty && !canSave -> MaterialTheme.colorScheme.error
+                        dirty -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     }
-                }
+                )
             }
             Button(onClick = { save() }, enabled = canSave) { Text("Zapisz") }
         }
@@ -388,412 +392,322 @@ fun ProfileScreen() {
                 .verticalScroll(rememberScrollState())
         ) {
 
-        // ---- Dane ----
+        // ---- Kim jesteś ----
+        // Karta-wizytówka u góry: to, co widać na pierwszy rzut oka, jest
+        // podsumowaniem pól pod nią, więc poprawka od razu się w nim odbija.
         Spacer(Modifier.height(6.dp))
-        SectionCard("Dane") {
-            Text(
-                "Wzrost i płeć wchodzą do oszacowania tkanki tłuszczowej z obwodów.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = height,
-                    onValueChange = { height = it },
-                    label = { Text("Wzrost (cm)") },
-                    isError = !heightOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = birthYear,
-                    onValueChange = { birthYear = it },
-                    label = { Text("Rok urodzenia") },
-                    isError = !birthOk,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Sex.entries.forEach { s ->
-                    val label = if (s == Sex.MALE) "mężczyzna" else "kobieta"
-                    if (s == draft.sex) {
-                        Button(
-                            onClick = { draft = draft.copy(sex = s) },
-                            modifier = Modifier.weight(1f)
-                        ) { Text(label) }
-                    } else {
-                        OutlinedButton(
-                            onClick = { draft = draft.copy(sex = s) },
-                            modifier = Modifier.weight(1f)
-                        ) { Text(label) }
+        Card(
+            Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(54.dp).clip(RoundedCornerShape(27.dp))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Person, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(30.dp)
+                    )
+                }
+                Column(Modifier.padding(start = 14.dp)) {
+                    Text(
+                        listOfNotNull(
+                            birthYear.toIntOrNull()?.let { java.time.LocalDate.now().year - it }?.takeIf { it in 5..110 }
+                                ?.let { "$it lat" },
+                            height.toIntOrNull()?.takeIf { it in 100..250 }?.let { "$it cm" }
+                        ).joinToString(" · ").ifEmpty { "Uzupełnij dane" },
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row(
+                        Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        TagPill(if (draft.sex == Sex.MALE) "mężczyzna" else "kobieta", MaterialTheme.colorScheme.primary)
+                        TagPill(goalLabel(draft.trainingGoal), MaterialTheme.colorScheme.primary)
+                        TagPill(phaseLabel(draft.phase), MaterialTheme.colorScheme.primary)
                     }
                 }
             }
         }
 
-        // ---- Cel ----
-        Spacer(Modifier.height(12.dp))
-        SectionCard("Cel") {
-            Text(
-                "Steruje tym, co aplikacja proponuje po treningu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-
-            Text("Co ma rosnąć", style = MaterialTheme.typography.labelMedium)
-            Text(
-                "Ciężar buduje siłę, objętość masę. Przy sile prawie nie " +
-                    "dokładamy serii, przy masie powtórzenia są równie dobre " +
-                    "jak ciężar.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TrainingGoal.entries.forEach { g ->
-                    val label = when (g) {
-                        TrainingGoal.STRENGTH -> "siła"
-                        TrainingGoal.HYPERTROPHY -> "masa"
-                        TrainingGoal.MIXED -> "mieszany"
-                    }
-                    if (g == draft.trainingGoal) {
-                        Button(
-                            onClick = { draft = draft.copy(trainingGoal = g) },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text(label) }
-                    } else {
-                        OutlinedButton(
-                            onClick = { draft = draft.copy(trainingGoal = g) },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text(label) }
-                    }
+        GroupLabel("Dane")
+        AppCard {
+            Column(Modifier.padding(14.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = height,
+                        onValueChange = { height = it },
+                        label = { Text("Wzrost (cm)") },
+                        isError = !heightOk,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = birthYear,
+                        onValueChange = { birthYear = it },
+                        label = { Text("Rok urodzenia") },
+                        isError = !birthOk,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
+                Spacer(Modifier.height(10.dp))
+                SegmentedTabs(
+                    labels = listOf("mężczyzna", "kobieta"),
+                    selected = if (draft.sex == Sex.MALE) 0 else 1,
+                    onSelect = { draft = draft.copy(sex = if (it == 0) Sex.MALE else Sex.FEMALE) }
+                )
+                Text(
+                    "Wzrost i płeć wchodzą do oszacowania tkanki tłuszczowej z obwodów.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
             }
+        }
 
-            Spacer(Modifier.height(12.dp))
-            Text("Faza", style = MaterialTheme.typography.labelMedium)
-            Text(
-                "Nie zmienia tego, co podnosić - zmienia to, jak czytać brak " +
-                    "postępu. Na redukcji utrzymanie ciężaru jest sukcesem, nie " +
-                    "zastojem. Samo ustawienie nie wpływa na masę ciała; o tym " +
-                    "decyduje jedzenie.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Phase.entries.forEach { p ->
-                    val label = when (p) {
-                        Phase.CUT -> "redukcja"
-                        Phase.MAINTAIN -> "utrzymanie"
-                        Phase.BULK -> "budowa"
-                    }
-                    if (p == draft.phase) {
-                        Button(
-                            onClick = { draft = draft.copy(phase = p) },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text(label) }
-                    } else {
-                        OutlinedButton(
-                            onClick = { draft = draft.copy(phase = p) },
-                            modifier = Modifier.weight(1f),
-                            contentPadding = PaddingValues(horizontal = 6.dp)
-                        ) { Text(label) }
-                    }
-                }
+        // ---- Cel ----
+        GroupLabel("Cel")
+        AppCard {
+            Column(Modifier.padding(14.dp)) {
+                Text("Co ma rosnąć", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(6.dp))
+                SegmentedTabs(
+                    labels = TrainingGoal.entries.map { goalLabel(it) },
+                    selected = TrainingGoal.entries.indexOf(draft.trainingGoal),
+                    onSelect = { draft = draft.copy(trainingGoal = TrainingGoal.entries[it]) }
+                )
+                Text(
+                    "Ciężar buduje siłę, objętość masę. Przy sile prawie nie dokładamy serii, " +
+                        "przy masie powtórzenia są równie dobre jak ciężar.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+                Spacer(Modifier.height(14.dp))
+                Text("Faza", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(6.dp))
+                SegmentedTabs(
+                    labels = Phase.entries.map { phaseLabel(it) },
+                    selected = Phase.entries.indexOf(draft.phase),
+                    onSelect = { draft = draft.copy(phase = Phase.entries[it]) }
+                )
+                Text(
+                    "Zmienia to, jak czytać brak postępu: na redukcji utrzymanie ciężaru " +
+                        "jest sukcesem, nie zastojem. O masie ciała decyduje jedzenie.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
             }
         }
 
         // ---- Sprzęt i obciążenia ----
         //
-        // Jedna karta i jeden przełącznik. Były dwie karty z dwoma
-        // przełącznikami o odwróconym znaczeniu („mam wszystko", „dowolny
-        // ciężar"), które pytały o to samo - czy trenujesz tam, gdzie jest
-        // wszystko - i przy pełnej siłowni zajmowały pół ekranu tylko po to,
-        // żeby potwierdzić ustawienie domyślne.
-        Spacer(Modifier.height(12.dp))
-        SectionCard("Sprzęt i obciążenia") {
-            ToggleRow(
-                title = "Dostosuj sprzęt oraz obciążenia",
-                subtitle = "Wyłączone: zakładam dostęp do wszystkiego - widzisz każdy " +
-                    "plan i każde ćwiczenie, ciężar jest dowolny. Włączone: podajesz, " +
-                    "co masz, a plany, jednostki i ćwiczenia dobieram do tego. " +
-                    "Wszystkie da się wtedy i tak pokazać jednym przełącznikiem.",
-                checked = draft.customGear,
-                onChange = { draft = draft.copy(customGear = it) }
-            )
-
-            AnimatedVisibility(visible = draft.customGear) {
-                Column {
-                    // ---- Sprzęt ----
-                    Spacer(Modifier.height(14.dp))
-                    Text("Sprzęt", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    if (draft.ownedGear.isEmpty()) {
-                        Text(
-                            "Nic nie dodano - przyjmuję, że masz wszystko.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        // Podsumowanie po działach, nie wiersz na pozycję:
-                        // przy pełnej domowej siłowni to kilkanaście wierszy
-                        // z „Usuń", w których ginęła reszta Profilu.
-                        // Zmienia się to na ekranie wyboru.
-                        GearGroup.entries.forEach { group ->
-                            val wGrupie = draft.ownedGear.filter { it.group == group }
-                                .sortedBy { it.ordinal }
-                            if (wGrupie.isEmpty()) return@forEach
-                            Text(
-                                group.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                            Text(
-                                wGrupie.joinToString(", ") { it.label },
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = { addingGear = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (draft.ownedGear.isEmpty()) "+ Wybierz sprzęt" else "Zmień sprzęt") }
-
-                    // ---- Obciążenia ----
-                    Spacer(Modifier.height(18.dp))
-                    Text("Obciążenia", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    if (!usesPlates) {
-                        // Bez sztangi i hantli nie ma czego składać z talerzy. Pytanie
-                        // o gryf przy samym wyciągu było dokładnie tym, co nie miało sensu.
-                        Text(
-                            "Twój sprzęt nie wymaga składania ciężaru z talerzy - " +
-                                "na wyciągu i maszynach ustawiasz obciążenie bezpośrednio.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        // Gryf tylko wtedy, gdy masz sztangę.
-                        if (hasBarbell) {
+        // Jeden przełącznik. Były dwa o odwróconym znaczeniu („mam wszystko",
+        // „dowolny ciężar"), które pytały o to samo - czy trenujesz tam,
+        // gdzie jest wszystko.
+        GroupLabel("Sprzęt i obciążenia")
+        SettingsGroup {
+            SettingsRow(
+                title = "Dostosuj sprzęt i obciążenia",
+                subtitle = if (draft.customGear) "Plany, jednostki i ćwiczenia dobrane do Twojego sprzętu"
+                else "Wyłączone: dostęp do wszystkiego, ciężar dowolny",
+                icon = Icons.Filled.FitnessCenter,
+                first = true,
+                onClick = { draft = draft.copy(customGear = !draft.customGear) }
+            ) {
+                Switch(checked = draft.customGear, onCheckedChange = { draft = draft.copy(customGear = it) })
+            }
+            if (draft.customGear) {
+                SettingsRow(
+                    title = "Sprzęt",
+                    // Podsumowanie po działach, nie lista - zmienia się to na
+                    // ekranie wyboru, tu ma tylko być widać, co jest.
+                    subtitle = if (draft.ownedGear.isEmpty()) "Nic nie dodano - przyjmuję, że masz wszystko"
+                    else GearGroup.entries.mapNotNull { g ->
+                        draft.ownedGear.filter { it.group == g }.takeIf { it.isNotEmpty() }
+                            ?.joinToString(", ") { it.label.lowercase() }
+                    }.joinToString(" · "),
+                    icon = Icons.AutoMirrored.Filled.List,
+                    value = draft.ownedGear.size.takeIf { it > 0 }?.toString(),
+                    chevron = true,
+                    onClick = { addingGear = true }
+                )
+                if (!usesPlates) {
+                    // Bez sztangi i hantli nie ma czego składać z talerzy.
+                    SettingsRow(
+                        title = "Obciążenia",
+                        subtitle = "Twój sprzęt nie wymaga składania ciężaru z talerzy - na wyciągu " +
+                            "i maszynach ustawiasz obciążenie bezpośrednio.",
+                        icon = Icons.Filled.Tune
+                    )
+                } else {
+                    // Gryf tylko wtedy, gdy masz sztangę.
+                    if (hasBarbell) {
+                        SettingsRow(title = "Gryf", subtitle = "masa samego gryfu", icon = Icons.Filled.Remove) {
                             OutlinedTextField(
                                 value = barText,
                                 onValueChange = { barText = it },
-                                label = { Text("Masa gryfu (kg)") },
+                                suffix = { Text("kg") },
                                 isError = !barOk,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.width(110.dp)
                             )
-                            Spacer(Modifier.height(12.dp))
                         }
-
-                        Text("Talerze", style = MaterialTheme.typography.labelLarge)
-                        Text(
-                            "Podaj łączną liczbę sztuk, nie na stronę.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    SettingsRow(
+                        title = "Talerze",
+                        subtitle = if (plates.isEmpty())
+                            "Bez talerzy ciężar jest dowolny. Dodaj je, jeśli aplikacja ma proponować " +
+                                "tylko to, co da się złożyć."
+                        else "Łączna liczba sztuk, nie na stronę",
+                        icon = Icons.Filled.Album
+                    ) {
+                        TextButton(onClick = { addingPlate = true }) { Text("+ Dodaj") }
+                    }
+                    plates.forEach { p ->
+                        PlateRow(
+                            plate = p,
+                            hasBarbell = hasBarbell,
+                            hasDumbbells = hasDumbbells,
+                            onEdit = { editingPlate = p },
+                            onDelete = { plates = plates.filterNot { it.id == p.id } }
                         )
-                        Spacer(Modifier.height(8.dp))
-
-                        if (plates.isEmpty()) {
-                            // Pusta lista nie znaczy „mam sam gryf" - patrz
-                            // GymRepository.inventory.
-                            Text(
-                                "Bez talerzy na liście ciężar jest dowolny. Dodaj je, " +
-                                    "jeśli aplikacja ma proponować tylko to, co da się złożyć.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            plates.forEach { p ->
-                                PlateRow(
-                                    plate = p,
-                                    hasBarbell = hasBarbell,
-                                    hasDumbbells = hasDumbbells,
-                                    onEdit = { editingPlate = p },
-                                    onDelete = { plates = plates.filterNot { it.id == p.id } }
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(
-                            onClick = { addingPlate = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("+ Dodaj talerz") }
                     }
                 }
             }
         }
 
-        // Odstępy jak między kartami wyżej - te trzy stykały się krawędziami,
-        // bo dopisywano je później i każda zapomniała o swoim.
-        Spacer(Modifier.height(12.dp))
-        SectionCard("Zegarek") {
-            Text(
-                "Amazfit przez Health Connect. Treningi i biegi lądują w Postępie - " +
-                    "tutaj zostaje samo połączenie, bo to ustawienie, a nie treść.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        // ---- Zegarek ----
+        GroupLabel("Zegarek")
+        SettingsGroup {
+            SettingsRow(
+                title = "Health Connect",
+                subtitle = lastSync?.let { "Ostatnio pobrano " + syncDate(it) } ?: "Jeszcze nic nie pobrano",
+                icon = Icons.Filled.MonitorHeart,
+                iconTint = MaterialTheme.colorScheme.secondary,
+                first = true,
+                chevron = true,
+                onClick = { showWatch = true }
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                lastSync?.let { "Ostatnio pobrano: ${syncDate(it)}" }
-                    ?: "Jeszcze nic nie pobrano.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { showWatch = true },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Synchronizacja z zegarkiem") }
-        }
-
-        // Czyszczenie historii jest ustawieniem, nie czynnością treningową -
-        // dlatego siedzi w Profilu, a nie pod ręką w zakładce Trening.
-
-        // Pilot na zegarku: tutaj widać token, bo mini-aplikacja Zepp OS musi
-        // go dostać w swoich ustawieniach. Inaczej nie da się go nigdzie odczytać.
-        Spacer(Modifier.height(12.dp))
-        SectionCard("Pilot na zegarku") {
-            Text(
-                "Zegarek zapisuje serie przez adres lokalny telefonu. Nic nie " +
-                    "wychodzi do internetu, więc działa też bez zasięgu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
             // Stan wprost, bo inaczej jedyną oznaką martwego pilota jest
             // "brak połączenia" na zegarku, już na siłowni.
-            Text("Stan", style = MaterialTheme.typography.labelMedium)
-            Text(
-                when {
-                    linkListening -> "Pilot działa - zegarek może zapisywać serie"
+            val pilotOk = linkListening || (linkAllowed && !linkAlways)
+            SettingsRow(
+                title = "Pilot na zegarku",
+                subtitle = when {
+                    linkListening -> "Działa - zegarek może zapisywać serie"
                     // Powód wprost, bo rada „otwórz jeszcze raz" nic tu nie
                     // da: bez zgody pilot nie wstanie za żadnym razem.
-                    !linkAllowed -> "Pilot nie działa - system wymaga zgody na " +
-                        "urządzenia w pobliżu, zanim pozwoli mu pracować w tle"
-                    !linkAlways -> "Pilot jest wyłączony - włączy się na czas treningu"
-                    else -> "Pilot nie działa - otwórz tę aplikację jeszcze raz"
+                    !linkAllowed -> "Nie działa - system wymaga zgody na urządzenia w pobliżu"
+                    !linkAlways -> "Wyłączony - włączy się na czas treningu"
+                    else -> "Nie działa - otwórz tę aplikację jeszcze raz"
                 },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (linkListening || (linkAllowed && !linkAlways)) {
-                    MaterialTheme.colorScheme.onSurface
-                } else MaterialTheme.colorScheme.error
-            )
+                icon = Icons.Filled.Watch,
+                iconTint = if (pilotOk) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error
+            ) {
+                StatusDot(pilotOk)
+            }
             if (!linkListening && !linkAllowed) {
-                Spacer(Modifier.height(6.dp))
                 Button(
                     onClick = { nearbyLauncher.launch(WatchLinkService.NEARBY) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 12.dp)
                 ) { Text("Zezwól na urządzenia w pobliżu") }
             }
             // Drugi stan, osobny od pierwszego i ważniejszy, niż wygląda:
             // pilot może działać teraz i zginąć za kwadrans. Dopóki system
-            // ma prawo go ubić, "Pilot działa" mówi prawdę tylko o tej chwili.
-            Spacer(Modifier.height(10.dp))
-            Text("Praca w tle", style = MaterialTheme.typography.labelMedium)
-            if (batteryFree) {
-                Text(
-                    "Bez ograniczeń - pilot przeżyje wygaszony ekran",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            } else {
-                Text(
-                    "System może ubić pilota, gdy telefon leży w szatni. " +
-                        "Serie nie przepadną - czekają w kolejce zegarka - " +
-                        "ale na telefon dojadą dopiero wtedy, gdy pilot " +
-                        "znów wstanie, zwykle po otwarciu tej aplikacji.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Spacer(Modifier.height(6.dp))
+            // ma prawo go ubić, "działa" mówi prawdę tylko o tej chwili.
+            SettingsRow(
+                title = "Praca w tle",
+                subtitle = if (batteryFree) "Bez ograniczeń - pilot przeżyje wygaszony ekran"
+                else "System może ubić pilota w szatni. Serie poczekają w kolejce zegarka, " +
+                    "ale dojadą dopiero po ponownym starcie pilota.",
+                icon = Icons.Filled.BatteryChargingFull,
+                iconTint = if (batteryFree) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary
+            ) {
+                if (batteryFree) StatusDot(true)
+            }
+            if (!batteryFree) {
                 Button(
                     onClick = { WatchLinkService.askBattery(context) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 12.dp)
                 ) { Text("Pozwól pracować w tle") }
             }
-
-            // Adres tylko w wariancie debug. Jest stały i zegarek zna go bez
-            // pytania, więc na co dzień to szczegół budowy, nie ustawienie -
-            // przydaje się wyłącznie przy sprawdzaniu pilota z komputera.
-            if (DIAGNOSTICS) {
-                Spacer(Modifier.height(8.dp))
-                Text("Adres", style = MaterialTheme.typography.labelMedium)
-                Text(
-                    "http://127.0.0.1:${WatchLinkService.PORT}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontFamily = FontFamily.Monospace
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            // „Kod parowania", nie „token": to jedyna rzecz z tej karty, którą
-            // przepisuje się do aplikacji na zegarku, i nazwa ma mówić po co.
-            Text("Kod parowania", style = MaterialTheme.typography.labelMedium)
-            Text(
-                linkToken,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = FontFamily.Monospace
-            )
-            Spacer(Modifier.height(10.dp))
-            ToggleRow(
+            SettingsRow(
                 title = "Działa też poza treningiem",
                 // Bez tego nie da się zacząć treningu z zegarka: zanim sesja
                 // istnieje, nie ma komu odebrać żądania.
-                subtitle = "Pozwala zacząć i zakończyć trening z zegarka",
-                checked = linkAlways,
-                onChange = {
-                    linkAlways = it
-                    WatchLinkService.setAlways(context, it)
-                    // Usługa wstaje i gaśnie asynchronicznie, więc stan
-                    // odczytujemy po chwili - inaczej pokazalibyśmy poprzedni.
-                    mainHandler.postDelayed(
-                        { linkListening = WatchLinkService.listening },
-                        400
-                    )
-                }
+                subtitle = "Start i koniec treningu z zegarka",
+                icon = Icons.Filled.Schedule,
+                iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+            ) {
+                Switch(
+                    checked = linkAlways,
+                    onCheckedChange = {
+                        linkAlways = it
+                        WatchLinkService.setAlways(context, it)
+                        // Usługa wstaje i gaśnie asynchronicznie, więc stan
+                        // odczytujemy po chwili - inaczej pokazalibyśmy poprzedni.
+                        mainHandler.postDelayed({ linkListening = WatchLinkService.listening }, 400)
+                    }
+                )
+            }
+            // „Kod parowania", nie „token": to jedyna rzecz stąd, którą
+            // przepisuje się do aplikacji na zegarku, i nazwa ma mówić po co.
+            SettingsRow(
+                title = "Kod parowania",
+                subtitle = linkToken,
+                icon = Icons.Filled.Key,
+                iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            // Adres tylko w wariancie debug: na co dzień to szczegół budowy,
+            // przydaje się wyłącznie przy sprawdzaniu pilota z komputera.
+            if (DIAGNOSTICS) {
+                SettingsRow(
+                    title = "Adres",
+                    subtitle = "http://127.0.0.1:${WatchLinkService.PORT}",
+                    icon = Icons.Filled.Code,
+                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // Czyszczenie historii jest ustawieniem, nie czynnością treningową -
+        // dlatego siedzi w Profilu, a nie pod ręką w zakładce Trening.
+        GroupLabel("Dane")
+        SettingsGroup {
+            val c = counts
+            SettingsRow(
+                title = "Wyczyść historię treningów",
+                subtitle = when {
+                    c == null -> "Liczę…"
+                    c.first == 0 -> "Historia jest pusta"
+                    else -> plural(c.first, "trening", "treningi", "treningów") + " · " +
+                        plural(c.second, "seria", "serie", "serii") +
+                        " · plany, masa i profil zostają"
+                },
+                icon = Icons.Filled.Delete,
+                iconTint = MaterialTheme.colorScheme.error,
+                titleColor = MaterialTheme.colorScheme.error,
+                first = true,
+                chevron = (c?.first ?: 0) > 0,
+                onClick = if ((c?.first ?: 0) > 0) ({ confirmWipe = true }) else null
             )
         }
-        Spacer(Modifier.height(12.dp))
-        SectionCard("Historia") {
-            val c = counts
-            Text(
-                if (c == null) "Liczę…"
-                else if (c.first == 0) "Historia jest pusta."
-                else "W historii: ${plural(c.first, "trening", "treningi", "treningów")}, " +
-                    plural(c.second, "seria", "serie", "serii") + ".",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Czyszczenie usuwa treningi i serie. Plany, ćwiczenia, masa ciała, " +
-                    "obwody i profil zostają. Treningi z zegarka wrócą przy " +
-                    "kolejnej synchronizacji - to jego dane, nie nasze.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            wipeNote?.let {
-                Spacer(Modifier.height(8.dp))
-                Text(it, style = MaterialTheme.typography.bodyMedium)
-            }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = { confirmWipe = true },
-                enabled = (counts?.first ?: 0) > 0,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Wyczyść historię treningów") }
+        wipeNote?.let {
+            Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp))
         }
 
         Spacer(Modifier.height(20.dp))
@@ -802,9 +716,8 @@ fun ProfileScreen() {
         //
         // Nie uprzejmość, tylko warunek licencji: Open Food Facts jest na
         // Open Database License, która wymaga wskazania źródła wszędzie tam,
-        // gdzie korzysta się z bazy. Skanowanie kodów kreskowych sięga
-        // właśnie tam, więc ta linijka musi gdzieś być - a Profil jest
-        // jedynym miejscem, gdzie nie przeszkadza przy codziennym użyciu.
+        // gdzie korzysta się z bazy - a Profil jest jedynym miejscem, gdzie
+        // nie przeszkadza przy codziennym użyciu.
         Text(
             "Dane o produktach pochodzą z Open Food Facts i są udostępniane " +
                 "na licencji Open Database License (ODbL). Pieczywo, nabiał, " +
@@ -886,47 +799,6 @@ private fun syncDate(ms: Long): String =
 // ---- Elementy wspólne ----------------------------------------------------
 
 @Composable
-private fun SectionCard(title: String, content: @Composable () -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun ToggleRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.height(0.dp))
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
-}
-
-@Composable
 private fun PlateRow(
     plate: Plate,
     hasBarbell: Boolean,
@@ -934,13 +806,20 @@ private fun PlateRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+    // Wiersz w grupie, nie osobna karta: talerz jest częścią listy „Talerze",
+    // a karta w karcie robiła z siedmiu talerzy siedem ramek.
+    HorizontalDivider(Modifier.padding(start = 62.dp), color = MaterialTheme.colorScheme.outlineVariant)
+    Column(Modifier.fillMaxWidth().padding(start = 62.dp, end = 6.dp)) {
         Row(
-            Modifier.fillMaxWidth().padding(10.dp),
+            Modifier.fillMaxWidth().padding(vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("${Loading.fmt(plate.kg)} kg  ×${plate.count}")
+                Text(
+                    "${Loading.fmt(plate.kg)} kg  × ${plate.count}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
                 Text(
                     usableFor(plate, hasBarbell, hasDumbbells),
                     style = MaterialTheme.typography.bodySmall,
@@ -954,10 +833,35 @@ private fun PlateRow(
                     )
                 }
             }
-            TextButton(onClick = onEdit) { Text("Zmień") }
-            TextButton(onClick = onDelete) { Text("Usuń") }
+            IconButton(onClick = onEdit) {
+                Icon(Icons.Filled.Edit, contentDescription = "Zmień", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Filled.Close, contentDescription = "Usuń", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
     }
+}
+
+/** Kropka stanu: zielona - działa, czerwona - nie. */
+@Composable
+private fun StatusDot(ok: Boolean) {
+    Box(
+        Modifier.padding(start = 8.dp).size(10.dp).clip(RoundedCornerShape(5.dp))
+            .background(if (ok) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error)
+    )
+}
+
+private fun goalLabel(g: TrainingGoal): String = when (g) {
+    TrainingGoal.STRENGTH -> "siła"
+    TrainingGoal.HYPERTROPHY -> "masa"
+    TrainingGoal.MIXED -> "mieszany"
+}
+
+private fun phaseLabel(p: Phase): String = when (p) {
+    Phase.CUT -> "redukcja"
+    Phase.MAINTAIN -> "utrzymanie"
+    Phase.BULK -> "budowa"
 }
 
 /**

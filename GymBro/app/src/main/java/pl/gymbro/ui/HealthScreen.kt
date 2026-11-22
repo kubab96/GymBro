@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -156,17 +157,13 @@ fun HealthScreen(onBack: () -> Unit) {
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Zegarek", style = MaterialTheme.typography.headlineMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Tylko w wariancie debug - patrz DIAGNOSTICS.
-                if (DIAGNOSTICS) {
-                    TextButton(onClick = { showDump = true }) { Text("Surowe") }
-                }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.weight(1f)) {
+                SubScreenHeader("Zegarek", "Dane z Amazfit przez Health Connect", onBack)
+            }
+            // Tylko w wariancie debug - patrz DIAGNOSTICS.
+            if (DIAGNOSTICS) {
+                TextButton(onClick = { showDump = true }) { Text("Surowe") }
             }
         }
 
@@ -206,12 +203,7 @@ fun HealthScreen(onBack: () -> Unit) {
 
             HealthReader.Availability.OK -> {
                 if (granted.size < HealthReader.PERMISSIONS.size) {
-                    Card(
-                        Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                    ) {
+                    AppCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp)) {
                             Text(
                                 "Dostęp: ${granted.size} z ${HealthReader.PERMISSIONS.size} uprawnień",
@@ -324,7 +316,7 @@ fun HealthScreen(onBack: () -> Unit) {
                     note = null
                 )
                 vo2?.let {
-                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    AppCard(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                         Row(
                             Modifier.fillMaxWidth().padding(14.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -354,7 +346,7 @@ private fun DeviationCard(
     // coś poszło nie tak. Nie zajmujemy miejsca na komunikat o tym.
     if (now == null && avg == null) return
 
-    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    AppCard(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Column(Modifier.padding(14.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
@@ -393,7 +385,7 @@ private fun DeviationCard(
 
 @Composable
 private fun SessionRow(s: ExternalSession) {
-    Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+    AppCard(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(
                 Modifier.fillMaxWidth(),

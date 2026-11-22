@@ -1,6 +1,8 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -13,6 +15,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -77,19 +80,12 @@ internal fun MyMealsView(
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Moje dania", style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = onBack) { Text("Zamknij") }
-        }
+        SubScreenHeader("Moje dania", "Złożone z produktów, dopisywane jednym dotknięciem", onBack)
 
         Button(
             onClick = { onEdit(null) },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-        ) { Text("Nowe danie") }
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp).height(50.dp)
+        ) { Text("Nowe danie", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) }
 
         if (lista.isEmpty()) {
             Text(
@@ -109,30 +105,42 @@ internal fun MyMealsView(
     }
 }
 
+/** Danie jako karta - nazwa, skład w pigułkach i kalorie na porcję albo na 100 g. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun MealRow(recipe: Recipe, onClick: () -> Unit) {
     val per100 = Recipes.per100(recipe)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(recipe.name, style = MaterialTheme.typography.bodyLarge)
+    AppCard(Modifier.padding(vertical = 4.dp), onClick = onClick) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconBadge(androidx.compose.material.icons.Icons.Filled.RestaurantMenu, MaterialTheme.colorScheme.secondary)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(
+                    recipe.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    TagPill("${recipe.items.size} ${skladnikow(recipe.items.size)}")
+                    TagPill("%.0f g".format(Recipes.effectiveWeight(recipe)))
+                    recipe.portions?.takeIf { it > 0 }?.let { TagPill(plural(it, "porcja", "porcje", "porcji")) }
+                }
+            }
             Text(
-                "${recipe.items.size} ${skladnikow(recipe.items.size)} · " +
-                    "%.0f g".format(Recipes.effectiveWeight(recipe)),
-                style = MaterialTheme.typography.bodySmall,
+                if (per100 == null) "-" else "%.0f".format(per100.kcal),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                modifier = Modifier.padding(start = 8.dp)
+            )
+            Text(
+                " kcal\n/100 g",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Text(
-            if (per100 == null) "-" else "%.0f kcal/100 g".format(per100.kcal),
-            style = MaterialTheme.typography.bodySmall
-        )
     }
 }
 
@@ -182,17 +190,11 @@ internal fun MealEditorView(
     // Dziala, bo MainActivity wola enableEdgeToEdge() - bez tego okno samo
     // przesuwa zawartosc i te wstawki sa zerowe.
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 14.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                if (startFrom == null) "Nowe danie" else "Danie",
-                style = MaterialTheme.typography.headlineSmall
-            )
-            TextButton(onClick = onBack) { Text("Zamknij") }
-        }
+        SubScreenHeader(
+            if (startFrom == null) "Nowe danie" else "Danie",
+            "Składniki, porcje i kalorie",
+            onBack
+        )
 
         // Wybieranie skladnika zajmuje CALY ekran - nazwa i waga dania
         // znikaja na ten czas.
@@ -447,19 +449,35 @@ private fun ColumnScope.SkladnikPicker(
     // funkcja jest rozszerzeniem ColumnScope - inaczej weight() nie istnieje.
     val lista = if (query.isBlank()) ostatnie else wyniki
     LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-        items(lista, key = { "skladnik-produkt-${it.id}" }) { food ->
+        // Wiersze tej samej wielkości co przy dodawaniu do posiłku - drobne,
+        // ciasne wiersze trudno było trafić palcem, a to ta sama czynność.
+        itemsIndexed(lista, key = { _, it -> "skladnik-produkt-${it.id}" }) { i, food ->
+            if (i > 0) androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Row(
                 Modifier
                     .fillMaxWidth()
                     .clickable { wybrany = food }
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .padding(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(food.name, style = MaterialTheme.typography.bodyMedium)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        food.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                    )
+                    food.brand?.takeIf { it.isNotBlank() }?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
                 Text(
-                    "%.0f kcal".format(food.per100.kcal),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    "%.0f kcal/100 g".format(food.per100.kcal),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 8.dp)
                 )
             }
         }

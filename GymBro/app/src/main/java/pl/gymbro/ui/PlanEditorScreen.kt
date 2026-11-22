@@ -1,6 +1,23 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import pl.gymbro.data.Cache
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -79,17 +96,42 @@ fun PlanEditorScreen() {
     // go dostosowuje. Bez tego trafiało się na suchą listę nazw.
     var justAdded by remember { mutableStateOf(false) }
 
+    // Szkic otwartej jednostki - zmiany czekają na Zapisz, jak w Profilu.
+    val draft = remember(openPlan?.id) { openPlan?.let { UnitDraft(it) } }
+    // Przejście, które czeka na odpowiedź „zapisać czy nie".
+    var leaving by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    /** Wyjście z jednostki: od razu, chyba że szkic ma niezapisane zmiany. */
+    fun requestLeave(proceed: () -> Unit) {
+        if (draft?.dirty == true) leaving = proceed else proceed()
+    }
+
+    // Wyjście z zakładki z niezapisaną jednostką pyta tak samo jak Profil.
+    val guard = LocalLeaveGuard.current
+    val draftNow by rememberUpdatedState(draft)
+    DisposableEffect(guard) {
+        guard.ask = { proceed ->
+            if (draftNow?.dirty == true) {
+                leaving = proceed
+                true
+            } else false
+        }
+        onDispose { guard.ask = null }
+    }
+
     ScreenBackHandler(enabled = openPlan != null || openProgram != null) {
-        if (openPlan != null) openPlan = null else openProgram = null
+        if (openPlan != null) requestLeave { openPlan = null } else openProgram = null
     }
     // Naciśnięcie otwartej zakładki wraca na listę planów, a nie zostawia
     // w rozgrzebanej jednostce. Wstecz cofa o jeden poziom, pasek wraca na
     // samą górę - i te dwa zachowania nie są tym samym.
     TabReselectHandler {
-        openPlan = null
-        openProgram = null
-        wizardOpen = false
-        newUnitOpen = false
+        requestLeave {
+            openPlan = null
+            openProgram = null
+            wizardOpen = false
+            newUnitOpen = false
+        }
     }
 
     // Ile propozycji czeka w której jednostce - żeby było widać, dokąd iść.
@@ -120,14 +162,38 @@ fun PlanEditorScreen() {
 
     // Skok z historii prosto do ćwiczenia z propozycją. Bez tego lądowało się
     // na liście planów i trzeba było zgadywać, w której jednostce ono leży.
-    LaunchedEffect(programs) {
+    //
+    // Klucz na liczniku skoków, nie tylko na liście planów: ta zakładka żyje
+    // w tle, lista wczytuje się raz, więc każdy skok po pierwszym przepadał.
+    LaunchedEffect(PlanJump.version, programs) {
+        if (programs.isEmpty()) return@LaunchedEffect
         val cel = PlanJump.take() ?: return@LaunchedEffect
         val (planId, itemId) = cel
         val wszystkie = withContext(Dispatchers.IO) { planRepo.plans() }
         val plan = wszystkie.firstOrNull { it.id == planId } ?: return@LaunchedEffect
+        wizardOpen = false
+        newUnitOpen = false
         openProgram = programs.map { it.program }.firstOrNull { it.id == plan.programId }
         openPlan = plan
         highlight = itemId
+    }
+
+    /** Zapis szkicu jednostki; [then] po zapisie, np. wyjście z ekranu. */
+    fun saveDraft(then: () -> Unit = {}) {
+        val d = draft ?: return then()
+        scope.launch {
+            val (items, plan) = withContext(Dispatchers.IO) {
+                d.save(planRepo)
+                planRepo.items(d.planId) to planRepo.planById(d.planId)
+            }
+            d.saved(items, plan)
+            if (plan != null && openPlan?.id == plan.id) openPlan = plan
+            Cache.clear()
+            reloadPlans()
+            // Zegarek, Trening i kropki propozycji w Historii czytają plan z bazy.
+            Refresh.bump()
+            then()
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -213,6 +279,7 @@ fun PlanEditorScreen() {
 
             plan == null -> UnitList(
                 program = program,
+                onBack = { openProgram = null },
                 plans = plans,
                 adviceByPlan = adviceByPlan,
                 justAdded = justAdded,
@@ -229,38 +296,39 @@ fun PlanEditorScreen() {
                 onNew = { newUnitOpen = true; justAdded = false }
             )
 
-            else -> UnitEditorScreen(
-                plan = plan,
+            draft != null -> UnitEditorScreen(
+                draft = draft,
                 profile = profile,
                 inventory = inv,
                 highlight = highlight,
                 header = {
-                    Row(
-                        Modifier.fillMaxWidth().padding(top = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                program.name,
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(plan.name, style = MaterialTheme.typography.headlineMedium)
-                        }
-                        TextButton(onClick = { renamePlanDialog = plan }) { Text("Nazwa") }
-                    }
-                    FieldLabel("Dzień tygodnia (opcjonalnie)")
-                    DayChips(plan.day) { d ->
-                        openPlan = plan.copy(day = d)
-                        scope.launch {
-                            withContext(Dispatchers.IO) { planRepo.setPlanDay(plan.id, d) }
-                            Refresh.bump()
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
+                    UnitEditorHeader(
+                        programName = program.name,
+                        draft = draft,
+                        onBack = { requestLeave { openPlan = null } },
+                        onRename = { renamePlanDialog = plan },
+                        onSave = { saveDraft() }
+                    )
                 }
             )
         }
+    }
+
+    leaving?.let { proceed ->
+        UnsavedChangesDialog(
+            onStay = { leaving = null },
+            onSave = {
+                leaving = null
+                saveDraft(then = proceed)
+            },
+            onDiscard = {
+                leaving = null
+                // Szkic wraca do stanu z bazy. Zostawiony wyglądałby po
+                // powrocie jak zapisany.
+                draft?.discard()
+                proceed()
+            }
+        )
     }
 
     // ---- Okna: zmiana nazwy i potwierdzenie usunięcia ----
@@ -318,15 +386,21 @@ fun PlanEditorScreen() {
     renamePlanDialog?.let { p ->
         TextPrompt(
             title = "Zmień nazwę jednostki",
-            initial = p.name,
+            initial = if (draft?.planId == p.id) draft.name else p.name,
             onDismiss = { renamePlanDialog = null },
             onConfirm = { name ->
-                scope.launch {
+                // W otwartej jednostce nazwa idzie do szkicu, jak każda inna
+                // zmiana tam - zapisze ją przycisk Zapisz. Z listy jednostek
+                // od razu, bo tam nie ma czego zapisywać.
+                val d = draft
+                if (d != null && d.planId == p.id) {
+                    d.name = name
+                    renamePlanDialog = null
+                } else scope.launch {
                     withContext(Dispatchers.IO) { planRepo.renamePlan(p.id, name) }
                     renamePlanDialog = null
                     reloadPlans()
                     Refresh.bump()
-                    if (openPlan?.id == p.id) openPlan = openPlan?.copy(name = name)
                 }
             }
         )
@@ -337,6 +411,7 @@ fun PlanEditorScreen() {
 @Composable
 private fun UnitList(
     program: Program,
+    onBack: () -> Unit,
     plans: List<Plan>,
     adviceByPlan: Map<Long, Int>,
     justAdded: Boolean,
@@ -346,16 +421,23 @@ private fun UnitList(
     onNew: () -> Unit
 ) {
     Column(Modifier.fillMaxSize()) {
-        Text(
-            program.name,
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(top = 12.dp)
-        )
-        Text(
-            "Jednostki treningowe",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć do planów")
+            }
+            Column {
+                Text(
+                    program.name,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Jednostki treningowe" + if (program.isActive) " · plan aktywny" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
         Spacer(Modifier.height(8.dp))
 
         if (justAdded) {
@@ -387,44 +469,13 @@ private fun UnitList(
 
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
             items(plans, key = { it.id }) { p ->
-                Card(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clickable { onOpen(p) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val czeka = adviceByPlan[p.id] ?: 0
-                            if (czeka > 0) {
-                                Badge(Modifier.padding(end = 8.dp)) { Text("$czeka") }
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Text(p.name, style = MaterialTheme.typography.titleMedium)
-                                p.day?.let {
-                                    Text(
-                                        "dzień $it",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            Text("▶", style = MaterialTheme.typography.titleLarge)
-                        }
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            TextButton(onClick = { onRename(p) }) { Text("Nazwa") }
-                            TextButton(onClick = { onDelete(p) }) {
-                                Text("Usuń", color = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                }
+                UnitListCard(
+                    plan = p,
+                    pending = adviceByPlan[p.id] ?: 0,
+                    onOpen = { onOpen(p) },
+                    onRename = { onRename(p) },
+                    onDelete = { onDelete(p) }
+                )
             }
         }
 
@@ -434,6 +485,97 @@ private fun UnitList(
         ) { Text("Nowa jednostka", modifier = Modifier.padding(vertical = 6.dp)) }
     }
 }
+
+/**
+ * Jednostka na liście planu - w stylu kart z Treningu.
+ *
+ * Nazwa i usuwanie schowane w menu pod trzema kropkami. Dotąd stały jako
+ * dwa przyciski pod każdą jednostką i „Usuń" leżało w zasięgu kciuka przy
+ * każdym przewinięciu - a kasowało jednostkę bez pytania.
+ */
+@Composable
+private fun UnitListCard(
+    plan: Plan,
+    pending: Int,
+    onOpen: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var menu by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf(false) }
+    Card(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = onOpen),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(plan.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        plan.day?.let { dayLabel(it) } ?: "bez stałego dnia",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // Propozycje po treningu widać już na liście - żeby było
+                    // wiadomo, do której jednostki zajrzeć.
+                    if (pending > 0) {
+                        Text(
+                            plural(pending, "propozycja", "propozycje", "propozycji"),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Więcej")
+                }
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("Zmień nazwę") }, onClick = { menu = false; onRename() })
+                    DropdownMenuItem(
+                        text = { Text("Usuń jednostkę", color = MaterialTheme.colorScheme.error) },
+                        onClick = { menu = false; confirm = true }
+                    )
+                }
+            }
+            Icon(
+                Icons.Filled.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Usunąć jednostkę ${plan.name}?") },
+            text = { Text("Zniknie razem z ćwiczeniami. Zapisane treningi zostają w historii.") },
+            confirmButton = {
+                TextButton(onClick = { confirm = false; onDelete() }) {
+                    Text("Usuń", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Anuluj") } }
+        )
+    }
+}
+
+private fun dayLabel(d: Int): String =
+    listOf("poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela")
+        .getOrElse(d - 1) { "dzień $d" }
 
 /** Zmiana nazwy - okno, bo to pytanie o jedno słowo, a nie miejsce pracy. */
 @Composable

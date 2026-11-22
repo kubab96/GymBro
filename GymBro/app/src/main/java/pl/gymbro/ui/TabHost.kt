@@ -293,9 +293,20 @@ object PlanJump {
     private var planId: Long? = null
     private var itemId: Long? = null
 
+    /**
+     * Licznik skoków, obserwowany przez Compose.
+     *
+     * Zakładka Plan żyje w tle i sprawdzała cel tylko wtedy, gdy zmieniła się
+     * lista planów - czyli raz, przy starcie. Każdy skok z historii po
+     * pierwszym lądował więc na liście planów, a nie w jednostce.
+     */
+    var version by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
     fun to(plan: Long, item: Long? = null) {
         planId = plan
         itemId = item
+        version++
     }
 
     fun take(): Pair<Long, Long?>? {
@@ -315,3 +326,36 @@ object PlanJump {
  * bardziej, niż jest wart jeden znacznik.
  */
 val LocalAdviceSessions = compositionLocalOf { emptySet<Long>() }
+
+/**
+ * Pytanie przy wyjściu z niezapisanymi zmianami - jedno dla Profilu i Planu.
+ *
+ * Samo „nie zapisano", bez wyliczania, co i gdzie: zmiany widać na ekranie,
+ * z którego się wychodzi, a dłuższe zdanie czytało się jak komunikat błędu.
+ * Dwa osobne okna rozjeżdżały się w słowach przy pierwszej poprawce.
+ *
+ * [canSave] false - część pól ma wartości nie do zapisania; wtedy Zapisz jest
+ * wyłączone i jedno krótkie zdanie mówi dlaczego.
+ */
+@androidx.compose.runtime.Composable
+internal fun UnsavedChangesDialog(
+    canSave: Boolean = true,
+    onStay: () -> Unit,
+    onSave: () -> Unit,
+    onDiscard: () -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        // Dotknięcie obok znaczy „jednak zostaję".
+        onDismissRequest = onStay,
+        title = { androidx.compose.material3.Text("Zmiany nie zostały zapisane") },
+        text = if (canSave) null else {
+            { androidx.compose.material3.Text("Część pól trzeba najpierw poprawić.") }
+        },
+        confirmButton = {
+            TextButton(onClick = onSave, enabled = canSave) { androidx.compose.material3.Text("Zapisz") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDiscard) { androidx.compose.material3.Text("Nie zapisuj") }
+        }
+    )
+}

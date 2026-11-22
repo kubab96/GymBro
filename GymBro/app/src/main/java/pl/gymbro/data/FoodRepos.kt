@@ -356,6 +356,13 @@ class DiaryRepository(context: Context) {
 
     fun summary(day: Long): Portions.DaySummary = Portions.summarize(day, entries(day))
 
+    /** Dni z choć jednym wpisem w przedziale - do kropek na pasku tygodnia. */
+    fun daysWithEntries(from: Long, to: Long): Set<Long> =
+        db.readableDatabase.rawQuery(
+            "SELECT DISTINCT day FROM food_log WHERE day BETWEEN ? AND ?",
+            arrayOf(from.toString(), to.toString())
+        ).mapAll { it.long("day") }.toSet()
+
     /**
      * Dni z wypełnionym dziennikiem i ich suma kalorii - wejście do [Tdee].
      *

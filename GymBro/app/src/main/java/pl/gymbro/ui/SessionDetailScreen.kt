@@ -38,6 +38,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import pl.gymbro.data.Equipment
 import pl.gymbro.data.Exercise
 import pl.gymbro.data.GymRepository
@@ -132,7 +135,9 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
     // co sie zrobilo - i stad ma byc jedno klikniecie do planu, a nie
     // szukanie po zakladkach.
     var fromHere by remember { mutableStateOf<List<PlanItem>>(emptyList()) }
-    LaunchedEffect(summary.sessionId) {
+    // Klucz na Refresh: propozycja zastosowana w Planie ma stąd zniknąć,
+    // a nie wisieć do ponownego otwarcia treningu.
+    LaunchedEffect(summary.sessionId, Refresh.version) {
         fromHere = withContext(Dispatchers.IO) {
             planRepo.itemsWithAdvice().filter { it.advice?.sessionId == summary.sessionId }
         }
@@ -271,6 +276,21 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             return@Column
         }
 
+        // Propozycje zaraz pod liczbami, nie na końcu ekranu: to jedyna rzecz
+        // tutaj, która czeka na decyzję. Każda prowadzi do swojego ćwiczenia
+        // w jednostce - dotąd cała karta prowadziła do pierwszego.
+        if (fromHere.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            ProposalsCard(
+                unitName = summary.planName,
+                items = fromHere,
+                onOpen = { item ->
+                    PlanJump.to(item.planId, item.id)
+                    goToTab(PLAN_TAB)
+                }
+            )
+        }
+
         if (hr.size >= 4) {
             Spacer(Modifier.height(26.dp))
             Text("Tętno i serie", style = MaterialTheme.typography.titleMedium)
@@ -354,49 +374,6 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
             }
         }
 
-        if (fromHere.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Card(
-                onClick = {
-                    // Celujemy w konkretne cwiczenie, nie w sama zakladke -
-                    // inaczej ladujesz na liscie programow i szukasz, w ktorej
-                    // jednostce to cwiczenie lezy.
-                    val pierwsze = fromHere.first()
-                    PlanJump.to(pierwsze.planId, pierwsze.id)
-                    goToTab(PLAN_TAB)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "Po tym treningu czeka " + plural(
-                            fromHere.size, "propozycja", "propozycje", "propozycji"
-                        ),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    fromHere.take(3).forEach { item ->
-                        val a = item.advice
-                        if (a != null) {
-                            Text(
-                                item.exerciseName + ": " + adviceText(item, a),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                    }
-                    Text(
-                        "Dotknij, żeby otworzyć plan na tym ćwiczeniu",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        }
 
         if (hr.isEmpty()) {
             Spacer(Modifier.height(16.dp))
@@ -732,4 +709,65 @@ private fun zoneTint(zone: Int): Color = when (zone) {
     3 -> Color(0xFF7FB069)
     4 -> Color(0xFFE0A458)
     else -> Color(0xFFD9654B)
+}
+
+/**
+ * Propozycje po tym treningu - każda osobno, z „było → będzie".
+ *
+ * Dotąd jeden niebieski prostokąt z trzema zdaniami drobnym drukiem i całość
+ * prowadziła do pierwszego ćwiczenia. Teraz wiersz to ćwiczenie i dotknięcie
+ * otwiera jednostkę właśnie na nim.
+ */
+@Composable
+private fun ProposalsCard(unitName: String?, items: List<PlanItem>, onOpen: (PlanItem) -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f))
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                plural(items.size, "propozycja", "propozycje", "propozycji") + " do planu",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+            )
+            Text(
+                "Wyliczone z tego treningu. Dotknij ćwiczenia, żeby zdecydować w jednostce" +
+                    (unitName?.let { " $it" } ?: "") + ".",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            items.forEach { item ->
+                val a = item.advice ?: return@forEach
+                val change = adviceChange(item, a)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { onOpen(item) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(item.exerciseName, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            adviceTitle(a) + " · " +
+                                (change?.let { it.first + " → " + it.second } ?: adviceText(item, a)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (a.kind == "WEIGHT_DOWN") MaterialTheme.colorScheme.tertiary
+                            else MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.ChevronRight,
+                        contentDescription = "Otwórz w planie",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
 }

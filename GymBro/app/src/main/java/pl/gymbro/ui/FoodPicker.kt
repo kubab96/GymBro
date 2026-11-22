@@ -1,6 +1,22 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.RestaurantMenu
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -118,11 +134,19 @@ internal fun FoodSearchView(
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(
             Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(meal.label, style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = onBack) { Text("Zamknij") }
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć")
+            }
+            Column {
+                Text(meal.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(
+                    "Dodaj do posiłku",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         // Dwa wyjścia na WIERZCHU, nad polem szukania.
@@ -141,15 +165,9 @@ internal fun FoodSearchView(
             Modifier.fillMaxWidth().padding(top = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Button(onClick = onScan, modifier = Modifier.weight(1f)) { Text("Skanuj") }
-            OutlinedButton(
-                onClick = onMyMeals,
-                modifier = Modifier.weight(1f)
-            ) { Text("Dania") }
-            OutlinedButton(
-                onClick = onQuickAdd,
-                modifier = Modifier.weight(1f)
-            ) { Text("Kalorie") }
+            ActionTile(Icons.Filled.RestaurantMenu, "Moje dania", Modifier.weight(1f), onClick = onMyMeals)
+            ActionTile(Icons.Filled.Edit, "Szybki wpis", Modifier.weight(1f), onClick = onQuickAdd)
+            ActionTile(Icons.Filled.QrCodeScanner, "Skanuj", Modifier.weight(1f), primary = true, onClick = onScan)
         }
 
         // Kursor w polu od razu po wejściu.
@@ -165,11 +183,13 @@ internal fun FoodSearchView(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            label = { Text("Szukaj produktu") },
+            placeholder = { Text("Szukaj produktu") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
             singleLine = true,
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(top = 12.dp, bottom = 8.dp)
                 .focusRequester(focus)
         )
 
@@ -197,21 +217,23 @@ internal fun FoodSearchView(
         Text(
             when {
                 pusto && recent.isEmpty() -> "Zacznij pisać, żeby znaleźć produkt."
-                pusto -> "Ostatnio jedzone"
+                pusto -> "OSTATNIO JEDZONE"
                 searching -> "Szukam…"
                 lista.isEmpty() -> "Nic nie znaleziono."
-                else -> "Wyniki"
+                else -> "WYNIKI"
             },
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 4.dp)
+            modifier = Modifier.padding(start = 2.dp, top = 4.dp, bottom = 6.dp)
         )
 
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-            items(lista, key = { "produkt-${it.id}" }) { food ->
+            itemsIndexed(lista, key = { _, it -> "produkt-${it.id}" }) { i, food ->
                 FoodRow(
                     food = food,
                     picked = selected[food.id],
+                    first = i == 0,
                     onClick = { onPick(food) },
                     onToggle = { onToggle(food) }
                 )
@@ -228,17 +250,23 @@ internal fun FoodSearchView(
  * dodawało się "coś" i dopiero w dzienniku było widać, ile.
  */
 @Composable
-private fun FoodRow(food: Food, picked: Picked?, onClick: () -> Unit, onToggle: () -> Unit) {
+private fun FoodRow(food: Food, picked: Picked?, first: Boolean, onClick: () -> Unit, onToggle: () -> Unit) {
+    if (!first) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(
         Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (picked != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+                else androidx.compose.ui.graphics.Color.Transparent
+            )
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp),
+            .padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
-            Text(food.name, style = MaterialTheme.typography.bodyLarge)
+            Text(food.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
             if (picked != null) {
                 Text(
                     picked.label + " · %.0f kcal".format(picked.kcal),
@@ -261,6 +289,47 @@ private fun FoodRow(food: Food, picked: Picked?, onClick: () -> Unit, onToggle: 
             style = MaterialTheme.typography.bodySmall
         )
         Checkbox(checked = picked != null, onCheckedChange = { onToggle() })
+    }
+}
+
+/**
+ * Kafelek wyjścia z szukania: skan, moje dania, same kalorie.
+ * Ikona nad napisem - trzy przyciski z samym tekstem wyglądały jak jeden
+ * pasek i nie było widać, który jest główny.
+ */
+@Composable
+private fun ActionTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier,
+    primary: Boolean = false,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier
+            .height(72.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(
+                if (primary) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surface
+            )
+            .then(
+                if (primary) Modifier
+                else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+            )
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        val fg = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(24.dp))
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            color = if (primary) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(top = 4.dp)
+        )
     }
 }
 

@@ -3,6 +3,9 @@ package pl.gymbro.ui
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -181,7 +184,8 @@ fun WeightScreen() {
                     trend = trend,
                     weekly = weekly,
                     status = status,
-                    onNew = { status = null; showFlow = true }
+                    onNew = { status = null; showFlow = true },
+                    onAll = { scope.launch { pager.animateScrollToPage(2) } }
                 )
                 1 -> GirthsPage(
                     latest = latestGirths,
@@ -312,77 +316,80 @@ private fun MassPage(
     trend: List<Pair<Long, Double>>,
     weekly: Double?,
     status: String?,
-    onNew: () -> Unit
+    onNew: () -> Unit,
+    onAll: () -> Unit
 ) {
     val latest = measurements.firstOrNull()
     val previous = measurements.getOrNull(1)
 
-    Column(Modifier.fillMaxSize()) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-        ) {
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
+        // Liczba, zmiana i przycisk w jednej karcie: to, co się robi na tym
+        // ekranie, stoi przy tym, na co się patrzy. Osobny przycisk na dole
+        // spychał wykres i wyglądał jak podpis pod pustą kartą.
+        item(key = "teraz") {
+            AppCard {
+                Column(Modifier.padding(16.dp)) {
                     if (latest == null) {
-                        Text("Brak pomiarów", style = MaterialTheme.typography.titleLarge)
-                        Spacer(Modifier.height(4.dp))
+                        Text("Brak pomiarów", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text(
                             "Naciśnij Nowy pomiar i stań na wadze.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     } else {
-                        Text(
-                            "Obecnie",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Ostatni pomiar · " + dayAndTime(latest.measuredAt),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
+                            )
+                            previous?.let { p ->
+                                TagPill(
+                                    signed(latest.weightKg - p.weightKg, "kg"),
+                                    tone = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                        }
                         Row(verticalAlignment = Alignment.Bottom) {
-                            // Kolor wprost: karta na surfaceVariant podaje treści
-                            // szary onSurfaceVariant i najważniejsza liczba
-                            // na ekranie wychodziła wyblakła.
                             Text(
                                 kg2(latest.weightKg),
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 56.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                lineHeight = 60.sp
+                                fontSize = 60.sp,
+                                fontWeight = FontWeight.Bold,
+                                lineHeight = 64.sp
                             )
                             Text(
                                 " kg",
                                 fontSize = 22.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-                        }
-                        Text(
-                            longDate(latest.measuredAt),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        previous?.let { p ->
-                            Spacer(Modifier.height(10.dp))
-                            Text(
-                                signed(latest.weightKg - p.weightKg, "kg") + " od poprzedniego",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                modifier = Modifier.padding(bottom = 10.dp)
                             )
                         }
                     }
+                    // Jedna ścieżka pomiaru: waga i obwody jako jedna sesja.
+                    // Pomiar wstecz to ta sama ścieżka z inną datą, wybieraną
+                    // już w kreatorze - nie osobny przycisk.
+                    Button(
+                        onClick = onNew,
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(52.dp)
+                    ) { Text("Nowy pomiar", fontWeight = FontWeight.Bold, fontSize = 16.sp) }
                 }
             }
+            status?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        }
 
-            if (latest != null) {
+        if (latest != null) {
+            item(key = "kafelki") {
                 Spacer(Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StatTile(
                         label = "Trend",
                         value = trend.lastOrNull()?.second?.let { "%.1f kg".format(it) } ?: "-",
@@ -395,14 +402,23 @@ private fun MassPage(
                         note = weekly?.let { weeklyComment(it) } ?: "za mało pomiarów",
                         modifier = Modifier.weight(1f)
                     )
+                    val first = measurements.last()
+                    StatTile(
+                        label = "Od początku",
+                        value = if (measurements.size > 1) signed(latest.weightKg - first.weightKg, "kg") else "-",
+                        note = "od " + shortDate(first.measuredAt),
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
+        }
 
+        item(key = "wykres") {
             Spacer(Modifier.height(10.dp))
-            Card(Modifier.fillMaxWidth()) {
-                // Bez podpisu „Wykres": widać, że to wykres, a podpis spychał
-                // jego dół pod przycisk Nowy pomiar.
-                Column(Modifier.padding(16.dp)) {
+            AppCard {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Masa i trend", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
                     WeightChart(
                         raw = measurements.map { it.measuredAt to it.weightKg }.reversed(),
                         trend = trend
@@ -411,51 +427,63 @@ private fun MassPage(
             }
         }
 
-        status?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 8.dp)
-            )
+        if (measurements.size > 1) {
+            item(key = "ostatnie") {
+                Spacer(Modifier.height(10.dp))
+                AppCard {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Ostatnie pomiary",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onAll) { Text("wszystkie") }
+                    }
+                    measurements.take(3).forEachIndexed { i, m ->
+                        val delta = measurements.getOrNull(i + 1)?.let { m.weightKg - it.weightKg }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                dayAndTime(m.measuredAt),
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(kg2(m.weightKg), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            delta?.let {
+                                TagPill(signed(it, ""), modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    }
+                }
+            }
         }
-
-        // Przycisk poza przewijaniem: ma być pod kciukiem zawsze, a nie
-        // dopiero po zjechaniu pod wykres.
-        // Jedna ścieżka pomiaru: waga i obwody jako jedna sesja, zapisane
-        // ze wspólnym znacznikiem czasu. Pomiar wstecz to ta sama ścieżka
-        // z inną datą, wybieraną już w kreatorze - nie osobny przycisk.
-        Button(
-            onClick = onNew,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp).height(52.dp)
-        ) { Text("Nowy pomiar", style = MaterialTheme.typography.titleMedium) }
     }
 }
 
 @Composable
 private fun StatTile(label: String, value: String, note: String, modifier: Modifier = Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(14.dp)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                value,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
-            )
+    AppCard(modifier) {
+        Column(Modifier.padding(12.dp)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(
                 note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2
             )
         }
     }
 }
+
+private fun shortDate(ms: Long): String = SimpleDateFormat("d.MM", PL).format(Date(ms))
 
 // ---- 3. Historia ----------------------------------------------------------
 
@@ -508,12 +536,7 @@ private fun HistoryPage(
             }
         }) { row ->
             when (row) {
-                is HistoryRow.Month -> Text(
-                    row.title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp, start = 4.dp)
-                )
+                is HistoryRow.Month -> GroupLabel(row.title, Modifier.padding(top = 0.dp))
                 is HistoryRow.Entry -> HistoryCard(
                     m = row.m,
                     delta = row.delta,
@@ -532,13 +555,14 @@ private fun HistoryCard(
     girths: List<BodyMetric>,
     onClick: () -> Unit
 ) {
-    Card(Modifier.fillMaxWidth().clip(CardDefaults.shape).clickable(onClick = onClick)) {
+    AppCard(onClick = onClick) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(dayAndTime(m.measuredAt), style = MaterialTheme.typography.bodyLarge)
+            IconBadge(Icons.Filled.MonitorWeight, MaterialTheme.colorScheme.primary)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(dayAndTime(m.measuredAt), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                 // Obwody zmierzone w tym samym momencie co masa - jeden pomiar,
                 // więc jedna karta.
                 if (girths.isNotEmpty()) {
@@ -555,15 +579,9 @@ private fun HistoryCard(
                 Text(
                     kg2(m.weightKg) + " kg",
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.Bold
                 )
-                delta?.let {
-                    Text(
-                        signed(it, ""),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                delta?.let { TagPill(signed(it, ""), modifier = Modifier.padding(top = 2.dp)) }
             }
         }
     }

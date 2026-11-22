@@ -1,9 +1,14 @@
 package pl.gymbro.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,18 +16,32 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,10 +49,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.gymbro.data.Cache
@@ -50,8 +76,6 @@ import pl.gymbro.data.roundKg
 import pl.gymbro.gym.LoadMode
 import pl.gymbro.gym.Loading
 import pl.gymbro.gym.PlateCalculator
-import pl.gymbro.gym.ProgressionAdvisor
-import pl.gymbro.gym.ProgressionReview
 
 // ---- Edytor jednostki ---------------------------------------------------------
 
@@ -59,25 +83,23 @@ import pl.gymbro.gym.ProgressionReview
  * Ćwiczenia jednej jednostki z ich seriami, zakresem, ciężarem i przerwą.
  *
  * Wzorowane na Hevy: lista kart, każda ustawiana na miejscu, bez okien.
- * Poprzednio było tu „Edytuj" otwierające okno z ośmioma polami - żeby
- * zmienić ciężar o jeden próg, trzeba było wejść, przewinąć, zapisać i wyjść.
- * Teraz karta pokazuje skrót, a dotknięcie rozwija ją w regulatory.
+ * Karta zwinięta to numer, nazwa i skrót w pigułkach; dotknięcie rozwija ją
+ * w regulatory. Wygląd jak w Treningu - ciemna karta z obwódką zamiast
+ * szarego prostokąta, żeby obie zakładki wyglądały na jedną aplikację.
  *
- * Każda zmiana zapisuje się od razu. Przycisku „Zapisz" nie ma, bo nie ma
- * tu szkicu do porzucenia - każda pojedyncza zmiana jest kompletna, a
- * zapomniany zapis kosztowałby więcej niż jego brak.
+ * Zmiany idą do szkicu ([UnitDraft]), a do bazy dopiero przyciskiem Zapisz
+ * - jak w Profilu. Przycisk i pytanie przy wyjściu daje miejsce wywołania:
+ * edycja ma je w nagłówku, kreator zapisuje sam przy „Gotowe".
  *
  * Ten sam ekran służy w kreatorze nowego planu i przy zwykłej edycji - dwa
- * edytory rozjechałyby się przy pierwszej zmianie. Nagłówek i stopkę daje
- * miejsce wywołania: kreator ma tam numer kroku i „Gotowe", edycja - nazwę
- * jednostki i dzień.
+ * edytory rozjechałyby się przy pierwszej zmianie.
  *
- * Propozycje progresji siedzą przy kartach, jak dotąd: to tu podejmuje się
- * decyzję, widząc obok siebie to, co w planie, i to, co z treningu wynika.
+ * Propozycje progresji siedzą przy kartach: to tu podejmuje się decyzję,
+ * widząc obok siebie to, co w planie, i to, co z treningu wynika.
  */
 @Composable
 internal fun UnitEditorScreen(
-    plan: Plan,
+    draft: UnitDraft,
     profile: UserProfile,
     inventory: Inventory,
     highlight: Long? = null,
@@ -85,88 +107,34 @@ internal fun UnitEditorScreen(
     footer: @Composable ColumnScope.() -> Unit = {}
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val planRepo = remember { PlanRepository(context) }
 
-    var items by remember { mutableStateOf<List<PlanItem>>(emptyList()) }
-    var loaded by remember { mutableStateOf(false) }
-    var expanded by remember(plan.id) { mutableStateOf(highlight) }
+    var expanded by remember(draft.planId, highlight) { mutableStateOf(highlight) }
     var picking by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    suspend fun reload() {
-        items = withContext(Dispatchers.IO) { planRepo.items(plan.id) }
-        loaded = true
-    }
-
-    LaunchedEffect(plan.id) {
-        reload()
+    LaunchedEffect(draft.planId) {
+        val (items, plan) = withContext(Dispatchers.IO) {
+            planRepo.items(draft.planId) to planRepo.planById(draft.planId)
+        }
+        if (plan != null) draft.load(items, plan)
         // Zajrzenie w jednostkę gasi plakietkę, ale propozycje zostają do decyzji.
         withContext(Dispatchers.IO) { planRepo.markAdviceSeen() }
-        val i = items.indexOfFirst { it.id == highlight }
-        if (i >= 0) listState.animateScrollToItem(i)
     }
-
-    /**
-     * Zapis jednej pozycji: od razu na ekranie, potem do bazy.
-     *
-     * Najpierw lista w pamięci, bo przy szybkim klikaniu plusa odczyt z bazy
-     * po każdym zapisie cofałby liczbę o krok, zanim dojdzie następny.
-     */
-    fun change(updated: PlanItem) {
-        // Propozycja policzona przed zmianą trybu progresji znika razem
-        // z nim: "dołóż 2,5 kg" przy ćwiczeniu, w którym przed chwilą
-        // wyłączono dokładanie ciężaru, wyglądałoby na zignorowane ustawienie.
-        val pasuje = ProgressionAdvisor.stillFits(updated)
-        val nowa = if (pasuje) updated else updated.copy(advice = null)
-        items = items.map { if (it.id == nowa.id) nowa else it }
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                planRepo.upsertItem(nowa)
-                if (!pasuje) planRepo.setAdvice(nowa.id, null)
-            }
-            Refresh.bump()
-        }
-    }
-
-    fun mutate(action: suspend () -> Unit) {
-        scope.launch {
-            action()
-            reload()
-            Cache.clear()
-            Refresh.bump()
-        }
+    // Skok z historii: do ćwiczenia z propozycją, gdy tylko lista jest gotowa.
+    LaunchedEffect(highlight, draft.loaded) {
+        val i = draft.items.indexOfFirst { it.id == highlight }
+        if (i >= 0) listState.animateScrollToItem(i + 1)
     }
 
     if (picking) {
         ExercisePickerScreen(
             profile = profile,
-            alreadyIn = items.map { it.exerciseId }.toSet(),
+            alreadyIn = draft.items.map { it.exerciseId }.toSet(),
             onBack = { picking = false },
             onAdd = { chosen ->
-                mutate {
-                    withContext(Dispatchers.IO) {
-                        chosen.forEachIndexed { i, e ->
-                            planRepo.upsertItem(
-                                // Zakres i przerwa od razu ustawione: bez zakresu
-                                // aplikacja nie ma z czego proponować progresji,
-                                // a 8-12 to rozsądny środek, który łatwo przestawić.
-                                // Ciężar pusty - nie znamy niczyjej siły.
-                                PlanItem(
-                                    planId = plan.id,
-                                    exerciseId = e.id,
-                                    position = items.size + i,
-                                    targetKg = 0.0,
-                                    sets = 3,
-                                    repsFrom = 8,
-                                    repsTo = 12,
-                                    restSec = 120
-                                )
-                            )
-                        }
-                    }
-                    picking = false
-                }
+                draft.add(chosen)
+                picking = false
             }
         )
         return
@@ -175,72 +143,47 @@ internal fun UnitEditorScreen(
     Column(Modifier.fillMaxSize()) {
         header()
 
-        // Wszystkie propozycje naraz - po treningu bywa ich kilka, a klikanie
-        // po kolei zniechęca do całego mechanizmu.
-        val czekajace = items.count { it.advice != null }
-        if (czekajace > 0) {
-            Row(
-                Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Button(
-                    onClick = {
-                        mutate {
-                            withContext(Dispatchers.IO) {
-                                items.filter { it.advice != null }.forEach {
-                                    ProgressionReview.accept(planRepo, it)
-                                    planRepo.setAdvice(it.id, null)
-                                }
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Zastosuj wszystkie ($czekajace)") }
-                OutlinedButton(
-                    onClick = {
-                        mutate {
-                            withContext(Dispatchers.IO) {
-                                items.filter { it.advice != null }
-                                    .forEach { planRepo.setAdvice(it.id, null) }
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Pomiń wszystkie") }
-            }
-        }
-
         LazyColumn(Modifier.fillMaxWidth().weight(1f), state = listState) {
-            itemsIndexed(items, key = { _, it -> it.id }) { index, item ->
+            // Wszystkie propozycje naraz - po treningu bywa ich kilka, a klikanie
+            // po kolei zniechęca do całego mechanizmu.
+            item(key = "propozycje") {
+                val czeka = draft.pendingAdvice
+                if (czeka > 1) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.10f))
+                            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            plural(czeka, "propozycja", "propozycje", "propozycji") + " po treningu",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { draft.acceptAll() }) { Text("Zastosuj wszystkie") }
+                        TextButton(onClick = { draft.skipAll() }) {
+                            Text("Pomiń", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            itemsIndexed(draft.items, key = { _, it -> it.id }) { index, item ->
                 ExerciseCard(
                     item = item,
+                    number = index + 1,
                     inventory = inventory,
                     expanded = expanded == item.id,
                     highlighted = highlight == item.id,
                     first = index == 0,
-                    last = index == items.lastIndex,
+                    last = index == draft.items.lastIndex,
                     onToggle = { expanded = if (expanded == item.id) null else item.id },
-                    onChange = ::change,
-                    onMove = { up ->
-                        val other = items.getOrNull(if (up) index - 1 else index + 1)
-                        if (other != null) mutate {
-                            withContext(Dispatchers.IO) {
-                                planRepo.upsertItem(item.copy(position = other.position))
-                                planRepo.upsertItem(other.copy(position = item.position))
-                            }
-                        }
-                    },
-                    onDelete = {
-                        mutate { withContext(Dispatchers.IO) { planRepo.deleteItem(item.id) } }
-                    },
-                    onAdvice = { accept ->
-                        mutate {
-                            withContext(Dispatchers.IO) {
-                                if (accept) ProgressionReview.accept(planRepo, item)
-                                planRepo.setAdvice(item.id, null)
-                            }
-                        }
-                    }
+                    onChange = draft::update,
+                    onMove = { up -> draft.move(item, up) },
+                    onDelete = { draft.remove(item) },
+                    onAdvice = { accept -> if (accept) draft.accept(item) else draft.skip(item) }
                 )
             }
 
@@ -248,8 +191,8 @@ internal fun UnitEditorScreen(
             // listy, a lista trzyma się pierwszego widocznego - po wczytaniu
             // ćwiczeń przewijała się do niego, czyli na sam dół, i pierwsze
             // ćwiczenie chowało się nad krawędzią.
-            if (loaded) item(key = "dodaj") {
-                if (items.isEmpty()) {
+            if (draft.loaded) item(key = "dodaj") {
+                if (draft.items.isEmpty()) {
                     Text(
                         "Jednostka jest pusta. Dodaj ćwiczenia - zaznaczysz kilka naraz, " +
                             "a serie, powtórzenia i ciężar ustawisz potem na kartach.",
@@ -258,11 +201,8 @@ internal fun UnitEditorScreen(
                         modifier = Modifier.padding(vertical = 10.dp)
                     )
                 }
-                OutlinedButton(
-                    onClick = { picking = true },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                ) { Text("+ Dodaj ćwiczenia", modifier = Modifier.padding(vertical = 6.dp)) }
-                Spacer(Modifier.height(8.dp))
+                AddExercisesButton { picking = true }
+                Spacer(Modifier.height(12.dp))
             }
         }
 
@@ -270,17 +210,63 @@ internal fun UnitEditorScreen(
     }
 }
 
-/** „3 serie · 8-12 powt. · 60 kg · przerwa 2:00" - pomija to, czego nie ustawiono. */
-private fun summaryLine(item: PlanItem, inventory: Inventory): String =
-    buildList {
-        add(plural(item.sets, "seria", "serie", "serii"))
-        if (item.hasRepRange) add("${item.repRange} powt.")
-        if (item.hasTargetWeight) {
-            val r = PlateCalculator.resolve(item.targetKg, item.equipment, inventory)
-            add("${Loading.fmt(r.actualKg)} ${item.equipment.weightUnitLabel}")
-        }
-        if (item.hasRest) add("przerwa ${item.restSec / 60}:%02d".format(item.restSec % 60))
-    }.joinToString(" · ")
+/** Ten sam przerywany przycisk co „Rozpocznij inny trening" - dokładanie czegoś nowego. */
+@Composable
+private fun AddExercisesButton(onClick: () -> Unit) {
+    val outline = MaterialTheme.colorScheme.outline
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .drawBehind {
+                drawRoundRect(
+                    color = outline,
+                    style = Stroke(
+                        width = 1.5.dp.toPx(),
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))
+                    ),
+                    cornerRadius = CornerRadius(10.dp.toPx())
+                )
+            }
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Text(
+            "Dodaj ćwiczenia",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 8.dp)
+        )
+    }
+}
+
+/** Skrót karty w pigułkach: „3 × 8-12", „60 kg", „2:00" - pomija to, czego nie ustawiono. */
+private fun summaryPills(item: PlanItem, inventory: Inventory): List<String> = buildList {
+    add(if (item.hasRepRange) "${item.sets} × ${item.repRange}" else plural(item.sets, "seria", "serie", "serii"))
+    if (item.hasTargetWeight) {
+        val r = PlateCalculator.resolve(item.targetKg, item.equipment, inventory)
+        add("${Loading.fmt(r.actualKg)} ${item.equipment.weightUnitLabel}")
+    } else add("bez ciężaru")
+    if (item.hasRest) add("${item.restSec / 60}:%02d".format(item.restSec % 60))
+    if (item.progress != ProgressMode.ALL) add(item.progress.label.lowercase())
+}
+
+@Composable
+private fun Pill(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    )
+}
 
 /**
  * Karta ćwiczenia: zwinięta to skrót, rozwinięta - regulatory.
@@ -288,9 +274,11 @@ private fun summaryLine(item: PlanItem, inventory: Inventory): String =
  * Rozwinięta jest jedna naraz. Sześć rozwiniętych kart to kilka ekranów
  * przewijania, w których traci się, przy którym ćwiczeniu się jest.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExerciseCard(
     item: PlanItem,
+    number: Int,
     inventory: Inventory,
     expanded: Boolean,
     highlighted: Boolean,
@@ -316,27 +304,45 @@ private fun ExerciseCard(
 
     Card(
         Modifier.fillMaxWidth().padding(vertical = 5.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (highlighted) MaterialTheme.colorScheme.secondaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant
-        )
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        // Ćwiczenie, do którego skoczyliśmy z historii, ma obwódkę w kolorze
+        // akcji - tło zmieniało całą kartę i gryzło się z propozycją w środku.
+        border = if (highlighted) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(
                 Modifier.fillMaxWidth().clickable(onClick = onToggle),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
-                Column(Modifier.weight(1f)) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "$number",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Column(Modifier.weight(1f).padding(start = 12.dp)) {
                     Text(
                         item.exerciseName,
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.primary
+                        fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        summaryLine(item, inventory),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    FlowRow(
+                        Modifier.padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        summaryPills(item, inventory).forEach { Pill(it) }
+                    }
                     if (item.hasTargetWeight && mode != null) {
                         PlateCalculator.resolve(item.targetKg, item.equipment, inventory)
                             .loading?.let {
@@ -344,15 +350,16 @@ private fun ExerciseCard(
                                     it.describe(mode, inventory),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 6.dp)
                                 )
                             }
                     }
                 }
-                Text(
-                    if (expanded) "▲" else "▼",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (expanded) "Zwiń" else "Rozwiń",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
@@ -366,6 +373,11 @@ private fun ExerciseCard(
             }
 
             if (!expanded) return@Column
+
+            HorizontalDivider(
+                Modifier.padding(top = 14.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
 
             // ---- Serie ----
             ControlRow("Serie") {
@@ -416,7 +428,8 @@ private fun ExerciseCard(
                     Text(
                         "Gdy wyrobisz górną granicę, aplikacja zaproponuje większy ciężar.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             } else {
@@ -465,7 +478,7 @@ private fun ExerciseCard(
                         PlateCalculator.nextUp(0.0, mode, inventory)?.totalKg ?: item.step
                     } else item.step
                     onChange(item.copy(targetKg = start))
-                }) { Text("Ustaw ciężar") }
+                }, modifier = Modifier.padding(top = 6.dp)) { Text("Ustaw ciężar") }
             }
 
             // ---- Przerwa ----
@@ -501,19 +514,35 @@ private fun ExerciseCard(
                         "i rehabilitacyjnych."
                 },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
             )
 
+            HorizontalDivider(
+                Modifier.padding(top = 12.dp),
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
             Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                Modifier.fillMaxWidth().padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TextButton(onClick = { onMove(true) }, enabled = !first) { Text("↑ Wyżej") }
-                TextButton(onClick = { onMove(false) }, enabled = !last) { Text("↓ Niżej") }
+                IconButton(onClick = { onMove(true) }, enabled = !first) {
+                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Wyżej")
+                }
+                IconButton(onClick = { onMove(false) }, enabled = !last) {
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Niżej")
+                }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDelete) {
-                    Text("Usuń", color = MaterialTheme.colorScheme.error)
+                    Icon(
+                        Icons.Filled.Delete, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp)
+                    )
+                    Text(
+                        "Usuń z jednostki",
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
                 }
             }
         }
@@ -571,6 +600,77 @@ private fun ControlRow(label: String, content: @Composable () -> Unit) {
         )
         content()
     }
+}
+
+/**
+ * Nagłówek edycji jednostki z przyciskiem Zapisz - jak w Profilu.
+ *
+ * Poza przewijaniem, bo przycisk dotyczy całej jednostki i musi być widać go
+ * z każdego miejsca listy. Podtytuł mówi, czy coś czeka na zapis - zapalony
+ * przycisk sam w sobie łatwo przeoczyć.
+ */
+@Composable
+internal fun UnitEditorHeader(
+    programName: String,
+    draft: UnitDraft,
+    onBack: () -> Unit,
+    onRename: () -> Unit,
+    onSave: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć")
+        }
+        Column(Modifier.weight(1f).clickable(onClick = onRename)) {
+            Text(
+                programName,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(draft.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        }
+        Button(onClick = onSave, enabled = draft.dirty) { Text("Zapisz") }
+    }
+    Text(
+        if (draft.dirty) "Niezapisane zmiany" else "Dotknij nazwy, żeby ją zmienić",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (draft.dirty) MaterialTheme.colorScheme.tertiary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 48.dp)
+    )
+    FieldLabel("Dzień tygodnia (opcjonalnie)")
+    DayChips(draft.day) { draft.day = it }
+    Spacer(Modifier.height(10.dp))
+}
+
+/**
+ * Szkic jednostki w kreatorze, zapisywany sam przy zniknięciu ekranu.
+ *
+ * W kreatorze nie ma przycisku Zapisz: nowa jednostka powstaje po to, żeby
+ * zostać, więc szkic zapisuje się przy każdym wyjściu - „Gotowe", kolejna
+ * jednostka, wstecz, a nawet zmiana zakładki. Stąd zapis przy zniknięciu
+ * ekranu, w zakresie, który przeżyje sam ekran.
+ */
+@Composable
+internal fun rememberAutoSavedDraft(plan: Plan): UnitDraft {
+    val context = LocalContext.current
+    val planRepo = remember { PlanRepository(context) }
+    val draft = remember(plan.id) { UnitDraft(plan) }
+    DisposableEffect(draft) {
+        onDispose {
+            if (draft.dirty) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    draft.commit(planRepo)
+                    Cache.clear()
+                    withContext(Dispatchers.Main) { Refresh.bump() }
+                }
+            }
+        }
+    }
+    return draft
 }
 
 // ---- Nowa jednostka -----------------------------------------------------------
@@ -698,8 +798,9 @@ internal fun NewUnitFlow(
 
         UnitPhase.EXERCISES -> {
             val plan = current ?: return
+            val draft = rememberAutoSavedDraft(plan)
             UnitEditorScreen(
-                plan = plan,
+                draft = draft,
                 profile = profile,
                 inventory = inventory,
                 header = {

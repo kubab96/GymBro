@@ -254,10 +254,16 @@ fun WorkoutScreen() {
             val active = withContext(Dispatchers.IO) { sessionRepo.active() }
             session = active
             if (active != null) reload(active, loadedInv)
-            adviceSessions = withContext(Dispatchers.IO) {
-                planRepo.itemsWithAdvice().mapNotNull { it.advice?.sessionId }.toSet()
-            }
             loading = false
+        }
+    }
+
+    // Kropki propozycji w Historii - osobno i na Refresh, a nie raz przy starcie.
+    // Wczytane raz, wisiały przy treningu jeszcze długo po tym, jak propozycje
+    // zastosowano w Planie, i wyglądało to, jakby zastosowanie nie działało.
+    LaunchedEffect(Refresh.version) {
+        adviceSessions = withContext(Dispatchers.IO) {
+            planRepo.itemsWithAdvice().mapNotNull { it.advice?.sessionId }.toSet()
         }
     }
 

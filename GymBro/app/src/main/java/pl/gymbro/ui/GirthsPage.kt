@@ -106,10 +106,7 @@ private fun BodyFatCard(
     profile: UserProfile,
     onEditProfile: () -> Unit
 ) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
+    AppCard(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(18.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -157,7 +154,7 @@ private fun BodyFatCard(
 
 @Composable
 private fun GirthTile(site: MeasurementSite, current: BodyMetric?, change: Double?) {
-    Card(Modifier.fillMaxWidth()) {
+    AppCard(Modifier.fillMaxWidth()) {
         Row(
             Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically

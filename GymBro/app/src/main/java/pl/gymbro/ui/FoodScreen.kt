@@ -1,6 +1,17 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -114,8 +125,13 @@ fun FoodScreen() {
     // Zaznaczenia nie przechodza na nastepne wejscie w szukanie ani na inny posilek.
     LaunchedEffect(searchFor) { selected = emptyMap() }
 
+    // Dni tygodnia z wpisami - kropki na pasku dni.
+    var filled by remember { mutableStateOf<Set<Long>>(emptySet()) }
+
     suspend fun reload() {
         today = withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
+        val monday = weekStartDay(day)
+        filled = withContext(Dispatchers.IO) { repos.diary.daysWithEntries(monday, monday + 6) }
     }
 
     /** Otwiera wybór porcji dla produktu, dociągając porcje i ostatnią gramaturę. */
@@ -356,6 +372,7 @@ fun FoodScreen() {
         DayView(
             today = today,
             day = day,
+            filled = filled,
             status = status,
             onDay = { day = it; status = null },
             onAdd = { m -> status = null; searchFor = m },
@@ -486,32 +503,27 @@ private data class NewProduct(
 private fun DayView(
     today: NutritionReview.Today?,
     day: Long,
+    filled: Set<Long>,
     status: String?,
     onDay: (Long) -> Unit,
     onAdd: (Meal) -> Unit,
     onEntry: (FoodLogEntry) -> Unit
 ) {
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-
         Row(
-            Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.Bottom
         ) {
-            Text("Kalorie", style = MaterialTheme.typography.headlineMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { onDay(day - 1) }) { Text("‹") }
-                Text(dayLabel(day), style = MaterialTheme.typography.bodyMedium)
-                // W przyszłość nie ma po co iść: jedzenia, którego jeszcze
-                // nie było, nie da się zapisać.
-                TextButton(
-                    onClick = { onDay(day + 1) },
-                    enabled = day < todayEpochDay()
-                ) { Text("›") }
-            }
+            Text("Kalorie", style = MaterialTheme.typography.headlineLarge, modifier = Modifier.weight(1f))
+            Text(
+                longDayLabel(day),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
         }
 
-        SummaryCard(today)
+        WeekStrip(day = day, filled = filled, onDay = onDay)
 
         // Tu nie ma przyciskow dodawania - i to jest zmiana wzgledem
         // pierwszej wersji, nie przeoczenie.
@@ -520,61 +532,190 @@ private fun DayView(
         // z godziny. Zgadywanie bylo w porzadku o osmej rano, ale o
         // jedenastej juz nie, a poprawianie go po fakcie kosztuje wiecej
         // niz jedno dotkniecie zaoszczedzone na wejsciu. Teraz droga jest
-        // jedna: dotknij posilku, do ktorego dopisujesz. Skanowanie
-        // i wpisywanie czeka tam, na gorze ekranu szukania.
-        status?.let {
-            Text(
-                it,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 8.dp)
-            )
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // Wszystkie posiłki, także puste. Pusty posiłek to miejsce do
-        // dotknięcia, a nie brak treści - ukrywanie go kazałoby szukać,
-        // gdzie dopisać kolację.
+        // jedna: plus przy posilku, do ktorego dopisujesz.
         val byMeal = today?.entries.orEmpty().groupBy { it.meal }
         LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
-            Meal.entries.forEach { meal ->
-                item(key = "posilek-${meal.name}") {
-                    MealHeader(
-                        meal = meal,
-                        suma = today?.summary?.byMeal?.get(meal),
-                        onAdd = { onAdd(meal) }
+            item(key = "podsumowanie") {
+                Spacer(Modifier.height(10.dp))
+                SummaryCard(today)
+                status?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-                items(byMeal[meal].orEmpty(), key = { "wpis-${it.id}" }) { entry ->
-                    EntryRow(entry) { onEntry(entry) }
+                Spacer(Modifier.height(6.dp))
+            }
+            // Wszystkie posiłki, także puste. Pusty posiłek to miejsce do
+            // dotknięcia, a nie brak treści - ukrywanie go kazałoby szukać,
+            // gdzie dopisać kolację.
+            Meal.entries.forEach { meal ->
+                item(key = "posilek-${meal.name}") {
+                    MealCard(
+                        meal = meal,
+                        suma = today?.summary?.byMeal?.get(meal),
+                        entries = byMeal[meal].orEmpty(),
+                        onAdd = { onAdd(meal) },
+                        onEntry = onEntry
+                    )
+                }
+            }
+            item(key = "dol") { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+}
+
+/** Poniedziałek tygodnia, w którym leży [day] (dni epoki). */
+internal fun weekStartDay(day: Long): Long =
+    LocalDate.ofEpochDay(day).with(java.time.temporal.TemporalAdjusters.previousOrSame(java.time.DayOfWeek.MONDAY)).toEpochDay()
+
+/**
+ * Pasek tygodnia zamiast strzałek „‹ dziś ›".
+ *
+ * Strzałki pokazywały jeden dzień i przejście do czwartku znaczyło trzy
+ * dotknięcia na ślepo. Tu widać cały tydzień, a kropka pod dniem mówi, że
+ * coś w nim wpisano - dziurę w dzienniku widać, zanim się w nią wejdzie.
+ * Skrajne pola przewijają o tydzień.
+ */
+@Composable
+private fun WeekStrip(day: Long, filled: Set<Long>, onDay: (Long) -> Unit) {
+    val monday = weekStartDay(day)
+    val dzis = todayEpochDay()
+    val skroty = listOf("pn", "wt", "śr", "cz", "pt", "so", "nd")
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = { onDay(day - 7) }, contentPadding = PaddingValues(horizontal = 4.dp)) {
+            Text("‹", style = MaterialTheme.typography.titleLarge)
+        }
+        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            (0..6).forEach { i ->
+                val d = monday + i
+                val on = d == day
+                val future = d > dzis
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .height(56.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface)
+                        .then(
+                            if (on) Modifier
+                            else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                        )
+                        // W przyszłość nie ma po co iść: jedzenia, którego
+                        // jeszcze nie było, nie da się zapisać.
+                        .clickable(enabled = !future) { onDay(d) },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    val fg = when {
+                        on -> MaterialTheme.colorScheme.onPrimary
+                        future -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                    Text(skroty[i], style = MaterialTheme.typography.labelSmall, color = fg)
+                    Text(
+                        "${LocalDate.ofEpochDay(d).dayOfMonth}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = fg
+                    )
+                    Box(
+                        Modifier.size(5.dp).clip(RoundedCornerShape(3.dp)).background(
+                            when {
+                                d !in filled -> Color.Transparent
+                                on -> MaterialTheme.colorScheme.onPrimary
+                                else -> MaterialTheme.colorScheme.secondary
+                            }
+                        )
+                    )
                 }
             }
         }
+        TextButton(
+            onClick = { onDay(minOf(day + 7, dzis)) },
+            enabled = day < dzis,
+            contentPadding = PaddingValues(horizontal = 4.dp)
+        ) { Text("›", style = MaterialTheme.typography.titleLarge) }
+    }
+}
+
+/**
+ * Posiłek jako karta: nazwa, suma i plus, pod spodem wpisy.
+ *
+ * Cały nagłówek jest przyciskiem dodawania, nie tylko plus: celowanie
+ * w ikonę kciukiem jednej ręki jest dokładnie tym, czego ten ekran ma nie
+ * wymagać. Pusty posiłek dostaje sam nagłówek - „0 kcal · B 0 · W 0 · T 0"
+ * byłoby czterema liczbami, które nic nie mówią.
+ */
+@Composable
+private fun MealCard(
+    meal: Meal,
+    suma: Nutrients?,
+    entries: List<FoodLogEntry>,
+    onAdd: () -> Unit,
+    onEntry: (FoodLogEntry) -> Unit
+) {
+    val pusty = suma == null || suma.kcal <= 0.0
+    AppCard(Modifier.padding(vertical = 5.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onAdd)
+                .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(meal.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (!pusty) {
+                    Text(
+                        "B %.0f · W %.0f · T %.0f".format(suma!!.proteinG, suma.carbsG, suma.fatG),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                if (pusty) "" else "%.0f kcal".format(suma!!.kcal),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = 10.dp)
+            )
+            Box(
+                Modifier.size(36.dp).clip(RoundedCornerShape(18.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Add, contentDescription = "Dodaj do: " + meal.label,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+        entries.forEach { e -> EntryRow(e) { onEntry(e) } }
     }
 }
 
 /** Jeden wpis w dzienniku. Dotknięcie otwiera poprawianie i usuwanie. */
 @Composable
 private fun EntryRow(entry: FoodLogEntry, onClick: () -> Unit) {
+    HorizontalDivider(Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant)
     Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(start = 12.dp, top = 6.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
-            Text(entry.name, style = MaterialTheme.typography.bodyMedium)
+            Text(entry.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
             Text(
                 buildString {
                     entry.grams?.let { append("%.0f g · ".format(it)) }
                     append(
                         "B %.0f · W %.0f · T %.0f".format(
-                            entry.nutrients.proteinG,
-                            entry.nutrients.carbsG,
-                            entry.nutrients.fatG
+                            entry.nutrients.proteinG, entry.nutrients.carbsG, entry.nutrients.fatG
                         )
                     )
                 },
@@ -583,85 +724,32 @@ private fun EntryRow(entry: FoodLogEntry, onClick: () -> Unit) {
             )
         }
         Text(
-            "%.0f kcal".format(entry.nutrients.kcal),
-            style = MaterialTheme.typography.bodyMedium
+            "%.0f".format(entry.nutrients.kcal),
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(start = 8.dp)
         )
     }
 }
 
 /**
- * Nagłówek posiłku z sumą kalorii i makro.
+ * Podsumowanie dnia: pierścień z tym, co zostało, i makro obok.
  *
- * Cały wiersz jest przyciskiem dodawania, nie tylko znak plus: posiłek bez
- * wpisów ma po sobie kilkadziesiąt pikseli wysokości, a celowanie w ikonę
- * wielkości paznokcia kciukiem jednej ręki jest dokładnie tym, czego ten
- * ekran ma nie wymagać.
- *
- * Makro pod nazwą, nie obok kalorii: linijka „Obiad · 820 kcal · B 45 · W 70
- * · T 30" nie mieści się na szerokości telefonu i obcina się w losowym
- * miejscu. Pod spodem, mniejszą czcionką, mieści się zawsze.
- *
- * Pusty posiłek dostaje sam plus. Wypisywanie mu „0 kcal · B 0 · W 0 · T 0"
- * byłoby czterema liczbami, które nic nie mówią, w miejscu, gdzie całą
- * treścią jest zaproszenie do dotknięcia.
+ * Najważniejsza liczba w ciągu dnia to „ile jeszcze", nie „ile już" - stąd
+ * ona w środku pierścienia, a zjedzone i cel mniejszym drukiem obok.
  */
 @Composable
-private fun MealHeader(meal: Meal, suma: Nutrients?, onAdd: () -> Unit) {
-    val pusty = suma == null || suma.kcal <= 0.0
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onAdd)
-            .padding(vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(meal.label, style = MaterialTheme.typography.titleMedium)
-            if (!pusty) {
-                Text(
-                    "B %.0f · W %.0f · T %.0f".format(
-                        suma!!.proteinG,
-                        suma.carbsG,
-                        suma.fatG
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        Text(
-            if (pusty) "+" else "%.0f kcal".format(suma!!.kcal),
-            style = MaterialTheme.typography.bodyMedium,
-            color = if (pusty) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
-        )
-    }
-}
-
-/** Karta podsumowania: kalorie i makro wobec celu. */
-@Composable
 private fun SummaryCard(today: NutritionReview.Today?) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(Modifier.padding(16.dp)) {
+    AppCard {
+        Column(Modifier.padding(14.dp)) {
             if (today == null) {
                 Text("Wczytuję…", style = MaterialTheme.typography.titleMedium)
                 return@Column
             }
-
             val target = today.target
             val eaten = today.summary.total
 
             if (target == null) {
-                Text("%.0f kcal".format(eaten.kcal), fontSize = 36.sp)
+                Text("%.0f kcal".format(eaten.kcal), fontSize = 36.sp, fontWeight = FontWeight.Bold)
                 Text(
                     today.missingProfile ?: "Brak celu - uzupełnij profil.",
                     style = MaterialTheme.typography.bodySmall,
@@ -669,66 +757,43 @@ private fun SummaryCard(today: NutritionReview.Today?) {
                 )
                 return@Column
             }
-
             val remaining = today.remaining!!
 
-            Row(verticalAlignment = Alignment.Bottom) {
-                Text("%.0f".format(eaten.kcal), fontSize = 36.sp)
-                Text(
-                    " / %.0f kcal".format(target.kcal),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(bottom = 6.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                KcalRing(
+                    fraction = (eaten.kcal / target.kcal).toFloat(),
+                    big = "%.0f".format(kotlin.math.abs(remaining.kcal)),
+                    small = if (remaining.overKcal) "kcal ponad cel" else "zostało kcal",
+                    over = remaining.overKcal
                 )
-            }
-            Text(
-                if (remaining.overKcal) {
-                    "ponad cel o %.0f kcal".format(-remaining.kcal)
-                } else {
-                    "zostało %.0f kcal".format(remaining.kcal)
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (remaining.overKcal) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
+                Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                    Row {
+                        SmallStat("Zjedzone", "%.0f".format(eaten.kcal), Modifier.weight(1f))
+                        SmallStat("Cel", "%.0f".format(target.kcal), Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    MacroRow("Białko", eaten.proteinG, target.proteinG, MaterialTheme.colorScheme.primary)
+                    MacroRow("Węgle", eaten.carbsG, target.carbsG, MaterialTheme.colorScheme.tertiary)
+                    MacroRow("Tłuszcz", eaten.fatG, target.fatG, MaterialTheme.colorScheme.secondary)
                 }
-            )
-
-            Spacer(Modifier.height(10.dp))
-            ProgressBar(
-                fraction = (eaten.kcal / target.kcal).toFloat(),
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Spacer(Modifier.height(12.dp))
-            MacroRow("Białko", eaten.proteinG, target.proteinG, MaterialTheme.colorScheme.primary)
-            MacroRow("Węgle", eaten.carbsG, target.carbsG, MaterialTheme.colorScheme.tertiary)
-            MacroRow("Tłuszcz", eaten.fatG, target.fatG, MaterialTheme.colorScheme.secondary)
-
-            // Wydatku tu nie ma i nie ma go celowo. Stała tu linijka „wydatek
-            // ... kcal (ze wzoru)" z dopiskiem, ile ważeń brakuje do pomiaru -
-            // liczba, z którą nic się nie robi, w karcie, na którą patrzy się
-            // kilka razy dziennie. Cel powyżej już z niej wynika.
+            }
 
             // Błonnik osobno, bo nie wchodzi do bilansu kalorii, a brak danych
             // u części wpisów trzeba pokazać wprost - inaczej suma czytałaby
-            // się jak pełna.
-            //
-            // Przy pustym dniu linijki nie ma wcale. „Błonnik brak danych"
-            // w dniu, w którym nic nie zjadłeś, nie jest informacją o braku
-            // danych - jest szumem w jedynym miejscu, gdzie szum najbardziej
-            // przeszkadza, bo to pierwsze, co widać rano.
+            // się jak pełna. Przy pustym dniu linijki nie ma wcale: to szum
+            // w pierwszym miejscu, które widać rano.
             today.fiberTargetG?.takeIf { !today.summary.isEmpty }?.let { cel ->
                 val b = eaten.fiberG
                 val brak = today.summary.missing.fiber
                 Text(
                     buildString {
-                        append("błonnik ")
+                        append("Błonnik ")
                         append(if (b == null) "brak danych" else "%.0f / %.0f g".format(b, cel))
                         if (brak > 0 && b != null) append(" (bez danych: $brak ${wpisy(brak)})")
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp)
                 )
             }
         }
@@ -736,23 +801,61 @@ private fun SummaryCard(today: NutritionReview.Today?) {
 }
 
 @Composable
+private fun SmallStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Pierścień postępu kalorii. Ponad cel - pełny i w kolorze błędu. */
+@Composable
+private fun KcalRing(fraction: Float, big: String, small: String, over: Boolean) {
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    val fill = if (over) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    Box(Modifier.size(124.dp), contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = 11.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(track, -90f, 360f, false, topLeft, arcSize, style = Stroke(stroke))
+            drawArc(
+                fill, -90f, 360f * fraction.coerceIn(0f, 1f), false, topLeft, arcSize,
+                style = Stroke(stroke, cap = StrokeCap.Round)
+            )
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(big, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text(small, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 private fun MacroRow(label: String, eaten: Double, target: Double, color: Color) {
-    Column(Modifier.padding(bottom = 8.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
+    Column(Modifier.padding(bottom = 6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, style = MaterialTheme.typography.bodySmall)
             Text(
                 "%.0f / %.0f g".format(eaten, target),
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Spacer(Modifier.height(3.dp))
-        ProgressBar(
-            fraction = if (target > 0) (eaten / target).toFloat() else 0f,
-            color = color
-        )
+        ProgressBar(fraction = if (target > 0) (eaten / target).toFloat() else 0f, color = color)
+    }
+}
+
+/** „sobota, 22 listopada" - pełna data obok paska tygodnia. */
+private fun longDayLabel(day: Long): String {
+    val dzis = todayEpochDay()
+    val data = LocalDate.ofEpochDay(day).format(DateTimeFormatter.ofPattern("EEEE, d MMMM", Locale.getDefault()))
+    return when (day) {
+        dzis -> "dziś · $data"
+        dzis - 1 -> "wczoraj · $data"
+        else -> data
     }
 }
 
@@ -774,7 +877,7 @@ private fun ProgressBar(fraction: Float, color: Color) {
             .fillMaxWidth()
             .height(8.dp)
             .clip(RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Box(
             Modifier

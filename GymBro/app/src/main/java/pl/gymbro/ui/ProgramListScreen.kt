@@ -1,6 +1,20 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -105,6 +119,14 @@ fun ProgramList(
     }
 }
 
+/**
+ * Plan na liście - w stylu kart z Treningu.
+ *
+ * Aktywny ma obwódkę w kolorze akcji i pigułkę „aktywny"; dotąd cała karta
+ * była niebieska i przy dwóch planach wyglądała jak zaznaczony przycisk.
+ * Nazwa, aktywacja i usuwanie w menu pod trzema kropkami zamiast trzech
+ * napisów pod każdym planem.
+ */
 @Composable
 private fun ProgramCard(
     option: ProgramOption,
@@ -114,62 +136,74 @@ private fun ProgramCard(
     onDelete: () -> Unit
 ) {
     val active = option.program.isActive
+    var menu by remember { mutableStateOf(false) }
 
     Card(
         Modifier
             .fillMaxWidth()
             .padding(vertical = 5.dp)
             .clickable(onClick = onOpen),
-        colors = CardDefaults.cardColors(
-            containerColor = if (active) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant
-        )
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = if (active) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, top = 14.dp, bottom = 14.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         option.program.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        if (option.planCount == 0) "brak jednostek"
-                        else "${option.planCount} ${unitWord(option.planCount)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
                     )
                     if (active) {
                         Text(
                             "aktywny",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
                         )
                     }
                 }
-
-                Text("▶", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    if (option.planCount == 0) "brak jednostek"
+                    else plural(option.planCount, "jednostka", "jednostki", "jednostek") +
+                        if (active) " · na zegarku" else "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
-
-            Row(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                // Aktywacja ma sens tylko dla programu, który aktywny nie jest.
-                if (!active) {
-                    TextButton(onClick = onActivate) { Text("Ustaw aktywny") }
+            Box {
+                IconButton(onClick = { menu = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Więcej")
                 }
-                TextButton(onClick = onRename) { Text("Nazwa") }
-                TextButton(onClick = onDelete) {
-                    Text("Usuń", color = MaterialTheme.colorScheme.error)
+                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    // Aktywacja ma sens tylko dla programu, który aktywny nie jest.
+                    if (!active) {
+                        DropdownMenuItem(
+                            text = { Text("Ustaw jako aktywny") },
+                            onClick = { menu = false; onActivate() }
+                        )
+                    }
+                    DropdownMenuItem(text = { Text("Zmień nazwę") }, onClick = { menu = false; onRename() })
+                    DropdownMenuItem(
+                        text = { Text("Usuń plan", color = MaterialTheme.colorScheme.error) },
+                        onClick = { menu = false; onDelete() }
+                    )
                 }
             }
+            Icon(
+                Icons.Filled.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
-}
-
-private fun unitWord(n: Int): String = when {
-    n == 1 -> "jednostka"
-    n % 10 in 2..4 && n % 100 !in 12..14 -> "jednostki"
-    else -> "jednostek"
 }

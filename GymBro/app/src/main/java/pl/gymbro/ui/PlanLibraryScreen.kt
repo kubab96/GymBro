@@ -209,8 +209,9 @@ fun PlanLibraryScreen(
     val editing = editingUnit
     val t = detail
     if (step == WizardStep.DETAIL && editing != null && t != null) {
+        val draft = rememberAutoSavedDraft(editing)
         UnitEditorScreen(
-            plan = editing,
+            draft = draft,
             profile = profile,
             inventory = inventory,
             header = {
@@ -231,7 +232,15 @@ fun PlanLibraryScreen(
             },
             footer = {
                 Button(
-                    onClick = { editingUnit = null },
+                    // Zapis przed powrotem, a nie w tle przy zniknięciu ekranu:
+                    // rozpisany plan wczytuje jednostkę od razu i pokazałby
+                    // ją sprzed zmian.
+                    onClick = {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { if (draft.dirty) draft.commit(PlanRepository(context)) }
+                            editingUnit = null
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp)
                 ) { Text("Wróć do planu", modifier = Modifier.padding(vertical = 4.dp)) }
             }

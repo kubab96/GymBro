@@ -366,12 +366,7 @@ private fun ScaleStep(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Spacer(Modifier.height(30.dp))
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
+            AppCard(Modifier.fillMaxWidth()) {
                 Column(
                     Modifier.fillMaxWidth().padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -589,7 +584,7 @@ private fun GirthsStep(
                 .verticalScroll(rememberScrollState())
         ) {
             MeasurementSite.entries.forEach { site ->
-                Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                AppCard(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                     Row(
                         Modifier.fillMaxWidth().padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -663,12 +658,7 @@ private fun SummaryStep(
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
         ) {
-            Card(
-                Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
+            AppCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("%.2f kg".format(weightKg ?: 0.0), fontSize = 36.sp)
                     Text(
