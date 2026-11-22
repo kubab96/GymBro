@@ -25,6 +25,16 @@ const DEVICE_HEIGHT = 480
 // Kolejka wywolan zwrotnych animacji. Na poziomie modulu, bo fabryka
 // widgetow nie widzi zmiennych z loadPage().
 const ANIMACJE = { wolne: false, czeka: [] }
+// Odpala odlozone dotkniecia pol (KLIK_ZWLOKA_MS w stronie) - ustawiane
+// przez harness, wolane przez onClick pola.
+const KLIKI = {
+  listy: [],
+  // Strona bywa ladowana kilka razy - kazda ma swoje zegary.
+  pusc: () => KLIKI.listy.forEach((zegary) => zegary
+    .filter((z) => z.zywy && z.ms === 190)
+    .forEach((z) => { z.zywy = false; z.fn() })),
+  odczekaj: null
+}
 
 function makeWidget(type, options) {
   const w = {
@@ -67,13 +77,30 @@ function makeWidget(type, options) {
     },
     getProperty(prop) {
       return this.attrs[prop]
+    },
+    // Dotyk na widgecie, ktory nie jest przyciskiem - np. odliczanie przerwy.
+    // Scenariusz wola go przez onClick, tak jak przycisk.
+    addEventListener(event, fn) {
+      this.sluchacze = this.sluchacze || {}
+      this.sluchacze[event] = fn
+      // onClick pola to dotkniecie i odczekanie, az zadziala.
+      if (event === 'CLICK_UP') {
+        this.onClick = (info) => {
+          // Prawdziwe dotkniecie przychodzi chwile po poprzednim gescie,
+          // nie w tej samej milisekundzie.
+          if (KLIKI.odczekaj) KLIKI.odczekaj()
+          fn(info)
+          if (KLIKI.pusc) KLIKI.pusc()
+        }
+      }
     }
   }
   return w
 }
 
 const hmUI = {
-  widget: { TEXT: 'TEXT', BUTTON: 'BUTTON', FILL_RECT: 'FILL_RECT' },
+  widget: { TEXT: 'TEXT', BUTTON: 'BUTTON', FILL_RECT: 'FILL_RECT', ARC: 'ARC', IMG: 'IMG' },
+  event: { CLICK_UP: 'CLICK_UP', CLICK_DOWN: 'CLICK_DOWN', MOVE: 'MOVE', MOVE_OUT: 'MOVE_OUT' },
   prop: {
     MORE: 'MORE', VISIBLE: 'VISIBLE', ANIM: 'ANIM',
     X: 'X', Y: 'Y', W: 'W', H: 'H', ALPHA: 'ALPHA'
@@ -595,6 +622,9 @@ function loadPage(phone) {
   }
   const clearTimeout_ = (id) => { if (zegary[id - 1]) zegary[id - 1].zywy = false }
   handlers.zegary = zegary
+  KLIKI.listy.push(zegary)
+  handlers.puscKliki = KLIKI.pusc
+  KLIKI.odczekaj = () => jump(300)
   Object.defineProperty(handlers, 'wolneAnimacje', {
     get: () => ANIMACJE.wolne,
     set: (v) => { ANIMACJE.wolne = !!v; if (!v) ANIMACJE.czeka.length = 0 },
@@ -731,18 +761,20 @@ async function puscWysylke(page, h) {
  * przejścia.
  */
 const GRUPY = {
-  0: ['hr', 'hrIcon', 'name', 'count', 'phase', 'timer', 'load', 'prev', 'next'],
-  1: ['wLabel', 'wMinus', 'wValue', 'wPlus', 'rLabel', 'rMinus', 'rValue', 'rPlus'],
+  0: ['hr', 'hrIcon', 'name', 'phase', 'prev', 'next'],
+  1: ['editName', 'editCardW', 'wLabel', 'wMinus', 'wValue', 'wPlus',
+    'editCardR', 'rLabel', 'rMinus', 'rValue', 'rPlus', 'editHint'],
   2: ['doneTitle', 'doneTime', 'doneSets', 'doneTon', 'doneSkip', 'doneBtn',
     'doneHint', 'doneMore', 'doneNext'],
-  3: ['ctrlTime', 'ctrlState', 'ctrlPause', 'ctrlSkip', 'ctrlEnd', 'ctrlHint'],
+  3: ['ctrlTime', 'ctrlState', 'ctrlPause', 'ctrlEnd', 'ctrlHint'],
   4: ['startTitle'],
   5: ['statTime', 'statTimeLabel', 'statSets', 'statSetsLabel', 'statKcal',
-    'statKcalLabel', 'statVolume', 'statSync'],
-  6: ['heartLabel', 'heartValue', 'heartRange'],
+    'statKcalLabel', 'statVolume', 'statVolumeLabel', 'statLine'],
+  6: ['heartLabel', 'heartValue', 'heartIcon', 'heartUnit', 'heartAxis',
+    'heartAxisL', 'heartAxisR', 'heartRange'],
   7: ['gapsTitle', 'gapsSub', 'gapsHint'],
-  8: ['logTitle', 'logHint'],
-  9: ['fixTitle', 'fixWLabel', 'fixWValue', 'fixRLabel', 'fixRValue',
+  8: ['logTitle', 'logSub', 'logHint'],
+  9: ['fixName', 'fixTitleBg', 'fixDivider', 'fixTitle', 'fixWLabel', 'fixWValue', 'fixRLabel', 'fixRValue',
     'fixWMinus', 'fixWPlus', 'fixRMinus', 'fixRPlus', 'fixRirLabel', 'fixSave', 'fixDelete'],
   10: ['tonTitle', 'tonSub', 'tonHint']
 }
@@ -755,6 +787,49 @@ function ekranCzysty(page) {
   // Zaslony przejscia juz nie ma - zmiana ekranu jest natychmiastowa.
   if (w.slide) bledy.push('wrocila zaslona przejscia')
   if (w.flash) bledy.push('wrocil pelnoekranowy blysk')
+  // Ekran serii ma czesci zalezne od fazy: licznik i czas serii na serii,
+  // odliczanie w przerwie, pigulka ciezaru i kropki bez pytania o zapas.
+  // Ktora z nich stoi, sprawdza osobna sekcja - tu wystarczy, ze poza
+  // ekranem serii nie stoi zadna, a na nim stoi to, co przystoi fazie.
+  const serie = widok === 0 && !page.state.message
+  const przerwa = serie && page.state.phase === 'rest'
+  const pytanie = przerwa && !!page.state.rirFor
+  const fazy = {
+    count: serie && !przerwa, timer: serie && !przerwa,
+    restTime: przerwa, restNext: przerwa,
+    loadBg: serie && !pytanie, exPos: serie && !pytanie,
+    load: serie && !pytanie, rirAsk: pytanie
+  }
+  Object.keys(fazy).forEach((klucz) => {
+    const widget = w[klucz]
+    if (!widget) { bledy.push('brak widgetu ' + klucz); return }
+    if (widget.visible !== fazy[klucz]) {
+      bledy.push(klucz + (fazy[klucz] ? ' schowany' : ' widoczny') + ' na ' + nazwa(widok))
+    }
+  })
+  ;(w.ring || []).forEach((arc, i) => {
+    if (!serie && arc.visible) bledy.push('luk ' + i + ' widoczny na ' + nazwa(widok))
+  })
+  // Ikony czasu i luk stref tetna to tablice - poza GRUPAMI, wiec osobno.
+  const tylkoNa = (lista, nr, opis) => (lista || []).forEach((x, i) => {
+    const chciane = widok === nr && !page.state.message
+    if (x.visible !== chciane) bledy.push(opis + ' ' + i + (chciane ? ' schowany' : ' widoczny') + ' na ' + nazwa(widok))
+  })
+  tylkoNa(w.statIcons, 5, 'ikona czasu')
+  tylkoNa(w.heartZones, 6, 'strefa tetna')
+  tylkoNa(w.logHead, 8, 'naglowek dziennika')
+  // Komorki i kreski wierszy stoja razem ze swoim wierszem, nigdy bez niego.
+  ;(w.logRows || []).forEach((row, i) => {
+    const zRzedu = [w.logLines[i]].concat(w.logCells[i])
+    zRzedu.forEach((x) => {
+      if (x.visible !== row.visible) bledy.push('wiersz ' + i + ' dziennika rozjechany na ' + nazwa(widok))
+    })
+    if (row.visible && widok !== 8) bledy.push('wiersz ' + i + ' dziennika widoczny na ' + nazwa(widok))
+  })
+  // Stan wysylki na ekranie czasu tylko wtedy, gdy cos czeka.
+  if (w.statSync && w.statSync.visible && !(widok === 5 && page.czeka() > 0)) {
+    bledy.push('stan wysylki widoczny bez potrzeby na ' + nazwa(widok))
+  }
   Object.keys(GRUPY).forEach((v) => {
     const chciane = Number(v) === widok && !page.state.message
     GRUPY[v].forEach((klucz) => {
@@ -766,6 +841,15 @@ function ekranCzysty(page) {
     })
   })
   return bledy
+}
+
+/**
+ * Komorki wiersza dziennika: numer, ciezar, powtorzenia, zapas. Dziennik
+ * jest tabela, wiec tekst wiersza nie siedzi juz w jednym przycisku.
+ */
+function komorki(page, row) {
+  const i = page.w.logRows.indexOf(row)
+  return (page.w.logCells[i] || []).map((c) => c.attrs.text)
 }
 
 const VIEW = {
@@ -960,18 +1044,195 @@ async function main() {
   ok('po domknieciu drugiego idzie na trzecie, nie wstecz',
     page.state.index === 2, 'index ' + page.state.index)
 
-  section('Pomijanie z ekranu sterowania')
+  section('Sterowanie: tylko wstrzymaj i zakoncz')
+  // Pomijanie zniknelo ze sterowania - do nastepnego cwiczenia prowadzi
+  // strzalka z boku tarczy, a niezrobione serie widac w podsumowaniu.
   phone.reset()
   page.startUnit(0)
   await flush(); await flush()
   handlers.gesture(GESTURE_RIGHT)
   ok('w prawo wchodzi sterowanie', page.state.view === VIEW.CONTROL, nazwa(page.state.view))
   ok('ekran sterowania czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+  ok('nie ma przycisku pominiecia', !page.w.ctrlSkip)
+  ok('dwa przyciski', page.visibleButtons().length === 2, page.visibleButtons().length + ' przyciskow')
+  // Gest w prawo na sterowaniu szedl do systemu, a ten zamykal aplikacje
+  // w srodku treningu. Wraca sie w obie strony.
+  ok('w prawo ze sterowania wraca na serie', handlers.gesture(GESTURE_RIGHT) === true &&
+    page.state.view === VIEW.SETS, nazwa(page.state.view))
+  handlers.gesture(GESTURE_RIGHT)
+  ok('w lewo tez', handlers.gesture(GESTURE_LEFT) === true &&
+    page.state.view === VIEW.SETS, nazwa(page.state.view))
+  // Zaden gest na zadnym ekranie treningu nie trafia do systemu.
+  {
+    const oddane = []
+    const widoki = Object.keys(VIEW).filter((k) => k !== 'START')
+    for (const k of widoki) {
+      for (const g of [GESTURE_LEFT, GESTURE_RIGHT, GESTURE_UP, GESTURE_DOWN]) {
+        page.state.view = VIEW[k]
+        page.applyVisibility()
+        if (handlers.gesture(g) !== true) oddane.push(k + ' ' + g)
+      }
+    }
+    ok('w trakcie treningu zaden gest nie idzie do systemu', oddane.length === 0, oddane.join(', '))
+    page.state.view = VIEW.SETS
+    page.applyVisibility()
+  }
+  handlers.gesture(GESTURE_RIGHT)
+  page.w.ctrlEnd.onClick()
+  ok('zakoncz prowadzi do podsumowania', page.state.view === VIEW.DONE, nazwa(page.state.view))
+  handlers.gesture(GESTURE_RIGHT)
 
-  page.w.ctrlSkip.onClick()
+  section('Gest zaczety na przycisku tez zmienia ekran')
+  // Przesuniecie zaczete na przycisku nie dochodzilo do systemu jako gest -
+  // dotyk nalezal do przycisku. Na ekranie serii przyciski zajmuja wiekszosc
+  // tarczy, wiec zmiana ekranu "czasami nie chciala przejsc".
+  {
+    // Palec: nacisniecie w `od`, ruch do `do_`, podniesienie.
+    const palec = (widget, od, do_) => {
+      const sl = widget.sluchacze || {}
+      if (sl.CLICK_DOWN) sl.CLICK_DOWN({ x: od[0], y: od[1] })
+      if (sl.MOVE) sl.MOVE({ x: do_[0], y: do_[1] })
+      if (sl.CLICK_UP) sl.CLICK_UP({ x: do_[0], y: do_[1] })
+      else if (widget.onClick) widget.onClick()
+    }
+    phone.reset()
+    page.startUnit(0)
+    await flush(); await flush()
+    jump(1000)
+    const nr = page.state.index
+
+    palec(page.w.next, [410, 240], [410, 150])
+    ok('w gore ze strzalki: ekran czasu', page.state.view === VIEW.STATS, nazwa(page.state.view))
+    ok('strzalka sie nie wykonala', page.state.index === nr, 'index ' + page.state.index)
+    // System zglasza ten sam ruch chwile pozniej - nie moze przewinac drugi raz.
+    ok('ten sam ruch od systemu polkniety', handlers.gesture(GESTURE_UP) === true &&
+      page.state.view === VIEW.STATS, nazwa(page.state.view))
+    jump(1000)
+    handlers.gesture(GESTURE_DOWN)
+    ok('pozniejszy gest systemowy dziala', page.state.view === VIEW.SETS, nazwa(page.state.view))
+
+    jump(1000)
+    palec(page.w.prev, [60, 240], [140, 244])
+    ok('w prawo ze strzalki: sterowanie', page.state.view === VIEW.CONTROL, nazwa(page.state.view))
+    jump(1000)
+    handlers.gesture(GESTURE_LEFT)
+
+    jump(1000)
+    palec(page.w.next, [410, 240], [414, 246])
+    ok('drgniecie palca to nadal nacisniecie', page.state.index === nr + 1,
+      'index ' + page.state.index)
+    page.move(-1)
+
+    jump(1000)
+    const serie = page.shownDone(page.current())
+    palec(page.w.count, [240, 230], [248, 236])
+    ok('licznik przyjmuje serie mimo drgniecia', page.shownDone(page.current()) === serie + 1,
+      serie + ' -> ' + page.shownDone(page.current()))
+    ok('jest przerwa', page.state.phase === 'rest', page.state.phase)
+
+    jump(1000)
+    palec(page.w.restTime, [240, 220], [240, 320])
+    ok('w dol z odliczania: dziennik', page.state.view === VIEW.LOG, nazwa(page.state.view))
+    ok('odliczanie nie zaczelo serii', page.state.phase === 'rest', page.state.phase)
+
+    jump(1000)
+    palec(page.w.logCells[0][1], [180, 160], [300, 166])
+    ok('w prawo z tabeli dziennika: serie', page.state.view === VIEW.SETS, nazwa(page.state.view))
+    ok('poprawka sie nie otworzyla', !page.state.fix || page.state.view !== VIEW.FIX)
+    jump(1000)
+
+    // Na zegarku wiersz nie zawsze dostaje ruch palca: system oddaje gest
+    // dopiero po podniesieniu, a wiersz widzi samo dotkniecie. Poprawka
+    // migala wtedy na chwile, zanim gest zabral na ekran glowny.
+    const pokazane = []
+    const showView = page.showView
+    page.showView = function (v) { pokazane.push(v); return showView.call(this, v) }
+    const kom = page.w.logCells[0][2]
+    const doDziennika = () => {
+      page.state.logAt = 0
+      page.showView(VIEW.LOG)
+      jump(1000)
+      pokazane.length = 0
+    }
+    doDziennika()
+    kom.sluchacze.CLICK_DOWN({ x: 300, y: 160 })
+    kom.sluchacze.CLICK_UP({})
+    handlers.gesture(GESTURE_UP)
+    handlers.puscKliki()
+    ok('gest od systemu po dotknieciu wiersza nie pokazuje poprawki',
+      pokazane.indexOf(VIEW.FIX) < 0 && page.state.view === VIEW.SETS,
+      pokazane.map(nazwa).join(' > '))
+
+    doDziennika()
+    kom.sluchacze.CLICK_DOWN({ x: 300, y: 160 })
+    handlers.gesture(GESTURE_RIGHT)
+    kom.sluchacze.CLICK_UP({})
+    handlers.puscKliki()
+    ok('gest przed podniesieniem palca tez nie',
+      pokazane.indexOf(VIEW.FIX) < 0 && page.state.view === VIEW.SETS,
+      pokazane.map(nazwa).join(' > '))
+
+    doDziennika()
+    kom.sluchacze.CLICK_DOWN({ x: 300, y: 160 })
+    kom.sluchacze.CLICK_UP({ x: 300, y: 160 })
+    handlers.puscKliki()
+    ok('zwykle dotkniecie wiersza dalej otwiera poprawke', page.state.view === VIEW.FIX,
+      nazwa(page.state.view))
+    page.showView = showView
+    handlers.gesture(GESTURE_RIGHT)
+    jump(1000)
+  }
+
+  section('Ekran serii: pierscien, strzalki na bokach, odliczanie przerwy')
+  phone.reset()
+  page.startUnit(0)
   await flush(); await flush()
-  ok('po pominieciu jest na seriach', page.state.view === VIEW.SETS, nazwa(page.state.view))
-  ok('ekran po pominieciu czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+  {
+    const ex = page.current()
+    ok('na serii licznik to sama liczba', page.w.count.attrs.text === '1 / ' + ex.sets,
+      page.w.count.attrs.text)
+    ok('nad liczba slowo SERIA', page.w.phase.attrs.text === 'SERIA', page.w.phase.attrs.text)
+    const luki = page.w.ring.filter((a) => a.visible).length
+    ok('luk na kazda serie', luki === Math.min(10, ex.sets), luki + ' lukow, serii ' + ex.sets)
+    ok('strzalki na bokach tarczy', page.w.prev.attrs.x < 100 && page.w.next.attrs.x > 380,
+      page.w.prev.attrs.x + ', ' + page.w.next.attrs.x)
+    ok('strzalki bez nazw cwiczen', page.w.prev.attrs.text === '‹' && page.w.next.attrs.text === '›')
+
+    page.press()
+    await flush()
+    ok('po serii przerwa', page.state.phase === 'rest', page.state.phase)
+    ok('w przerwie licznik ustepuje odliczaniu',
+      page.w.count.visible === false && page.w.restTime.visible === true)
+    ok('w przerwie strzalki zostaja', page.w.prev.visible && page.w.next.visible)
+    ok('w przerwie pytanie o zapas', page.w.rirRow.every((b) => b.visible))
+    ok('w przerwie dwa luki', page.w.ring.filter((a) => a.visible).length === 2,
+      page.w.ring.filter((a) => a.visible).length + ' lukow')
+    ok('ekran przerwy czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+
+    const przedPrzyciskami = page.visibleButtons().map((b) => b.writes)
+    page.paintClock()
+    ok('tyk przerwy nie rusza przyciskow',
+      page.visibleButtons().every((b, i) => b.writes === przedPrzyciskami[i]))
+
+    // Luk przerwy ubywa zgodnie ze wskazowkami: koniec stoi na dwunastej,
+    // poczatek idzie za czasem.
+    {
+      const lukPrzerwy = page.w.ring[1].attrs
+      const przed = lukPrzerwy.start_angle
+      jump(30000)
+      page.paintClock()
+      ok('luk przerwy konczy sie na dwunastej', page.w.ring[1].attrs.end_angle === 270,
+        String(page.w.ring[1].attrs.end_angle))
+      ok('luk przerwy ubywa od poczatku, w prawo', page.w.ring[1].attrs.start_angle > przed,
+        przed + ' -> ' + page.w.ring[1].attrs.start_angle)
+    }
+
+    // Dotkniecie odliczania zaczyna nastepna serie, jak dotkniecie licznika.
+    page.w.restTime.onClick()
+    ok('dotkniecie odliczania konczy przerwe', page.state.phase === 'set', page.state.phase)
+    ok('licznik wrocil', page.w.count.visible === true && page.w.restTime.visible === false)
+    ok('ekran serii czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+  }
 
   section('Tykanie zegara nie przerysowuje przyciskow')
   // setBtn wysyla komplet wlasciwosci, zeby przycisk wrocil po zaslonie.
@@ -1050,7 +1311,7 @@ async function main() {
   page.applyVisibility()
   page.paintGaps()
   const duzo = page.w.gapsRows.filter((r) => r.visible)
-  ok('nie wiecej wierszy niz miejsca', duzo.length <= 6, duzo.length + ' wierszy')
+  ok('nie wiecej wierszy niz miejsca', duzo.length <= page.w.gapsRows.length, duzo.length + ' wierszy')
   ok('ostatni wiersz mowi ile jeszcze',
     /i jeszcze/.test(duzo[duzo.length - 1].attrs.text), duzo[duzo.length - 1].attrs.text)
   phone.setDuzoCwiczen(false)
@@ -1090,16 +1351,16 @@ async function main() {
   ok('krotka nazwa bez przewijania', page.w.name.attrs.w <= 360, 'szerokosc ' + page.w.name.attrs.w)
 
   section('Powtorzenia na glownym ekranie')
-  ok('widac podpisane powtorzenia', /pow\. \d/.test(page.w.load.attrs.text),
-    page.w.load.attrs.text)
+  ok('widac podpisane powtorzenia', /\d+ pow\./.test(page.w.load.attrs.text),
+    page.w.rirAsk.attrs.text)
   page.stepReps(3)
   page.paintSets()
   ok('pokazuje liczbe ustawiona w edycji',
-    page.w.load.attrs.text.indexOf('pow. ' + page.state.reps) >= 0,
+    page.w.load.attrs.text.indexOf(page.state.reps + ' pow.') >= 0,
     page.w.load.attrs.text + ' przy reps ' + page.state.reps)
   ok('nie ma juz surowego x ani celu',
     !/ x /.test(page.w.load.attrs.text) && !/cel/.test(page.w.load.attrs.text),
-    page.w.load.attrs.text)
+    page.w.rirAsk.attrs.text)
 
   section('Zapis z ekranu ciezaru')
   phone.reset()
@@ -1147,7 +1408,8 @@ async function main() {
   ok('w gore: czas treningu', page.state.view === VIEW.STATS, nazwa(page.state.view))
   handlers.gesture(GESTURE_UP)
   ok('w gore: tetno', page.state.view === VIEW.HEART, nazwa(page.state.view))
-  ok('wyzej juz nic', handlers.gesture(GESTURE_UP) === false)
+  ok('wyzej juz nic - gest zostaje u nas', handlers.gesture(GESTURE_UP) === true &&
+    page.state.view === VIEW.HEART, nazwa(page.state.view))
   handlers.gesture(GESTURE_DOWN)
   handlers.gesture(GESTURE_DOWN)
   ok('w dol wraca na serie', page.state.view === VIEW.SETS, nazwa(page.state.view))
@@ -1315,9 +1577,11 @@ async function main() {
   page.state.view = VIEW.HEART
   page.paintHeart()
   ok('podpis mowi o sesji, nie o oknie',
-    /70-150/.test(page.w.heartRange.attrs.text), page.w.heartRange.attrs.text)
-  ok('podpis podaje dlugosc okna',
-    /wykres/.test(page.w.heartRange.attrs.text), page.w.heartRange.attrs.text)
+    /min 70 .*max 150/.test(page.w.heartRange.attrs.text), page.w.heartRange.attrs.text)
+  // Srednia tez z sesji: 70, 150, 95, 140, 120 to 115, a okno 130-140 dawaloby 135.
+  ok('srednia z calej sesji', /śr 115/.test(page.w.heartRange.attrs.text), page.w.heartRange.attrs.text)
+  ok('os wykresu podaje dlugosc okna', page.w.heartAxisL.attrs.text === '-10 s',
+    page.w.heartAxisL.attrs.text)
 
   section('Kalorie trafiaja na ekran')
   // Gole `NaN` zamiast wypisania liczby przeszlo przez build bez slowa,
@@ -1340,8 +1604,51 @@ async function main() {
     'jest ' + page.state.kcal)
   ok('liczba jest na ekranie', page.w.statKcal.attrs.text === '120',
     JSON.stringify(page.w.statKcal.attrs.text))
-  ok('podpis zwyczajny', page.w.statKcalLabel.attrs.text === 'Kalorie',
+  ok('podpis zwyczajny', page.w.statKcalLabel.attrs.text === 'kcal',
     page.w.statKcalLabel.attrs.text)
+  // Podpis dosuniety do liczby, nie stoi w stalym miejscu.
+  ok('podpis kalorii za liczba', page.w.statKcalLabel.attrs.x > page.w.statKcal.attrs.x,
+    page.w.statKcalLabel.attrs.x + ' vs ' + page.w.statKcal.attrs.x)
+  // Wiersz jako calosc na srodku tarczy: od lewej krawedzi ikony do prawej
+  // krawedzi podpisu tyle samo z obu stron.
+  {
+    const r = page.w.statRows[0]
+    const lewo = r.ikona.attrs.x
+    const prawo = r.podpis.attrs.x + r.podpis.attrs.w - 6
+    ok('wiersz kalorii na srodku tarczy', Math.abs((lewo + prawo) / 2 - 240) <= 2,
+      lewo + '..' + prawo)
+    ok('ikona to obrazek', r.ikona.typ === 'IMG' || /stat-kcal/.test(r.ikona.attrs.src || ''),
+      String(r.ikona.attrs.src))
+  }
+  ok('bez kolejki nie ma napisu o wysylce', page.czeka() > 0 || page.w.statSync.visible === false,
+    'czeka ' + page.czeka())
+
+  section('Luk stref tetna pisze tylko przy zmianie strefy')
+  page.state.zones = { easy: 100, aerobic: 120, tempo: 140, anaerobic: 160 }
+  page.state.view = VIEW.HEART
+  page.applyVisibility()
+  page.state.hr = 145
+  page.paintHeart()
+  ok('nazwa strefy wersalikami w jej kolorze', page.w.heartLabel.attrs.text === 'BEZTLENOWA',
+    page.w.heartLabel.attrs.text)
+  ok('biezaca strefa jasna', page.w.heartZones[3].attrs.color === 0xffa23a,
+    String(page.w.heartZones[3].attrs.color))
+  ok('pozostale przygaszone', page.w.heartZones[0].attrs.color !== 0x8ab4f8)
+  const zapisyStref = () => page.w.heartZones.reduce((n, a) => n + (a.writes || 0), 0)
+  const przedStrefa = zapisyStref()
+  page.state.hr = 150
+  page.paintHeartValue()
+  page.state.hr = 152
+  page.paintHeartValue()
+  ok('tetno w tej samej strefie nie rusza luku', zapisyStref() === przedStrefa,
+    (zapisyStref() - przedStrefa) + ' zapisow')
+  page.state.hr = 165
+  page.paintHeartValue()
+  ok('nowa strefa przemalowuje luk', zapisyStref() > przedStrefa)
+  ok('ekran tetna czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+  page.state.zones = null
+  page.state.view = VIEW.STATS
+  page.applyVisibility()
 
   section('Kalorie liczone z tetna')
   // Czujnik dzienny napedzaja kroki i przy sztandze pokazuje prawie zero.
@@ -1426,8 +1733,8 @@ async function main() {
   const wiersze = page.w.logRows.filter((r) => r.visible)
   ok('kazda seria ma swoj wiersz', wiersze.length === 2, wiersze.length + ' wierszy')
   ok('wiersz pokazuje numer, ciezar i powtorzenia',
-    /^1\./.test(wiersze[0].attrs.text) && /x \d/.test(wiersze[0].attrs.text),
-    wiersze[0].attrs.text)
+    komorki(page, wiersze[0])[0] === '1' && /^\d+$/.test(komorki(page, wiersze[0])[2]),
+    komorki(page, wiersze[0]).join(' | '))
 
   section('Poprawka trafia w te wlasciwa serie')
   // Mylka w pierwszej serii: bylo wiecej powtorzen niz zapisalem.
@@ -1503,7 +1810,7 @@ async function main() {
   const ogon = 7 - ile
   const okno1 = page.w.logRows.filter((r) => r.visible)
   ok('widac pelne okno', okno1.length === ile, okno1.length + ' z ' + ile)
-  ok('numery od pierwszego', /^1\./.test(okno1[0].attrs.text), okno1[0].attrs.text)
+  ok('numery od pierwszego', komorki(page, okno1[0])[0] === '1', komorki(page, okno1[0]).join(' | '))
   ok('podpis mowi, ile zostalo',
     page.w.logHint.attrs.text.indexOf('1-' + ile + ' z 7') === 0,
     page.w.logHint.attrs.text)
@@ -1516,12 +1823,12 @@ async function main() {
   // pelen komplet wierszy, a nie dwa wiersze i reszta pustych miejsc.
   ok('widac ogon listy, bez dziur', okno2.length === ile, okno2.length + ' wierszy')
   ok('i numery sie zgadzaja',
-    okno2[0].attrs.text.indexOf((ogon + 1) + '.') === 0, okno2[0].attrs.text)
+    komorki(page, okno2[0])[0] === String(ogon + 1), komorki(page, okno2[0]).join(' | '))
   ok('podpis tez',
     page.w.logHint.attrs.text.indexOf((ogon + 1) + '-7 z 7') === 0,
     page.w.logHint.attrs.text)
   ok('ostatnia seria wreszcie widoczna',
-    okno2[ile - 1].attrs.text.indexOf('7.') === 0, okno2[ile - 1].attrs.text)
+    komorki(page, okno2[ile - 1])[0] === '7', komorki(page, okno2[ile - 1]).join(' | '))
 
   // Numer serii w poprawce musi byc prawdziwy, nie numerem wiersza:
   // po przewinieciu pierwszy wiersz nie jest pierwsza seria.
@@ -1542,6 +1849,52 @@ async function main() {
   ok('w gore nadal wychodzi z dziennika', page.state.view === VIEW.SETS,
     nazwa(page.state.view))
 
+  section('Dziennik jako tabela')
+  page.state.view = VIEW.LOG
+  // Okno na koncu listy - tam stoi najnowsza seria.
+  page.state.logAt = 99
+  page.applyVisibility()
+  page.paintLog()
+  {
+    const widoczne = page.w.logRows.filter((r) => r.visible)
+    const ostatni = widoczne[widoczne.length - 1]
+    ok('naglowek kolumn', page.w.logHead.map((h) => h.attrs.text).join(' ').indexOf('POW.') > 0,
+      page.w.logHead.map((h) => h.attrs.text).join(' '))
+    ok('podsumowanie pod nazwa', /seri/.test(page.w.logSub.attrs.text || ''), page.w.logSub.attrs.text)
+    ok('najnowsza seria podswietlona', ostatni.tlo !== 0x000000 &&
+      widoczne.slice(0, -1).every((r) => r.tlo === 0x000000 || r.tlo === undefined),
+      widoczne.map((r) => r.tlo).join(','))
+    const pierwsza = page.logRows()[page.logFrom()]
+    page.w.logCells[0][1].onClick()
+    ok('dotkniecie liczby otwiera poprawke', page.state.view === VIEW.FIX &&
+      page.state.fix && page.state.fix.id === pierwsza.id, nazwa(page.state.view))
+    ok('poprawka podpisana numerem i liczba serii',
+      /^SERIA [0-9]+ Z \d+$/.test(page.w.fixTitle.attrs.text), page.w.fixTitle.attrs.text)
+    ok('ekran poprawki czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+    handlers.gesture(GESTURE_RIGHT)
+  }
+
+  section('Wszystko, w co sie celuje palcem, jest duze')
+  // Zegarek jest maly, a palec nie: przyciski 56 na 40 i wiersze po 42
+  // trafialo sie obok. Kazde pole dotyku ma co najmniej 50 w kazda strone.
+  {
+    const male = []
+    const przed = page.state.view
+    for (const k of Object.keys(VIEW)) {
+      page.state.view = VIEW[k]
+      page.applyVisibility()
+      const pola = page.visibleButtons().concat(page.state.view === VIEW.LOG
+        ? page.w.logRows.filter((r) => r.visible) : [])
+      pola.forEach((b) => {
+        const a = b.attrs
+        if (Math.min(a.w, a.h) < 50) male.push(k + ' ' + (a.text || '') + ' ' + a.w + 'x' + a.h)
+      })
+    }
+    ok('zadne pole dotyku ponizej 50 pikseli', male.length === 0, male.join(', '))
+    page.state.view = przed
+    page.applyVisibility()
+  }
+
   section('Wiersze dziennika mieszcza sie w tarczy')
   // Okragly ekran: wiersz na 50 i szerokosci 380 wychodzil rogami poza
   // okrag i wygladal na przyciety, bo byl. Sprawdzamy kazdy rog.
@@ -1556,8 +1909,9 @@ async function main() {
   section('Ciezar i powtorzenia stoja na srodku tarczy')
   // Blok zaczynal sie na 56 i konczyl na 316: 56 pikseli nad nim, 164 pod.
   // Na okraglej tarczy widac to od razu, bo dol swieci pustka.
-  const blokGora = page.w.wLabel.attrs.y
-  const blokDol = page.w.rMinus.attrs.y + page.w.rMinus.attrs.h
+  // Blokiem sa teraz dwie karty - ich krawedzie, nie napisy w srodku.
+  const blokGora = page.w.editCardW.attrs.y
+  const blokDol = page.w.editCardR.attrs.y + page.w.editCardR.attrs.h
   ok('tyle samo miejsca nad blokiem co pod nim', blokGora === 480 - blokDol,
     blokGora + ' nad, ' + (480 - blokDol) + ' pod')
   // Liczba w pionie na srodku swoich przyciskow, nie dwa piksele nizej.
@@ -1591,9 +1945,12 @@ async function main() {
   page.state.index = 0
   page.state.phase = 'rest'
   ok('po serii, w przerwie, pytamy o zapas', page.askingRir() === true)
-  ok('strzalki ustepuja miejsca', page.w.prev.visible === false)
+  // Strzalki stoja na bokach tarczy, a zapas zajmuje dol - nie wypiera ich.
+  ok('strzalki zostaja na bokach', page.w.prev.visible === true && page.w.next.visible === true)
   ok('cztery przyciski zapasu', page.w.rirRow.filter((b) => b.visible).length === 4)
-  ok('podpis pyta wprost', /zosta/.test(page.w.load.attrs.text), page.w.load.attrs.text)
+  ok('podpis pyta wprost, nad przyciskami', page.w.rirAsk.visible === true &&
+    /zosta/.test(page.w.rirAsk.attrs.text) && page.w.rirAsk.attrs.y + page.w.rirAsk.attrs.h <= page.w.rirRow[0].attrs.y,
+    page.w.rirAsk.attrs.text + ' y' + page.w.rirAsk.attrs.y)
 
   page.w.rirRow[2].onClick()
   await osusz()
@@ -1608,8 +1965,8 @@ async function main() {
   page.state.view = VIEW.LOG
   page.applyVisibility()
   page.paintLog()
-  ok('wiersz pokazuje RIR', /RIR 2/.test(page.w.logRows[0].attrs.text),
-    page.w.logRows[0].attrs.text)
+  ok('wiersz pokazuje zapas w swojej kolumnie', komorki(page, page.w.logRows[0])[3] === '2',
+    komorki(page, page.w.logRows[0]).join(' | '))
 
   section('Pominiecie zapasu niczego nie psuje')
   await zapiszSerie(page)
@@ -1637,9 +1994,9 @@ async function main() {
   ok('cztery przyciski zapasu na ekranie',
     page.w.rirRow.filter((b) => b.visible).length === 4,
     page.w.rirRow.filter((b) => b.visible).length + ' widocznych')
-  ok('strzalki ustapily od razu', page.w.prev.visible === false)
-  ok('podpis pyta wprost, bez telefonu', /zosta/.test(page.w.load.attrs.text),
-    page.w.load.attrs.text)
+  ok('strzalki zostaja od razu', page.w.prev.visible === true)
+  ok('podpis pyta wprost, bez telefonu', page.w.rirAsk.visible === true && /zosta/.test(page.w.rirAsk.attrs.text),
+    page.w.rirAsk.attrs.text)
   phone.setGlucha(false)
 
   section('Bledy zgloszone po treningu 21.10')
@@ -2079,7 +2436,7 @@ async function main() {
   page.applyVisibility()
   ok('rzad zapasu juz na ekranie', page.w.rirRow.filter((b) => b.visible).length === 4,
     String(page.w.rirRow.filter((b) => b.visible).length))
-  ok('strzalki ustapily', page.w.prev.visible === false)
+  ok('strzalki zostaja', page.w.prev.visible === true)
 
   // Odpowiedz tez idzie bez telefonu - laduje w kolejce.
   page.w.rirRow[1].onClick()
@@ -2149,7 +2506,7 @@ async function main() {
   const serieNaStarcie = page.logRows().length
   page.w.fixDelete.onClick()
   ok('pierwsze nacisniecie tylko pyta', page.state.fixConfirm === true)
-  ok('podpis sie zmienil', /pewno/.test(page.w.fixDelete.props.text || ''),
+  ok('podpis sie zmienil', /pewno/i.test(page.w.fixDelete.props.text || ''),
     page.w.fixDelete.props.text)
   ok('nic jeszcze nie skasowane', page.state.view === VIEW.FIX, nazwa(page.state.view))
 
@@ -2169,7 +2526,7 @@ async function main() {
   handlers.zegary.filter((z) => z.zywy && z.ms === 4000)
     .forEach((z) => { z.zywy = false; z.fn() })
   ok('po chwili sam sie wycofuje', page.state.fixConfirm === false)
-  ok('i podpis wraca', page.w.fixDelete.props.text === 'usuń', page.w.fixDelete.props.text)
+  ok('i podpis wraca', page.w.fixDelete.props.text === 'USUŃ', page.w.fixDelete.props.text)
   handlers.gesture(GESTURE_DOWN)
   page.state.view = VIEW.SETS
   page.applyVisibility()
@@ -2358,15 +2715,15 @@ async function main() {
   page.paintName('Przysiad')
   ok('krotka nazwa wysrodkowana', page.w.name.attrs.align_h === 'CH',
     String(page.w.name.attrs.align_h))
-  ok('krotka nazwa w pudelku na caly ekran', page.w.name.attrs.w === 356,
+  ok('krotka nazwa w pudelku na cala szerokosc pola', page.w.name.attrs.w === 280,
     String(page.w.name.attrs.w))
   ok('krotka nazwa bez zadnej petli', petleNazwy() === 0, petleNazwy() + ' petli')
 
-  // Nazwa, ktora po staremu by jezdzila: 30 znakow razy 12 to 360, czyli
-  // ponad pudelko - a naprawde zajmuje 270 pikseli i miesci sie z zapasem.
-  const mieszczaca = 'Uginanie supinowane hantli stojac'
-  ok('po staremu uznana za za dluga', mieszczaca.length * 12 > 356,
-    String(mieszczaca.length * 12))
+  // Nazwa, ktora po staremu by jezdzila: 26 znakow razy 11 to 286, czyli
+  // ponad pudelko 280 - a naprawde zajmuje mniej i miesci sie z zapasem.
+  const mieszczaca = 'Uginanie supinowane hantli'
+  ok('po staremu uznana za za dluga', mieszczaca.length * 11 > 280,
+    String(mieszczaca.length * 11))
   page.paintName(mieszczaca)
   ok('zmierzona naprawde - miesci sie', page.w.name.attrs.align_h === 'CH',
     String(page.w.name.attrs.align_h))
@@ -3049,7 +3406,7 @@ async function main() {
   q.saveFix()
   ok('dziennik pokazuje poprawke od razu', (q.logRows()[0] || {}).reps === 10,
     JSON.stringify(q.logRows()[0]))
-  ok('wiersz dziennika tez', /x 10/.test(q.w.logRows[0].attrs.text || ''), q.w.logRows[0].attrs.text)
+  ok('wiersz dziennika tez', komorki(q, q.w.logRows[0])[2] === '10', komorki(q, q.w.logRows[0]).join(' | '))
   await cichoW(h)
   phone.setGlucha(false)
   await suszW(q, h)
@@ -3293,13 +3650,23 @@ async function main() {
   for (let i = 0; i < 5; i++) q.onHeart()
   ok('piec odczytow tego samego tetna - zero zapisow', wszystkieZapisy() === przedTetnem,
     (wszystkieZapisy() - przedTetnem) + ' zapisow')
+  // Na przerwie dochodzi lyk pierscienia, ale on przesuwa sie co piec
+  // sekund - w pieciu sekundach najwyzej raz. Wiecej znaczy, ze luk pisze
+  // przy kazdym tyknieciu.
+  const lukiZapisy = () => q.w.ring.reduce((m, y) => m + (y.writes || 0), 0)
+  const lukiPrzed = lukiZapisy()
+  const naPrzerwie = q.resting()
   przedTetnem = wszystkieZapisy()
   for (let i = 0; i < 5; i++) {
     jump(1000)
     q.paintClock()
   }
-  ok('piec sekund zegara - po jednym zapisie na sekunde', wszystkieZapisy() - przedTetnem <= 5,
-    (wszystkieZapisy() - przedTetnem) + ' zapisow')
+  const luki = lukiZapisy() - lukiPrzed
+  ok('piec sekund zegara - po jednym zapisie na sekunde',
+    wszystkieZapisy() - przedTetnem - luki <= 5,
+    (wszystkieZapisy() - przedTetnem - luki) + ' zapisow poza pierscieniem')
+  ok('pierscien w pieciu sekundach najwyzej raz', luki <= (naPrzerwie ? 1 : 0),
+    luki + ' zapisow, przerwa: ' + naPrzerwie)
 
   section('Dluga nazwa przejezdza raz')
   // Animacja nazwy chodzila w kolko przez caly czas cwiczenia - a dluga

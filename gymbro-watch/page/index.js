@@ -43,6 +43,7 @@ const ZONE_AEROBIC = 0x5bd68a
 const ZONE_TEMPO = 0xf2d24b
 const ZONE_ANAEROBIC = 0xffa23a
 const ZONE_MAX = 0xff5c5c
+const ZONE_COLORS = [ZONE_EASY, ZONE_AEROBIC, ZONE_TEMPO, ZONE_ANAEROBIC, ZONE_MAX]
 
 const VIEW_SETS = 0
 const VIEW_EDIT = 1
@@ -71,9 +72,15 @@ const VIEW_TONS = 10
  * rogi górnego wychodziły poza okrąg tarczy i wyglądały na przycięte.
  */
 const LOG_ROWS = 4
-const LOG_ROW_H = 72
-const LOG_ROW_GAP = 78
-const LOG_TOP = 76
+const LOG_ROW_H = 60
+const LOG_ROW_GAP = 62
+const LOG_TOP = 126
+const LOG_X = 74
+const LOG_W = 332
+// Kolumny tabeli: numer, ciężar, powtórzenia, zapas - [x, szerokość].
+const LOG_COLS = [[74, 44], [118, 138], [256, 70], [326, 80]]
+const LOG_NEWEST = 0x0f2238
+const RED = 0xff7a7a
 
 /**
  * Początek bloku z ciężarem i powtórzeniami.
@@ -81,10 +88,43 @@ const LOG_TOP = 76
  * Blok ma 260 pikseli wysokości, ekran 480 - stąd 110 marginesu z góry
  * i tyle samo z dołu.
  */
-const EDIT_TOP = 110
+// Wiersz ekranu czasu: ikona, liczba, podpis - razem na środku tarczy.
+const STAT_ROW_H = 64
+const STAT_ICON = 56
+const STAT_GAP = 14
+const STAT_NUM_SIZE = 36
+const STAT_LABEL_SIZE = 18
+// Przesunięcie palca, od którego dotyk na przycisku jest gestem, a nie
+// naciśnięciem. Mniej niż szerokość opuszki - żeby drgnięcie przy
+// naciskaniu nie zmieniało ekranu.
+const SWIPE_PX = 36
+// Ten sam ruch palca potrafi przyjść dwa razy: z przycisku, na którym się
+// zaczął, i od systemu. Drugi w tym oknie jest połykany.
+const GEST_DEDUP_MS = 450
+// Po geście z przycisku jego naciśnięcie nie może się już wykonać.
+const ZJAZD_MS = 300
+// Dotknięcie pola (wiersz dziennika, odliczanie przerwy) czeka chwilę,
+// zanim zadziała. Przesunięcie zaczęte na wierszu dziennika przychodziło
+// od systemu jako gest dopiero po podniesieniu palca - a wtedy wiersz
+// zdążył już otworzyć poprawkę, która migała, zanim gest zabrał ekran
+// główny. Gest w tym czasie odwołuje dotknięcie.
+const KLIK_ZWLOKA_MS = 190
+// Dotknięcie tuż po geście to koniec tego samego ruchu palca.
+const KLIK_PO_GESCIE_MS = 250
+const EDIT_TOP = 108
+const EDIT_CARD_H = 124
+const EDIT_CARD_GAP = 16
+const CARD_COLOR = 0x11161a
+const TEAL = 0x37d6c0
+// Strefy na łuku u góry ekranu tętna: od 10 do 2 godziny, w kątach ARC
+// (zero na trzeciej, zgodnie ze wskazówkami).
+const ZONE_ARC_FROM = -152
+const ZONE_ARC_STEP = 24.8
+const HEART_NUM_SIZE = 96
+const HEART_DIGIT_W = 53
 
 // Tyle nazw mieści się na ekranie braków; reszta idzie w "i jeszcze N".
-const GAP_ROWS = 6
+const GAP_ROWS = 4
 const TON_ROWS = 6
 
 /**
@@ -101,34 +141,34 @@ const PHASE_REST = 'rest'
 
 // Wykres tętna: tyle słupków mieści się w okręgu na wysokości podstawy.
 const BARS = 24
-const BAR_W = 13
-const BAR_GAP = 2
-const BAR_X0 = 61
-const BAR_BASE = 360
-const BAR_MAX_H = 130
+const BAR_W = 8
+const BAR_GAP = 4
+const BAR_X0 = 98
+const BAR_BASE = 352
+const BAR_MAX_H = 92
 const BAR_EVERY_MS = 5000
 
 // Przejscie miedzy widokami: animuje je system, nie pętla w JS.
 // Tętno: rozmiar liczby i przybliżona szerokość cyfry w tym foncie.
 // Szerokości tekstu nie da się tu zmierzyć, więc serce ustawiamy
 // z wyliczenia - pomyłka przesuwa odstęp, nie samą liczbę.
-const HR_SIZE = 92
-const HR_DIGIT_W = 50
-const HR_GAP = 18
-const HR_ICON_W = 60
+const HR_SIZE = 64
+const HR_DIGIT_W = 35
+const HR_GAP = 12
+const HR_ICON_W = 44
 
 // Wibracja trwa sekunde, wiec blokujemy na troche dluzej.
 // Nazwa ćwiczenia: pole, przybliżona szerokość znaku i postój na końcach
 // przewijania, żeby dało się przeczytać początek i koniec.
-const NAME_X = 62
-const NAME_Y = 168
-const NAME_H = 40
-const NAME_BOX_W = 356
+const NAME_X = 100
+const NAME_Y = 132
+const NAME_H = 34
+const NAME_BOX_W = 280
 // Rozmiar pisma nazwy - potrzebny też do zmierzenia jej szerokości.
-const NAME_SIZE = 23
+const NAME_SIZE = 21
 // Zapasowa miara, gdy system nie umie zmierzyć napisu. Z grubsza i w górę,
 // bo lepiej przewinąć nazwę, która by się zmieściła, niż uciąć tę, która nie.
-const NAME_CHAR_W = 12
+const NAME_CHAR_W = 11
 const NAME_HOLD_MS = 1100
 
 // Ile czekamy na telefon, zanim uznamy, że nikt nie słucha. Droga wiedzie
@@ -184,11 +224,26 @@ const WYSYLKA_MS = 2500
 // poprawic albo opisac zapasem z ekranu, ktory je pokazuje.
 const ACKED_MAX = 40
 
+// Pierścień serii na krawędzi tarczy. Odcinków tyle, ile serii, najwyżej
+// dziesięć - więcej i tak nie da się odróżnić na obwodzie. Kąt 0 to
+// godzina trzecia, rośnie zgodnie z ruchem wskazówek, więc góra to -90.
+const RING_MAX = 10
+const RING_XY = 7
+const RING_WH = 466
+const RING_LINE = 12
+const RING_GAP_DEG = 4
+const RING_DONE = 0x37d6c0
+const RING_TODO = 0x2a3036
+// Przycisk serii na środku i strzałki na bokach tarczy.
+const COUNT_SIZE = 62
+const COUNT_WORD_SIZE = 30
+const SIDE_COLOR = 0x1c2024
+
 // Rząd przycisków zapasu powtórzeń. Mieści się w okręgu na tej wysokości.
 const RIR_X0 = 88
-const RIR_Y = 374
+const RIR_Y = 330
 const RIR_W = 70
-const RIR_H = 50
+const RIR_H = 70
 const RIR_GAP = 8
 
 // Najdluzsza przerwa miedzy probkami, jaka jeszcze doliczamy do spalania.
@@ -243,6 +298,8 @@ Page({
     sessionId: null,
     hrMin: 0,
     hrMax: 0,
+    hrSum: 0,
+    hrCnt: 0,
     kcalSeen: false,
     kcalFail: false,
     kcalTotal: 0,
@@ -570,6 +627,8 @@ Page({
         phaseSince: this.state.phaseSince,
         hrMin: this.state.hrMin,
         hrMax: this.state.hrMax,
+        hrSum: this.state.hrSum,
+        hrCnt: this.state.hrCnt,
         kcalBase: this.state.kcalBase,
         burnKcal: this.state.burnKcal,
         // Współczynniki spalania, nie tylko sam licznik. Przychodzą
@@ -664,6 +723,8 @@ Page({
     this.state.phaseSince = zapis.phaseSince || Date.now()
     this.state.hrMin = zapis.hrMin || 0
     this.state.hrMax = zapis.hrMax || 0
+    this.state.hrSum = zapis.hrSum || 0
+    this.state.hrCnt = zapis.hrCnt || 0
     this.state.kcalBase = zapis.kcalBase === undefined ? null : zapis.kcalBase
     this.state.burnKcal = zapis.burnKcal || 0
     // Tylko dodaje, nigdy nie zabiera: wspolczynniki moga pochodzic z zapisu
@@ -739,8 +800,9 @@ Page({
     // po dojechaniu kolejki nalezala sie tylko temu, kto zdazyl zobaczyc, jak
     // rosnie - a przy zaleglosci z nocy nikt tego nie widzial.
     this.state.syncWas = this.czeka()
-    onGesture({
-      callback: (event) => {
+    // Obsługa gestu jako metoda: woła ją system, ale też przyciski i pola
+    // dotyku, na których palec zaczął ruch (patrz [sledzPalec]).
+    this.gest = (event) => {
         this.dotyk()
         const view = this.state.view
         const col = COLUMN.indexOf(view)
@@ -777,7 +839,8 @@ Page({
           // W dół kolejne serie, a gdy wszystkie się mieszczą - nic.
           // Przed tą linijką gest w dół w dzienniku nie robił nic nigdy.
           if (event === GESTURE_DOWN && view === VIEW_LOG) {
-            return this.logScroll()
+            this.logScroll()
+            return true
           }
           // Z poprawki wychodzi się każdym rozsądnym gestem - to ekran
           // doraźny, a nie miejsce w nawigacji.
@@ -799,7 +862,11 @@ Page({
           this.showView(VIEW_EDIT)
           return true
         }
-        if (event === GESTURE_LEFT && view === VIEW_CONTROL) {
+        // Ze sterowania wraca się w obie strony. Wcześniej działało tylko
+        // w lewo, a gest w prawo szedł do systemu, który zamykał aplikację
+        // w środku treningu - wyglądało to jak awaria "nie zawsze", bo
+        // zależało od tego, w którą stronę akurat machnął palec.
+        if ((event === GESTURE_LEFT || event === GESTURE_RIGHT) && view === VIEW_CONTROL) {
           this.showView(VIEW_SETS)
           return true
         }
@@ -839,9 +906,13 @@ Page({
           this.showView(VIEW_SETS)
           return true
         }
-        return false
-      }
-    })
+        // Każdy inny gest w trakcie treningu połykamy. `false` oddaje go
+        // systemowi, a ten na geście w prawo wychodzi z aplikacji - tak jak
+        // przy klawiszach, wyjście zostaje na klawiszu domowym. Tylko wybór
+        // jednostki, zanim cokolwiek się zaczęło, puszcza gest dalej.
+        return view !== VIEW_START
+    }
+    onGesture({ callback: (event) => this.gestSystemowy(event, 'system') })
 
     // Każdy klawisz poza domowym, wstecz i wyborem obsługuje trening.
     // Na tym zegarku zostaje przez to dolny przycisk boczny.
@@ -982,6 +1053,11 @@ Page({
     // "minimum" wychodziło powyżej stu, choć w przerwie schodziło niżej.
     if (!this.state.hrMin || bpm < this.state.hrMin) this.state.hrMin = bpm
     if (bpm > this.state.hrMax) this.state.hrMax = bpm
+    // Średnia z próbek co pięć sekund, nie z każdego odczytu: tyle samo
+    // wagi dla każdej chwili treningu, niezależnie od tego, jak często
+    // czujnik akurat nadaje.
+    this.state.hrSum += bpm
+    this.state.hrCnt += 1
     if (this.state.view === VIEW_HEART) this.paintHeart()
   },
 
@@ -1151,20 +1227,32 @@ Page({
     const ex = this.current()
 
     const paused = this.paused()
-    this.setText(this.w.phase, paused ? 'WSTRZYMANY' : (resting ? 'PRZERWA' : ''))
+    const zrobione = !!ex && !this.isSkipped(ex.id) && this.shownDone(ex) >= ex.sets
+    this.setText(this.w.phase, paused
+      ? 'WSTRZYMANY'
+      : (resting ? 'PRZERWA' : (zrobione ? 'ZROBIONE' : 'SERIA')))
+    this.kolor(this.w.phase, paused || resting ? AMBER : ACCENT)
 
-    let value = this.clock(since)
-    if (resting && ex && ex.restSec > 0) {
-      value += ' / ' + this.clock(ex.restSec)
-      // Koniec zaplanowanej przerwy w nadgarstku - po to, żeby nie trzeba
-      // było pilnować ekranu między seriami.
-      if (!this.restRang && since >= ex.restSec) {
-        this.restRang = true
-        this.buzz()
+    if (resting) {
+      // W przerwie na środku zostały czas do końca zaplanowanej przerwy,
+      // a po nim - ile już jej przybyło, z plusem. Bez planu - czas od serii.
+      let value = this.clock(since)
+      if (ex && ex.restSec > 0) {
+        value = since < ex.restSec
+          ? this.clock(ex.restSec - since)
+          : '+' + this.clock(since - ex.restSec)
+        // Koniec zaplanowanej przerwy w nadgarstku - po to, żeby nie trzeba
+        // było pilnować ekranu między seriami.
+        if (!this.restRang && since >= ex.restSec) {
+          this.restRang = true
+          this.buzz()
+        }
       }
+      this.setText(this.w.restTime, value)
+      this.paintRing()
+      return
     }
-    this.setText(this.w.timer, value)
-    this.kolor(this.w.timer, resting ? AMBER : ACCENT)
+    this.setText(this.w.timer, this.clock(since))
   },
 
   // ---- Budowa, raz -------------------------------------------------------
@@ -1181,22 +1269,133 @@ Page({
     })
   },
 
-  button(x, y, w, h, size, label, color, onClick) {
+  /** Wypełniony prostokąt - tło karty, kółko ikony, kreska. */
+  rect(x, y, w, h, radius, color, angle) {
+    const props = {
+      x: px(x), y: px(y), w: px(w), h: px(h), radius: px(radius), color: color
+    }
+    if (angle) props.angle = angle
+    return hmUI.createWidget(hmUI.widget.FILL_RECT, props)
+  },
+
+  /**
+   * Gest od systemu - chyba że ten sam ruch obsłużył już przycisk.
+   */
+  gestSystemowy(event, zrodlo) {
+    // Połykamy tylko drugie zgłoszenie tego samego ruchu z innego źródła.
+    // Dwa gesty systemowe pod rząd to dwa machnięcia i oba mają zadziałać.
+    // Dotknięcie pola, które jeszcze czeka, było początkiem tego gestu.
+    if (this.klikTimer) {
+      clearTimeout(this.klikTimer)
+      this.klikTimer = null
+    }
+    const teraz = Date.now()
+    const o = this.ostatniGest
+    if (o && o.zrodlo !== zrodlo && teraz - o.czas < GEST_DEDUP_MS) return true
+    this.ostatniGest = { czas: teraz, zrodlo: zrodlo }
+    return this.gest(event)
+  },
+
+  /**
+   * Ruch palca zaczęty na przycisku albo polu dotyku.
+   *
+   * Przesunięcie zaczęte na przycisku nie dochodziło do systemu jako gest:
+   * dotyk należał do przycisku. Na ekranie serii przyciski zajmują dziś
+   * większość tarczy - strzałki, licznik, zapas, cała tabela dziennika - więc
+   * zmiana ekranu "czasami nie chciała przejść", zależnie od tego, gdzie
+   * wylądował palec. Każde pole dotyku liczy więc przesunięcie samo i oddaje
+   * je tej samej obsłudze gestów co system.
+   *
+   * Przyciski dostają tylko naciśnięcie, ruch i wyjście palca - podniesienie
+   * zostaje przy ich click_func, który przy geście się wycofuje.
+   */
+  sledzPalec(widget, onClick) {
+    if (!widget || typeof widget.addEventListener !== 'function' || !hmUI.event) return
+    const ev = hmUI.event
+    widget.addEventListener(ev.CLICK_DOWN, (info) => this.palecDol(info))
+    if (ev.MOVE) widget.addEventListener(ev.MOVE, (info) => this.palecRuch(info))
+    if (ev.MOVE_OUT) widget.addEventListener(ev.MOVE_OUT, (info) => { this.palecGora(info) })
+    if (!onClick) return
+    widget.addEventListener(ev.CLICK_UP, (info) => {
+      if (this.palecGora(info) || this.poGescie()) return
+      const o = this.ostatniGest
+      if (o && Date.now() - o.czas < KLIK_PO_GESCIE_MS) return
+      this.palec = null
+      this.dotyk()
+      if (this.klikTimer) clearTimeout(this.klikTimer)
+      this.klikTimer = setTimeout(() => {
+        this.klikTimer = null
+        onClick()
+      }, KLIK_ZWLOKA_MS)
+    })
+  },
+
+  palecDol(info) {
+    this.palec = {
+      x0: info && typeof info.x === 'number' ? info.x : null,
+      y0: info && typeof info.y === 'number' ? info.y : null,
+      kier: null
+    }
+  },
+
+  palecRuch(info) {
+    const p = this.palec
+    if (!p || p.kier || p.x0 === null || !info || typeof info.x !== 'number') return
+    const dx = info.x - p.x0
+    const dy = (typeof info.y === 'number' ? info.y : p.y0) - p.y0
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_PX) return
+    p.kier = Math.abs(dx) > Math.abs(dy)
+      ? (dx < 0 ? GESTURE_LEFT : GESTURE_RIGHT)
+      : (dy < 0 ? GESTURE_UP : GESTURE_DOWN)
+  },
+
+  /** Koniec ruchu: true, gdy był gestem i został obsłużony. */
+  palecGora(info) {
+    const p = this.palec
+    if (!p) return false
+    if (info) this.palecRuch(info)
+    if (!p.kier) return false
+    this.palec = null
+    this.zjazd = Date.now()
+    this.gestSystemowy(p.kier, 'palec')
+    return true
+  },
+
+  /** Czy naciśnięcie to tak naprawdę koniec gestu, który już obsłużono. */
+  poGescie() {
+    return !!this.zjazd && Date.now() - this.zjazd < ZJAZD_MS
+  },
+
+  button(x, y, w, h, size, label, color, onClick, radius) {
     // Komplet właściwości zostaje przy widgecie, bo przycisk trzeba czasem
     // odtworzyć w całości - patrz [setBtn].
+    //
+    // Zaokrąglenie domyślnie do połowy wysokości: pigułki i koła jak
+    // w aplikacji na telefonie. Kanciaste prostokąty wyglądały na okrągłej
+    // tarczy jak z innej aplikacji.
     const props = {
       x: px(x), y: px(y), w: px(w), h: px(h),
       text: label,
       color: FG,
       text_size: px(size),
-      radius: px(6),
+      radius: px(radius === undefined ? Math.floor(h / 2) : radius),
       normal_color: color,
       press_color: ACCENT
     }
     const widget = hmUI.createWidget(
       hmUI.widget.BUTTON,
-      Object.assign({ click_func: () => { this.dotyk(); onClick() } }, props)
+      Object.assign({
+        click_func: () => {
+          // Palec przejechał po przycisku: to gest, nie naciśnięcie.
+          if (this.palec && this.palec.kier) { this.palecGora(); return }
+          if (this.poGescie()) return
+          this.palec = null
+          this.dotyk()
+          onClick()
+        }
+      }, props)
     )
+    this.sledzPalec(widget)
     widget.props = props
     return widget
   },
@@ -1229,8 +1428,9 @@ Page({
     if (!w) return []
     if (this.state.message) return [w.retry]
     switch (this.state.view) {
-      case VIEW_SETS: return this.askingRir()
-        ? [w.count].concat(w.rirRow)
+      // W przerwie licznik ustępuje odliczaniu, a strzałki zostają na bokach.
+      case VIEW_SETS: return this.resting()
+        ? [w.prev, w.next].concat(this.askingRir() ? w.rirRow : [])
         : [w.count, w.prev, w.next]
       case VIEW_EDIT: return [w.wMinus, w.wPlus, w.rMinus, w.rPlus]
       case VIEW_DONE: return [w.doneBtn]
@@ -1239,7 +1439,7 @@ Page({
         return w.logRows.slice(0, this.logRows().length - this.logFrom())
       case VIEW_FIX: return [w.fixWMinus, w.fixWPlus, w.fixRMinus, w.fixRPlus]
         .concat(w.fixRirRow).concat([w.fixSave, w.fixDelete])
-      case VIEW_CONTROL: return [w.ctrlPause, w.ctrlSkip, w.ctrlEnd]
+      case VIEW_CONTROL: return [w.ctrlPause, w.ctrlEnd]
       case VIEW_START: return w.units.slice(0, (this.state.units || []).length)
       default: return []
     }
@@ -1247,6 +1447,22 @@ Page({
 
   buildWidgets() {
     const w = {}
+
+    // ---- Pierścień serii ----
+    // Pierwszy, żeby leżał pod wszystkim innym. Na serii odcinek na serię:
+    // zrobione turkusowe, bieżąca niebieska, reszta szara. W przerwie dwa
+    // łuki - szary cały i bursztynowy, który kurczy się razem z odliczaniem.
+    w.ring = []
+    for (let i = 0; i < RING_MAX; i++) {
+      const arc = hmUI.createWidget(hmUI.widget.ARC, {
+        x: px(RING_XY), y: px(RING_XY), w: px(RING_WH), h: px(RING_WH),
+        start_angle: -90, end_angle: -90, color: RING_TODO, line_width: px(RING_LINE)
+      })
+      arc.setProperty(hmUI.prop.VISIBLE, false)
+      arc.widoczny = false
+      arc.luk = { start_angle: -90, end_angle: -90, color: RING_TODO }
+      w.ring.push(arc)
+    }
 
     w.message = this.text(60, 170, 360, 140, 30, DIM)
     w.retry = this.button(140, 330, 200, 72, 26, 'Odśwież', GREY, () => {
@@ -1258,7 +1474,8 @@ Page({
     // Były tu kropki pokazujące, który z trzech ekranów jest na wierzchu.
     // Przewija się je gestem i tak się je pamięta, a godziny w trakcie
     // treningu nie ma gdzie indziej sprawdzić bez wychodzenia z aplikacji.
-    w.clock = this.text(170, 8, 140, 32, 25, DIM, hmUI.text_style.NONE)
+    // Niżej niż dotąd: przy samej krawędzi leży teraz pierścień serii.
+    w.clock = this.text(170, 30, 140, 28, 21, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: serie ----
     // Serce, tętno i jednostka w jednej linii. Wolne pole po dawnym
@@ -1273,76 +1490,166 @@ Page({
     // Serce dosuwa się do niej z lewej - [placeHeart] liczy, gdzie ta
     // lewa krawędź wypadła. Glif serca ma wyższe wydłużenia niż cyfry,
     // więc dostaje własne, wyższe pole; w niskim obcinało mu rogi.
-    w.hr = this.text(0, 42, 480, 108, HR_SIZE, FG, hmUI.text_style.NONE)
-    w.hrIcon = this.text(60, 66, 60, 58, 32, HEART, hmUI.text_style.NONE, hmUI.align.RIGHT)
+    // Tętno mniejsze niż dotąd: środek tarczy należy teraz do serii.
+    w.hr = this.text(0, 58, 480, 72, HR_SIZE, FG, hmUI.text_style.NONE)
+    w.hrIcon = this.text(60, 70, 44, 46, 28, HEART, hmUI.text_style.NONE, hmUI.align.RIGHT)
     w.name = this.text(NAME_X, NAME_Y, NAME_BOX_W, NAME_H, NAME_SIZE, DIM, hmUI.text_style.NONE)
-    w.count = this.button(90, 212, 300, 54, 29, '', 0x000000, () => this.press())
-    w.phase = this.text(120, 272, 240, 24, 17, AMBER, hmUI.text_style.NONE)
-    w.timer = this.text(80, 294, 320, 52, 40, ACCENT, hmUI.text_style.NONE)
-    w.load = this.text(80, 348, 320, 28, 20, DIM, hmUI.text_style.NONE)
-    w.prev = this.button(120, 380, 90, 58, 28, '<', GREY, () => { this.move(-1) })
-    w.next = this.button(270, 380, 90, 58, 28, '>', GREY, () => { this.move(1) })
+
+    // Środek: napis „SERIA" albo „PRZERWA" i pod nim duża liczba.
+    // Dotąd stała tu pigułka z napisem „SERIA 2 z 4" - liczba ginęła
+    // w zdaniu. Teraz to ona jest największą rzeczą na tarczy.
+    w.phase = this.text(140, 166, 200, 24, 16, ACCENT, hmUI.text_style.NONE)
+    // Przycisk bez tła - całe pole pod liczbą jest celem dla palca.
+    w.count = this.button(120, 190, 240, 84, COUNT_SIZE, '', 0x000000, () => this.press(), 42)
+    // Odliczanie przerwy to napis, nie tekst przycisku: tyka co sekundę,
+    // a zapis przycisku to jego przerysowanie od nowa (patrz [setBtn]).
+    // Dotknięcie go zaczyna następną serię, jak dotknięcie licznika.
+    w.restTime = this.text(110, 182, 260, 88, 78, AMBER, hmUI.text_style.NONE)
+    this.sledzPalec(w.restTime, () => this.press())
+    w.restNext = this.text(110, 268, 260, 24, 16, DIM, hmUI.text_style.NONE)
+    w.timer = this.text(150, 288, 180, 46, 36, ACCENT, hmUI.text_style.NONE)
+    // Ciężar i powtórzenia w pigułce - ta sama, co w aplikacji.
+    w.loadBg = hmUI.createWidget(hmUI.widget.FILL_RECT, {
+      x: px(140), y: px(342), w: px(200), h: px(44), radius: px(22), color: SIDE_COLOR
+    })
+    w.load = this.text(140, 342, 200, 44, 21, FG, hmUI.text_style.NONE)
+    w.exPos = this.text(140, 396, 200, 22, 14, DIM, hmUI.text_style.NONE)
+
+    // Strzałki na bokach tarczy, a nie na dole: kciuk sięga tam bez celowania,
+    // a dół zostaje dla ciężaru i zapasu powtórzeń. Same strzałki, bez nazw -
+    // nazwa sąsiedniego ćwiczenia w takim polu była nieczytelna.
+    // Pole 72 na 128: przy 60 na 88 kciuk w rękawiczce trafiał obok.
+    w.prev = this.button(24, 176, 72, 128, 64, '‹', SIDE_COLOR, () => { this.move(-1) }, 36)
+    w.next = this.button(384, 176, 72, 128, 64, '›', SIDE_COLOR, () => { this.move(1) }, 36)
 
     // Zapas powtórzeń pytamy w przerwie, w miejscu strzałek: wtedy jest
     // na to chwila, a seria jest jeszcze świeża w pamięci. Pominięcie
     // niczego nie psuje - reguły progresji działają też bez tego.
+    // Pytanie ma własny wiersz nad przyciskami. Stało w pigułce ciężaru,
+    // pod przyciskami, i te zasłaniały je w połowie.
+    w.rirAsk = this.text(100, 294, 280, 30, 19, FG, hmUI.text_style.NONE)
+    this.setText(w.rirAsk, 'ile powtórzeń zostało?')
+    w.rirAsk.setProperty(hmUI.prop.VISIBLE, false)
+    w.rirAsk.widoczny = false
     w.rirRow = []
     const etykiety = ['0', '1', '2', '3+']
     for (let i = 0; i < 4; i++) {
       const btn = this.button(
-        RIR_X0 + i * (RIR_W + RIR_GAP), RIR_Y, RIR_W, RIR_H, 24,
-        etykiety[i], GREY, () => this.setRir(i)
+        RIR_X0 + i * (RIR_W + RIR_GAP), RIR_Y, RIR_W, RIR_H, 28,
+        etykiety[i], SIDE_COLOR, () => this.setRir(i)
       )
       btn.setProperty(hmUI.prop.VISIBLE, false)
       w.rirRow.push(btn)
     }
 
     // ---- Widok: czas treningu ----
-    w.statTime = this.text(80, 74, 320, 76, 58, FG, hmUI.text_style.NONE)
-    w.statTimeLabel = this.text(100, 152, 280, 26, 18, DIM, hmUI.text_style.NONE)
-    w.statSets = this.text(80, 188, 320, 62, 46, FG, hmUI.text_style.NONE)
-    w.statSetsLabel = this.text(100, 250, 280, 24, 17, DIM, hmUI.text_style.NONE)
-    w.statKcal = this.text(80, 278, 320, 62, 46, FG, hmUI.text_style.NONE)
-    w.statKcalLabel = this.text(100, 340, 280, 24, 17, DIM, hmUI.text_style.NONE)
-    w.statVolume = this.text(70, 372, 340, 28, 19, DIM, hmUI.text_style.NONE)
-    // Stan synchronizacji. Ekran czasu jest tym, na ktory zaglada sie
-    // w przerwie, wiec tu ma stac odpowiedz na pytanie "czy to w ogole
-    // dojezdza do telefonu".
-    w.statSync = this.text(70, 404, 340, 26, 17, DIM, hmUI.text_style.NONE)
+    //
+    // Duży czas, pod nim trzy wiersze z ikoną w kółku: kalorie, serie,
+    // objętość. Stan wysyłki stoi tu tylko wtedy, gdy coś czeka - stały
+    // napis "wszystko na telefonie" był szumem na ekranie, na który
+    // zagląda się w każdej przerwie.
+    w.statTimeLabel = this.text(120, 62, 240, 24, 16, ACCENT, hmUI.text_style.NONE)
+    w.statTime = this.text(60, 84, 360, 88, 76, FG, hmUI.text_style.NONE)
+    w.statLine = this.rect(120, 182, 240, 2, 1, GREY)
+    // Ikony to obrazki z tools/ikony.js. Były tu składanki z prostokątów,
+    // a płomień - koło z kwadratem obróconym o 45 stopni - wyszedł na
+    // zegarku jako kłódka, bo prostokąty się tu nie obracają.
+    //
+    // Każdy wiersz stoi na środku tarczy jako całość: ikona, liczba,
+    // podpis. Przyklejone do stałej lewej krawędzi zostawiały pół ekranu
+    // pustego po prawej i wyglądały na rozjechane.
+    w.statIcons = []
+    w.statRows = []
+    ;[['kcal', 196], ['serie', 266], ['ton', 336]].forEach(([nazwa, y]) => {
+      const src = 'stat-' + nazwa + '.png'
+      const ikona = hmUI.createWidget(hmUI.widget.IMG, {
+        x: px(96), y: px(y + (STAT_ROW_H - STAT_ICON) / 2), src: src
+      })
+      const liczba = this.text(166, y, 120, STAT_ROW_H, STAT_NUM_SIZE, FG,
+        hmUI.text_style.NONE, hmUI.align.LEFT)
+      const podpis = this.text(290, y, 120, STAT_ROW_H, STAT_LABEL_SIZE, DIM,
+        hmUI.text_style.NONE, hmUI.align.LEFT)
+      w.statIcons.push(ikona)
+      w.statRows.push({ ikona: ikona, liczba: liczba, podpis: podpis, y: y, src: src })
+    })
+    w.statKcal = w.statRows[0].liczba
+    w.statKcalLabel = w.statRows[0].podpis
+    w.statSets = w.statRows[1].liczba
+    w.statSetsLabel = w.statRows[1].podpis
+    w.statVolume = w.statRows[2].liczba
+    w.statVolumeLabel = w.statRows[2].podpis
+    w.statSync = this.text(90, 404, 300, 28, 17, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: tętno ----
-    w.heartLabel = this.text(140, 68, 200, 34, 24, DIM, hmUI.text_style.NONE)
-    w.heartValue = this.text(100, 104, 280, 88, 68, FG, hmUI.text_style.NONE)
+    //
+    // Strefa na łuku u góry tarczy, liczba z sercem, pod nią słupki
+    // w kolorach stref i zakres z całej sesji.
+    w.heartZones = []
+    for (let i = 0; i < 5; i++) {
+      const arc = hmUI.createWidget(hmUI.widget.ARC, {
+        x: px(RING_XY), y: px(RING_XY), w: px(RING_WH), h: px(RING_WH),
+        start_angle: 0, end_angle: 0, color: GREY, line_width: px(RING_LINE)
+      })
+      arc.setProperty(hmUI.prop.VISIBLE, false)
+      arc.widoczny = false
+      arc.luk = {}
+      w.heartZones.push(arc)
+    }
+    w.heartLabel = this.text(120, 66, 240, 24, 16, DIM, hmUI.text_style.NONE)
+    w.heartValue = this.text(0, 88, 480, 110, HEART_NUM_SIZE, FG, hmUI.text_style.NONE)
+    w.heartIcon = this.text(100, 120, 44, 46, 36, HEART, hmUI.text_style.NONE, hmUI.align.RIGHT)
+    this.setText(w.heartIcon, '♥')
+    w.heartUnit = this.text(140, 196, 200, 24, 16, DIM, hmUI.text_style.NONE)
     w.bars = []
     for (let i = 0; i < BARS; i++) {
       const bar = hmUI.createWidget(hmUI.widget.FILL_RECT, {
         x: px(BAR_X0 + i * (BAR_W + BAR_GAP)), y: px(BAR_BASE - 4),
-        w: px(BAR_W), h: px(4), radius: px(2), color: HEART
+        w: px(BAR_W), h: px(4), radius: px(3), color: HEART
       })
       bar.setProperty(hmUI.prop.VISIBLE, false)
       w.bars.push(bar)
     }
-    w.heartRange = this.text(70, 372, 340, 28, 19, DIM, hmUI.text_style.NONE)
+    const szerWykresu = BARS * (BAR_W + BAR_GAP) - BAR_GAP
+    w.heartAxis = this.rect(BAR_X0, BAR_BASE + 2, szerWykresu, 1, 0, GREY)
+    w.heartAxisL = this.text(BAR_X0, BAR_BASE + 8, 140, 22, 14, DIM, hmUI.text_style.NONE, hmUI.align.LEFT)
+    w.heartAxisR = this.text(BAR_X0 + szerWykresu - 140, BAR_BASE + 8, 140, 22, 14, DIM, hmUI.text_style.NONE, hmUI.align.RIGHT)
+    w.heartRange = this.text(80, 392, 320, 30, 18, FG, hmUI.text_style.NONE)
 
     // ---- Widok: ciężar i powtórzenia ----
     //
-    // Cały blok wyśrodkowany w tarczy: od EDIT_TOP do EDIT_TOP + EDIT_H,
-    // z tym samym marginesem u góry i u dołu. Wcześniej zaczynał się na
-    // 56 i kończył na 316, więc nad nim zostawało 56 pikseli, a pod nim
-    // 164 - na okrągłym ekranie widać to od razu, bo dół tarczy świeci pustką.
-    w.wLabel = this.text(100, EDIT_TOP, 280, 34, 24, DIM)
-    // Plusy i minusy bez wibracji: naciska się je po kilka razy z rzędu,
-    // a wtedy potwierdzanie każdego kliknięcia robi się męczące.
-    w.wMinus = this.button(86, EDIT_TOP + 40, 84, 84, 36, '-', GREY, () => this.stepWeight(-1))
-    // Liczba w pionie na środku przycisków: 84 i 56 wysokości to różnica
-    // 28, czyli 14 na stronę. Wcześniej stała dwa piksele niżej.
-    w.wValue = this.text(170, EDIT_TOP + 54, 140, 56, 36, FG, hmUI.text_style.NONE)
-    w.wPlus = this.button(310, EDIT_TOP + 40, 84, 84, 36, '+', GREY, () => this.stepWeight(1))
-
-    w.rLabel = this.text(100, EDIT_TOP + 140, 280, 34, 24, DIM)
-    w.rMinus = this.button(86, EDIT_TOP + 176, 84, 84, 36, '-', GREY, () => this.stepReps(-1))
-    w.rValue = this.text(170, EDIT_TOP + 190, 140, 56, 36, FG, hmUI.text_style.NONE)
-    w.rPlus = this.button(310, EDIT_TOP + 176, 84, 84, 36, '+', GREY, () => this.stepReps(1))
+    // Dwie karty, każda z okrągłym minusem i plusem. Blok kart stoi na
+    // środku tarczy: tyle samo miejsca nad pierwszą, co pod drugą.
+    // Jednostka siedzi w podpisie ("CIĘŻAR · KG"), a nie przy liczbie -
+    // "102,5 kg" na 48 pikselach nie mieściło się między przyciskami.
+    w.editName = this.text(100, 66, 280, 32, 20, DIM, hmUI.text_style.ELLIPSIS)
+    const karta = (top, etykieta, kolorAkcji, minus, plus) => {
+      const k = {}
+      k.card = this.rect(64, top, 352, EDIT_CARD_H, 30, CARD_COLOR)
+      k.label = this.text(150, top + 8, 180, 22, 15, kolorAkcji, hmUI.text_style.NONE)
+      // Plusy i minusy bez wibracji: naciska się je po kilka razy z rzędu,
+      // a wtedy potwierdzanie każdego kliknięcia robi się męczące.
+      k.minus = this.button(70, top + 34, 84, 84, 44, '-', SIDE_COLOR, minus)
+      k.plus = this.button(326, top + 34, 84, 84, 44, '+', SIDE_COLOR, plus)
+      ;[k.minus, k.plus].forEach((b) => this.setBtn(b, { color: kolorAkcji }))
+      // Liczba w pionie na środku przycisków: 76 i 60 to 8 na stronę.
+      k.value = this.text(154, top + 46, 172, 60, 52, FG, hmUI.text_style.NONE)
+      return k
+    }
+    const kw = karta(EDIT_TOP, 'CIĘŻAR', ACCENT, () => this.stepWeight(-1), () => this.stepWeight(1))
+    const kr = karta(EDIT_TOP + EDIT_CARD_H + EDIT_CARD_GAP, 'POWTÓRZENIA', TEAL,
+      () => this.stepReps(-1), () => this.stepReps(1))
+    w.editCardW = kw.card
+    w.wLabel = kw.label
+    w.wMinus = kw.minus
+    w.wValue = kw.value
+    w.wPlus = kw.plus
+    w.editCardR = kr.card
+    w.rLabel = kr.label
+    w.rMinus = kr.minus
+    w.rValue = kr.value
+    w.rPlus = kr.plus
+    w.editHint = this.text(130, 384, 220, 24, 14, DIM, hmUI.text_style.NONE)
+    this.setText(w.editHint, 'przesuń w prawo - wróć')
 
     // Bez przycisków od serii. Dokładanie serii robi się na ekranie ćwiczenia,
     // a kasowanie - w poprawce konkretnej serii, gdzie widać, którą się rusza.
@@ -1363,54 +1670,94 @@ Page({
     w.doneNext = this.text(70, 402, 340, 28, 17, ACCENT, hmUI.text_style.NONE)
 
     // ---- Widok: zapisane serie ----
-    w.logTitle = this.text(70, 30, 340, 34, 23, DIM, hmUI.text_style.NONE)
+    //
+    // Tabela: numer, ciężar, powtórzenia, zapas - każde w swojej kolumnie,
+    // pod nagłówkiem. Ciągły napis "1.  80 kg  x 8   RIR 2" trzeba było
+    // czytać od lewej, a w kolumnach wzrok skacze od razu tam, gdzie chce.
+    w.logTitle = this.text(100, 38, 280, 30, 20, 0xe7eaed, hmUI.text_style.ELLIPSIS)
+    w.logSub = this.text(130, 68, 220, 24, 15, DIM, hmUI.text_style.NONE)
+    w.logHead = ['#', 'KG', 'POW.', 'ZAPAS'].map((t, k) => {
+      const h = this.text(LOG_COLS[k][0], 100, LOG_COLS[k][1], 24, 13, 0x6b737b, hmUI.text_style.NONE)
+      this.setText(h, t)
+      return h
+    })
     w.logRows = []
+    w.logLines = []
+    w.logCells = []
     for (let i = 0; i < LOG_ROWS; i++) {
-      // Węższe niż dotąd o dwadzieścia pikseli z każdej strony: przy 50
-      // i szerokości 380 górny wiersz wychodził rogami poza okrąg tarczy
-      // i wyglądał na przycięty, bo był.
-      const row = this.button(
-        70, LOG_TOP + i * LOG_ROW_GAP, 340, LOG_ROW_H, 26, '', 0x1c2127,
-        () => this.openFix(i)
-      )
+      const y = LOG_TOP + i * LOG_ROW_GAP
+      // Tło wiersza jest zarazem polem dla palca. Napisy na nim dostają
+      // ten sam odbiornik - dotyk w liczbę nie może przepaść.
+      const row = this.rect(LOG_X, y, LOG_W, LOG_ROW_H, 12, 0x000000)
+      const otworz = () => this.openFix(i)
+      this.sledzPalec(row, otworz)
       row.setProperty(hmUI.prop.VISIBLE, false)
+      row.widoczny = false
       w.logRows.push(row)
+      const line = this.rect(LOG_X, y, LOG_W, 1, 0, GREY)
+      line.setProperty(hmUI.prop.VISIBLE, false)
+      line.widoczny = false
+      w.logLines.push(line)
+      const cells = LOG_COLS.map(([x, szer], k) => {
+        const c = this.text(x, y, szer, LOG_ROW_H, k === 3 ? 18 : 24,
+          k === 0 ? ACCENT : FG, hmUI.text_style.NONE)
+        this.sledzPalec(c, otworz)
+        c.setProperty(hmUI.prop.VISIBLE, false)
+        c.widoczny = false
+        return c
+      })
+      w.logCells.push(cells)
     }
-    w.logHint = this.text(80, 398, 320, 30, 17, DIM, hmUI.text_style.NONE)
+    w.logHint = this.text(110, 382, 260, 26, 14, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: poprawka serii ----
-    w.fixTitle = this.text(70, 20, 340, 30, 22, DIM, hmUI.text_style.NONE)
-    w.fixWLabel = this.text(100, 52, 280, 24, 19, DIM, hmUI.text_style.NONE)
-    w.fixWMinus = this.button(86, 76, 84, 64, 32, '-', GREY, () => this.fixStep('w', -1))
-    w.fixWValue = this.text(170, 84, 140, 48, 32, FG, hmUI.text_style.NONE)
-    w.fixWPlus = this.button(310, 76, 84, 64, 32, '+', GREY, () => this.fixStep('w', 1))
-    w.fixRLabel = this.text(100, 146, 280, 24, 19, DIM, hmUI.text_style.NONE)
-    w.fixRMinus = this.button(86, 170, 84, 64, 32, '-', GREY, () => this.fixStep('r', -1))
-    w.fixRValue = this.text(170, 178, 140, 48, 32, FG, hmUI.text_style.NONE)
-    w.fixRPlus = this.button(310, 170, 84, 64, 32, '+', GREY, () => this.fixStep('r', 1))
+    //
+    // Dwie kolumny: plus nad liczbą, minus pod nią. Ciężar po lewej,
+    // powtórzenia po prawej, niżej zapas i USUŃ / ZAPISZ obok siebie.
+    w.fixName = this.text(110, 34, 260, 26, 18, DIM, hmUI.text_style.ELLIPSIS)
+    w.fixTitleBg = this.rect(150, 62, 180, 28, 14, SIDE_COLOR)
+    w.fixTitle = this.text(150, 62, 180, 28, 15, 0xe7eaed, hmUI.text_style.NONE)
+    const kolumna = (x, kolor, etykieta, minus, plus) => {
+      const k = {}
+      const srodek = x + 60
+      k.plus = this.button(srodek - 44, 96, 88, 60, 36, '+', SIDE_COLOR, plus)
+      k.value = this.text(x, 158, 120, 54, 50, FG, hmUI.text_style.NONE)
+      k.label = this.text(x, 212, 120, 18, 13, kolor, hmUI.text_style.NONE)
+      this.setText(k.label, etykieta)
+      k.minus = this.button(srodek - 44, 232, 88, 60, 36, '-', SIDE_COLOR, minus)
+      ;[k.plus, k.minus].forEach((b) => this.setBtn(b, { color: kolor }))
+      return k
+    }
+    const kolW = kolumna(104, ACCENT, 'KG', () => this.fixStep('w', -1), () => this.fixStep('w', 1))
+    const kolR = kolumna(256, TEAL, 'POW.', () => this.fixStep('r', -1), () => this.fixStep('r', 1))
+    w.fixWPlus = kolW.plus
+    w.fixWValue = kolW.value
+    w.fixWLabel = kolW.label
+    w.fixWMinus = kolW.minus
+    w.fixRPlus = kolR.plus
+    w.fixRValue = kolR.value
+    w.fixRLabel = kolR.label
+    w.fixRMinus = kolR.minus
+    w.fixDivider = this.rect(239, 104, 2, 182, 1, GREY)
 
     // Zapas powtórzeń tym samym rzędem co po serii - ta sama rzecz ma
     // wyglądać tak samo, niezależnie od tego, kiedy się ją podaje.
-    w.fixRirLabel = this.text(100, 240, 280, 22, 17, DIM, hmUI.text_style.NONE)
+    w.fixRirLabel = this.text(130, 295, 220, 18, 13, DIM, hmUI.text_style.NONE)
     w.fixRirRow = []
     const zapasy = ['0', '1', '2', '3+']
     for (let i = 0; i < 4; i++) {
       const btn = this.button(
-        88 + i * 78, 266, 70, 50, 22, zapasy[i], GREY, () => this.fixSetRir(i)
+        100 + i * 72, 316, 64, 50, 20, zapasy[i], SIDE_COLOR, () => this.fixSetRir(i)
       )
       btn.setProperty(hmUI.prop.VISIBLE, false)
       w.fixRirRow.push(btn)
     }
-    // Zapas powtórzeń siedzi tu, a nie w osobnym rzędzie: na okrągłym
-    // ekranie nie ma już miejsca w pionie, a i tak poprawia się go razem
-    // z ciężarem i powtórzeniami tej samej serii. Jeden przycisk, który
-    // kręci się w kółko - bez niego zapas dało się podać tylko w przerwie
-    // tuż po serii, a przy poprawce zapisanej serii nie dało się wcale.
 
-    w.fixSave = this.button(96, 328, 142, 60, 22, 'zapisz', GREEN, () => this.saveFix())
     // Kasowanie na dwa naciśnięcia. Jedno przypadkowe dotknięcie nie może
     // zabrać serii, a wyjście z ekranu i tak jest pod gestem.
-    w.fixDelete = this.button(246, 328, 142, 60, 22, 'usuń', 0x3a1f1f, () => this.fixDelete())
+    w.fixDelete = this.button(104, 374, 132, 58, 19, 'USUŃ', 0x3a1f1f, () => this.fixDelete())
+    this.setBtn(w.fixDelete, { color: RED })
+    w.fixSave = this.button(244, 374, 132, 58, 19, 'ZAPISZ', GREEN, () => this.saveFix())
 
     // ---- Widok: co pominięte ----
     w.gapsTitle = this.text(70, 30, 340, 36, 24, FG, hmUI.text_style.NONE)
@@ -1419,7 +1766,7 @@ Page({
     // zamiast wracać i szukać go strzałkami.
     w.gapsRows = []
     for (let i = 0; i < GAP_ROWS; i++) {
-      const row = this.button(50, 100 + i * 48, 380, 42, 20, '', 0x1c2127, () => this.openGap(i))
+      const row = this.button(70, 100 + i * 68, 340, 62, 22, '', 0x1c2127, () => this.openGap(i))
       row.setProperty(hmUI.prop.VISIBLE, false)
       w.gapsRows.push(row)
     }
@@ -1435,12 +1782,14 @@ Page({
     w.tonHint = this.text(90, 390, 300, 30, 17, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: sterowanie ----
-    w.ctrlTime = this.text(90, 52, 300, 64, 44, FG, hmUI.text_style.NONE)
-    w.ctrlState = this.text(90, 118, 300, 32, 21, DIM, hmUI.text_style.NONE)
-    w.ctrlPause = this.button(100, 156, 280, 78, 27, 'WSTRZYMAJ', GREY, () => { this.togglePause() })
-    w.ctrlSkip = this.button(100, 244, 280, 78, 27, 'POMIŃ ĆWICZENIE', GREY, () => { this.skipExercise() })
-    w.ctrlEnd = this.button(100, 332, 280, 78, 27, 'KONIEC', GREEN, () => { this.showView(VIEW_DONE) })
-    w.ctrlHint = this.text(110, 416, 260, 36, 19, DIM)
+    // Dwa przyciski zamiast trzech. Pomijanie ćwiczenia stąd zniknęło:
+    // do następnego przechodzi się strzałką z boku tarczy, a niezrobione
+    // serie i tak widać w podsumowaniu.
+    w.ctrlTime = this.text(90, 50, 300, 64, 48, FG, hmUI.text_style.NONE)
+    w.ctrlState = this.text(90, 112, 300, 30, 18, DIM, hmUI.text_style.NONE)
+    w.ctrlPause = this.button(96, 166, 288, 84, 27, 'WSTRZYMAJ', 0x3a2a12, () => { this.togglePause() })
+    w.ctrlEnd = this.button(96, 266, 288, 84, 27, 'ZAKOŃCZ', GREEN, () => { this.showView(VIEW_DONE) })
+    w.ctrlHint = this.text(110, 372, 260, 30, 16, DIM)
 
     // ---- Widok: start treningu ----
     w.startTitle = this.text(70, 44, 340, 44, 28, DIM)
@@ -1552,32 +1901,50 @@ Page({
     this.setVisible(w.clock, !msg && column >= 0)
     if (!msg && column >= 0) this.paintWallClock()
 
-    // W przerwie strzałki ustępują miejsca pytaniu o zapas powtórzeń.
+    // Na serii licznik i czas serii, w przerwie - odliczanie na środku.
+    // Strzałki stoją na bokach w obu fazach: pytanie o zapas zajmuje dół
+    // tarczy i już ich nie wypiera, więc w przerwie da się od razu przejść
+    // do następnego ćwiczenia.
+    const resting = sets && this.resting()
     const pytamy = sets && this.askingRir()
-    ;[w.hr, w.hrIcon, w.name, w.count, w.phase, w.timer, w.load]
+    ;[w.hr, w.hrIcon, w.name, w.phase, w.prev, w.next]
       .forEach((x) => this.setVisible(x, sets))
-    ;[w.prev, w.next].forEach((x) => this.setVisible(x, sets && !pytamy))
-    w.rirRow.forEach((x) => this.setVisible(x, pytamy))
-    ;[w.statTime, w.statTimeLabel, w.statSets, w.statSetsLabel,
-      w.statKcal, w.statKcalLabel, w.statVolume, w.statSync]
+    ;[w.count, w.timer].forEach((x) => this.setVisible(x, sets && !resting))
+    ;[w.restTime, w.restNext].forEach((x) => this.setVisible(x, resting))
+    ;[w.loadBg, w.load, w.exPos].forEach((x) => this.setVisible(x, sets && !pytamy))
+    ;[w.rirAsk].concat(w.rirRow).forEach((x) => this.setVisible(x, pytamy))
+    const luki = sets ? this.ringCount() : 0
+    w.ring.forEach((arc, i) => this.setVisible(arc, i < luki))
+    ;[w.statTime, w.statTimeLabel, w.statLine, w.statSets, w.statSetsLabel,
+      w.statKcal, w.statKcalLabel, w.statVolume, w.statVolumeLabel]
+      .concat(w.statIcons)
       .forEach((x) => this.setVisible(x, stats))
-    ;[w.heartLabel, w.heartValue, w.heartRange]
+    // Stan wysyłki tylko wtedy, gdy coś czeka.
+    this.setVisible(w.statSync, stats && this.czeka() > 0)
+    ;[w.heartLabel, w.heartValue, w.heartIcon, w.heartUnit, w.heartAxis,
+      w.heartAxisL, w.heartAxisR, w.heartRange]
+      .concat(w.heartZones)
       .forEach((x) => this.setVisible(x, heart))
     const samples = this.state.hrLog.length
     w.bars.forEach((bar, i) => this.setVisible(bar, heart && i < samples))
-    ;[w.wLabel, w.wMinus, w.wValue, w.wPlus,
-      w.rLabel, w.rMinus, w.rValue, w.rPlus].forEach((x) => this.setVisible(x, edit))
+    ;[w.editName, w.editCardW, w.wLabel, w.wMinus, w.wValue, w.wPlus,
+      w.editCardR, w.rLabel, w.rMinus, w.rValue, w.rPlus, w.editHint]
+      .forEach((x) => this.setVisible(x, edit))
     ;[w.doneTitle, w.doneTime, w.doneSets, w.doneTon, w.doneSkip, w.doneBtn,
       w.doneHint, w.doneMore, w.doneNext].forEach((x) => this.setVisible(x, done))
     const gaps = !msg && view === VIEW_GAPS
     const log = !msg && view === VIEW_LOG
     const fix = !msg && view === VIEW_FIX
-    ;[w.logTitle, w.logHint].forEach((x) => this.setVisible(x, log))
+    ;[w.logTitle, w.logSub, w.logHint].concat(w.logHead).forEach((x) => this.setVisible(x, log))
     const wiersze = this.logRows()
     const odWiersza = this.logFrom()
-    w.logRows.forEach((row, i) =>
-      this.setVisible(row, log && odWiersza + i < wiersze.length))
-    ;[w.fixTitle, w.fixWLabel, w.fixWMinus, w.fixWValue, w.fixWPlus,
+    w.logRows.forEach((row, i) => {
+      const jest = log && odWiersza + i < wiersze.length
+      this.setVisible(row, jest)
+      this.setVisible(w.logLines[i], jest)
+      w.logCells[i].forEach((c) => this.setVisible(c, jest))
+    })
+    ;[w.fixName, w.fixTitleBg, w.fixDivider, w.fixTitle, w.fixWLabel, w.fixWMinus, w.fixWValue, w.fixWPlus,
       w.fixRLabel, w.fixRMinus, w.fixRValue, w.fixRPlus,
       w.fixRirLabel, w.fixSave, w.fixDelete].forEach((x) => this.setVisible(x, fix))
     w.fixRirRow.forEach((x) => this.setVisible(x, fix))
@@ -1587,7 +1954,7 @@ Page({
     w.tonRows.forEach((row, i) => this.setVisible(row, tons && i < wTon.length))
     const rows = this.gapsRows()
     w.gapsRows.forEach((row, i) => this.setVisible(row, gaps && i < rows.length))
-    ;[w.ctrlTime, w.ctrlState, w.ctrlPause, w.ctrlSkip, w.ctrlEnd, w.ctrlHint]
+    ;[w.ctrlTime, w.ctrlState, w.ctrlPause, w.ctrlEnd, w.ctrlHint]
       .forEach((x) => this.setVisible(x, ctrl))
     this.setVisible(w.startTitle, start)
     const units = this.state.units || []
@@ -1879,6 +2246,71 @@ Page({
     return this.state.phase === PHASE_REST && !!this.state.rirFor
   },
 
+  /** Czy trwa przerwa - wtedy środek tarczy odlicza zamiast liczyć serie. */
+  resting() {
+    return this.state.phase === PHASE_REST
+  },
+
+  /** Ile łuków pierścienia widać: w przerwie dwa, na serii - po jednym na serię. */
+  ringCount() {
+    if (this.resting()) return 2
+    const ex = this.current()
+    return ex ? Math.max(1, Math.min(RING_MAX, ex.sets || 1)) : 0
+  },
+
+  /** Łuk - tylko gdy coś się zmienia, jak każdy inny zapis do widgetu. */
+  luk(arc, start, end, color) {
+    const s = Math.round(start)
+    const e = Math.round(end)
+    const l = arc.luk
+    if (l.start_angle === s && l.end_angle === e && l.color === color) return
+    arc.luk = { start_angle: s, end_angle: e, color: color }
+    arc.setProperty(hmUI.prop.MORE, {
+      x: px(RING_XY), y: px(RING_XY), w: px(RING_WH), h: px(RING_WH),
+      start_angle: s, end_angle: e, color: color, line_width: px(RING_LINE)
+    })
+  },
+
+  /**
+   * Pierścień na krawędzi tarczy.
+   *
+   * Na serii: odcinek na serię, z przerwą między nimi - zrobione turkusowe,
+   * bieżąca w kolorze licznika, reszta szara. W przerwie: szary okrąg
+   * i bursztynowy łuk tego, co z przerwy zostało. Ile serii za tobą widać
+   * kątem oka, bez czytania liczby.
+   */
+  paintRing() {
+    const w = this.w
+    if (!w || !w.ring || this.state.view !== VIEW_SETS) return
+    const ex = this.current()
+    if (this.resting()) {
+      // Łuk przesuwa się co pięć sekund, nie co sekundę: zegar już pisze
+      // raz na sekundę, a drugi zapis na każde tyknięcie podwajał koszt
+      // przerwy. Przy dwuminutowej przerwie to i tak 24 kroki po 15 stopni.
+      const since = Math.floor((Date.now() - this.state.phaseSince) / 5000) * 5
+      const total = ex && ex.restSec > 0 ? ex.restSec : 0
+      // Bez zaplanowanej przerwy łuk stoi pełny - nie ma czego odliczać.
+      const zostalo = total > 0 ? Math.max(0, Math.min(1, 1 - since / total)) : 1
+      this.luk(w.ring[0], -90, 270, RING_TODO)
+      // Łuk zerowej długości bywa rysowany jako kropka - stąd ukrycie.
+      this.setVisible(w.ring[1], zostalo > 0.005)
+      // Ubywa od góry zgodnie ze wskazówkami zegara: koniec stoi na
+      // dwunastej, a początek goni go jak wskazówka.
+      this.luk(w.ring[1], -90 + 360 * (1 - zostalo), 270, AMBER)
+      return
+    }
+    if (!ex) return
+    const n = this.ringCount()
+    const done = this.shownDone(ex)
+    const seg = 360 / n
+    const biezacy = this.pendingCount() > 0 ? PENDING : ACCENT
+    for (let i = 0; i < n; i++) {
+      const start = -90 + i * seg + RING_GAP_DEG / 2
+      const color = i < done ? RING_DONE : (i === done ? biezacy : RING_TODO)
+      this.luk(w.ring[i], start, start + seg - RING_GAP_DEG, color)
+    }
+  },
+
   /**
    * Zapas powtórzeń dla serii, którą właśnie skończyłeś.
    *
@@ -2028,6 +2460,8 @@ Page({
     const w = this.w
     if (!w || !w.statSync) return
     const n = this.czeka()
+    this.setVisible(w.statSync, n > 0 && !this.state.message && this.state.view === VIEW_STATS)
+    if (!n) return
     this.setText(w.statSync, this.syncText())
     this.kolor(w.statSync, n ? (this.state.offline ? AMBER : PENDING) : DIM)
   },
@@ -2097,15 +2531,19 @@ Page({
     // Ciężar i powtórzenia podpisane, bez surowego "x". To są te same
     // wartości, które pójdą do dziennika po naciśnięciu - czyli to, co
     // ustawiłeś na ekranie obok, a nie zakres z planu.
-    if (this.askingRir()) {
-      this.setText(w.load, 'ile powtórzeń zostało?')
-    } else {
-      this.setText(
-        w.load,
-        (ex.hasWeight
-          ? this.num(this.state.weight) + ' ' + ex.unit + '   '
-          : '') + 'pow. ' + this.state.reps
-      )
+    this.setText(
+      w.load,
+      (ex.hasWeight
+        ? this.num(this.state.weight) + ' ' + ex.unit + ' · '
+        : '') + this.state.reps + ' pow.'
+    )
+    const list = (this.state.data && this.state.data.exercises) || []
+    this.setText(w.exPos, 'ćwiczenie ' + (this.state.index + 1) + ' z ' + list.length)
+    if (this.resting()) {
+      const done = this.shownDone(ex)
+      this.setText(w.restNext, done >= ex.sets
+        ? 'ćwiczenie zrobione'
+        : 'dalej seria ' + (done + 1) + ' z ' + ex.sets)
     }
     this.paintClock()
   },
@@ -2120,14 +2558,17 @@ Page({
     const ex = this.current()
     if (!ex || !this.w || !this.w.count) return
     const done = this.shownDone(ex)
+    const pominiete = this.isSkipped(ex.id)
+    // Sama liczba „2 / 4" - słowo „SERIA" stoi nad nią osobno. Słowo
+    // w przycisku dostaje mniejsze pismo, inaczej nie zmieści się w tarczy.
     this.setBtn(this.w.count, {
-      text: this.isSkipped(ex.id)
+      text: pominiete
         ? 'POMINIĘTE'
-        : (done >= ex.sets
-          ? 'ZROBIONE ' + done + ' z ' + ex.sets
-          : 'SERIA ' + (done + 1) + ' z ' + ex.sets),
+        : Math.min(done + 1, ex.sets) + ' / ' + ex.sets,
+      text_size: px(pominiete ? COUNT_WORD_SIZE : COUNT_SIZE),
       color: this.pendingCount() > 0 ? PENDING : ACCENT
     })
+    this.paintRing()
   },
 
   /**
@@ -2151,14 +2592,15 @@ Page({
    * ekranie i tak jeździła na boki. System umie to zmierzyć naprawdę,
    * a stara arytmetyka zostaje na wypadek, gdyby nie umiał.
    */
-  textWidth(text) {
+  textWidth(text, size) {
+    const rozmiar = size || NAME_SIZE
     try {
       const wymiar = hmUI.getTextLayout(String(text), {
-        text_size: px(NAME_SIZE), text_width: 0, wrapped: 0
+        text_size: px(rozmiar), text_width: 0, wrapped: 0
       })
       if (wymiar && wymiar.width > 0) return wymiar.width
     } catch (e) {}
-    return Math.ceil(String(text).length * NAME_CHAR_W)
+    return Math.ceil(String(text).length * NAME_CHAR_W * rozmiar / NAME_SIZE)
   },
 
   paintName(text) {
@@ -2254,18 +2696,46 @@ Page({
   paintStats() {
     const w = this.w
     const data = this.state.data || {}
-    const totals = data.totals || {}
     const paused = !!data.paused
     this.setText(w.statTime, this.clock(this.sessionSeconds()))
-    this.setText(w.statTimeLabel, paused ? 'Wstrzymany' : 'Czas treningu')
-    this.kolor(w.statTimeLabel, paused ? AMBER : DIM)
-    this.setText(w.statSets, String(this.shownTotalSets()))
-    this.setText(w.statSetsLabel, 'Serie')
-    this.setText(w.statKcal, this.kcalText())
-    this.setText(w.statKcalLabel, this.state.kcalFail ? 'Kalorie - brak zgody' : 'Kalorie')
+    this.setText(w.statTimeLabel, paused ? 'WSTRZYMANY' : 'CZAS TRENINGU')
+    this.kolor(w.statTimeLabel, paused ? AMBER : ACCENT)
+    const plan = ((data.exercises) || []).reduce((n, ex) => n + (ex.sets || 0), 0)
+    this.wiersz(w.statRows[1], String(this.shownTotalSets()),
+      plan ? 'z ' + plan + ' serii' : 'serii')
+    this.wiersz(w.statRows[0], this.kcalText(),
+      this.state.kcalFail ? 'kcal - brak zgody' : 'kcal')
     this.kolor(w.statKcalLabel, this.state.kcalFail ? AMBER : DIM)
-    this.setText(w.statVolume, Math.round(this.sumy().tonnage || 0) + ' kg objętości')
+    const ton = Math.round(this.sumy().tonnage || 0)
+    this.wiersz(w.statRows[2],
+      ton >= 1000 ? this.num(Math.round(ton / 100) / 10) + ' t' : ton + ' kg', 'objętości')
     this.paintSync()
+  },
+
+  /**
+   * Liczba i podpis w jednym wierszu: podpis dosuwa się do prawej
+   * krawędzi liczby. Przesunięcie tylko wtedy, gdy liczba zmieniła
+   * szerokość - kalorie rosną co kilka sekund, a szerokość rzadko.
+   */
+  wiersz(r, tekst, opis) {
+    this.setText(r.liczba, tekst)
+    this.setText(r.podpis, opis)
+    const wl = this.textWidth(tekst, STAT_NUM_SIZE)
+    const wp = this.textWidth(opis, STAT_LABEL_SIZE)
+    const x0 = Math.round(DEVICE_WIDTH / 2 - (STAT_ICON + STAT_GAP + wl + 8 + wp) / 2)
+    // Przesunięcie tylko wtedy, gdy zmieniła się szerokość - kalorie rosną
+    // co kilka sekund, a liczba cyfr rzadko.
+    const uklad = x0 + ':' + wl + ':' + wp
+    if (r.uklad === uklad) return
+    r.uklad = uklad
+    r.ikona.setProperty(hmUI.prop.MORE, {
+      x: px(x0), y: px(r.y + (STAT_ROW_H - STAT_ICON) / 2), src: r.src
+    })
+    const xl = x0 + STAT_ICON + STAT_GAP
+    r.liczba.setProperty(hmUI.prop.MORE, { x: px(xl), y: px(r.y), w: px(wl + 6), h: px(STAT_ROW_H) })
+    r.podpis.setProperty(hmUI.prop.MORE, {
+      x: px(xl + wl + 8), y: px(r.y), w: px(wp + 6), h: px(STAT_ROW_H)
+    })
   },
 
   /**
@@ -2283,6 +2753,23 @@ Page({
     if (bpm < z.tempo) return ZONE_TEMPO
     if (bpm < z.anaerobic) return ZONE_ANAEROBIC
     return ZONE_MAX
+  },
+
+  /** Numer strefy 0-4 albo -1, gdy telefon nie przysłał progów. */
+  hrZone(bpm) {
+    const z = this.state.zones
+    if (!z || !bpm) return -1
+    if (bpm < z.easy) return 0
+    if (bpm < z.aerobic) return 1
+    if (bpm < z.tempo) return 2
+    if (bpm < z.anaerobic) return 3
+    return 4
+  },
+
+  /** Ten sam kolor przygaszony - strefy, w których akurat nie jesteś. */
+  ciemny(c) {
+    const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff
+    return (Math.round(r * 0.3) << 16) | (Math.round(g * 0.3) << 8) | Math.round(b * 0.3)
   },
 
   hrZoneName(bpm) {
@@ -2329,11 +2816,7 @@ Page({
     this.kolor(this.w.hr, kolor)
     this.kolor(this.w.hrIcon, kolor)
     this.placeHeart(value)
-    if (this.state.view === VIEW_HEART) {
-      this.setText(this.w.heartValue, value)
-      this.kolor(this.w.heartValue, kolor)
-      this.setText(this.w.heartLabel, this.hrZoneName(this.state.hr) || 'Tętno')
-    }
+    if (this.state.view === VIEW_HEART) this.paintHeartTop()
   },
 
   /**
@@ -2350,7 +2833,36 @@ Page({
     const half = (value.length * HR_DIGIT_W) / 2
     const right = Math.round(DEVICE_WIDTH / 2 - half - HR_GAP)
     this.w.hrIcon.setProperty(hmUI.prop.MORE, {
-      x: px(right - HR_ICON_W), y: px(66), w: px(HR_ICON_W), h: px(58)
+      x: px(right - HR_ICON_W), y: px(70), w: px(HR_ICON_W), h: px(46)
+    })
+  },
+
+  /**
+   * Góra ekranu tętna: liczba z sercem, nazwa strefy i łuk stref.
+   *
+   * Woła to czujnik co sekundę, więc każdy zapis tylko przy zmianie -
+   * łuk przemalowuje się, gdy zmienia się strefa, nie gdy tętno.
+   */
+  paintHeartTop() {
+    const w = this.w
+    const bpm = this.state.hr
+    const value = bpm > 0 ? String(bpm) : '--'
+    const strefa = this.hrZone(bpm)
+    this.setText(w.heartValue, value)
+    this.setText(w.heartLabel, (this.hrZoneName(bpm) || 'tętno').toUpperCase())
+    this.kolor(w.heartLabel, strefa >= 0 ? ZONE_COLORS[strefa] : DIM)
+    // Serce przy lewej krawędzi liczby, jak na ekranie serii.
+    if (w.heartIcon.cyfr !== value.length) {
+      w.heartIcon.cyfr = value.length
+      const prawa = Math.round(DEVICE_WIDTH / 2 - (value.length * HEART_DIGIT_W) / 2 - 14)
+      w.heartIcon.setProperty(hmUI.prop.MORE, {
+        x: px(prawa - 44), y: px(120), w: px(44), h: px(46)
+      })
+    }
+    w.heartZones.forEach((arc, i) => {
+      const start = ZONE_ARC_FROM + i * ZONE_ARC_STEP + 2
+      const kolor = strefa < 0 ? GREY : (i === strefa ? ZONE_COLORS[i] : this.ciemny(ZONE_COLORS[i]))
+      this.luk(arc, start, start + ZONE_ARC_STEP - 4, kolor)
     })
   },
 
@@ -2359,36 +2871,46 @@ Page({
    *
    * Skala dopasowuje się do zebranych próbek, bo stały zakres 50-190 spłaszcza
    * wszystko do kilku pikseli - przy pracy na 120-140 nie widać wtedy ani
-   * wejścia w serię, ani zejścia w przerwie.
+   * wejścia w serię, ani zejścia w przerwie. Słupki w kolorach stref:
+   * od razu widać, ile z ostatnich minut było w której.
    */
   paintHeart() {
     const w = this.w
     const log = this.state.hrLog
-    this.setText(w.heartLabel, this.hrZoneName(this.state.hr) || 'Tętno')
-    this.setText(w.heartValue, this.state.hr > 0 ? this.state.hr : '--')
-    this.kolor(w.heartValue, this.hrColor(this.state.hr))
+    this.paintHeartTop()
+    this.setText(w.heartUnit, 'uderzeń na minutę')
 
     if (!log.length) {
       this.setText(w.heartRange, 'zbieram pomiary...')
+      this.kolor(w.heartRange, DIM)
+      this.setText(w.heartAxisL, '')
+      this.setText(w.heartAxisR, '')
       w.bars.forEach((bar) => this.setVisible(bar, false))
       return
     }
 
     let lo = log[0]
     let hi = log[0]
-    for (let i = 1; i < log.length; i++) {
+    let suma = 0
+    for (let i = 0; i < log.length; i++) {
       if (log[i] < lo) lo = log[i]
       if (log[i] > hi) hi = log[i]
+      suma += log[i]
     }
-    // Podpis mówi o całej sesji, słupki o ostatnich minutach - inaczej
-    // "minimum" znaczyłoby minimum z dwóch minut i wychodziło absurdalnie
-    // wysoko zaraz po serii.
-    const okno = Math.round((log.length * BAR_EVERY_MS) / 60000)
+    // Zakres i średnia mówią o całej sesji, słupki o ostatnich minutach -
+    // inaczej "minimum" znaczyłoby minimum z dwóch minut i wychodziło
+    // absurdalnie wysoko zaraz po serii.
+    const sekundy = Math.round((log.length * BAR_EVERY_MS) / 1000)
+    this.setText(w.heartAxisL, sekundy < 60 ? '-' + sekundy + ' s' : '-' + Math.round(sekundy / 60) + ' min')
+    this.setText(w.heartAxisR, 'teraz')
+    const sr = this.state.hrCnt
+      ? Math.round(this.state.hrSum / this.state.hrCnt)
+      : Math.round(suma / log.length)
     this.setText(
       w.heartRange,
-      'sesja ' + (this.state.hrMin || lo) + '-' + (this.state.hrMax || hi) +
-        '     wykres ' + okno + ' min'
+      'min ' + (this.state.hrMin || lo) + '    śr ' + sr + '    max ' + (this.state.hrMax || hi)
     )
+    this.kolor(w.heartRange, FG)
 
     const floor = lo - 5
     const span = Math.max(hi - floor, 20)
@@ -2401,9 +2923,11 @@ Page({
       if (frac < 0.06) frac = 0.06
       if (frac > 1) frac = 1
       const h = Math.round(frac * BAR_MAX_H)
+      const strefa = this.hrZone(log[i])
       bar.setProperty(hmUI.prop.MORE, {
         x: px(BAR_X0 + i * (BAR_W + BAR_GAP)), y: px(BAR_BASE - h),
-        w: px(BAR_W), h: px(h), radius: px(2), color: HEART
+        w: px(BAR_W), h: px(h), radius: px(3),
+        color: strefa >= 0 ? ZONE_COLORS[strefa] : HEART
       })
       this.setVisible(bar, true)
     })
@@ -2413,9 +2937,10 @@ Page({
     const w = this.w
     const ex = this.current()
     if (!ex) return
-    this.setText(w.wLabel, 'Ciężar')
+    this.setText(w.editName, ex.name)
+    this.setText(w.wLabel, ex.hasWeight && ex.unit ? 'CIĘŻAR · ' + String(ex.unit).toUpperCase() : 'CIĘŻAR')
     this.setText(w.wValue, ex.hasWeight ? this.num(this.state.weight) : '-')
-    this.setText(w.rLabel, 'Powtórzenia')
+    this.setText(w.rLabel, 'POWTÓRZENIA')
     this.setText(w.rValue, String(this.state.reps))
   },
 
@@ -2525,19 +3050,38 @@ Page({
     this.setText(w.logTitle, ex.name)
     const lista = this.logRows()
     const od = this.logFrom()
+    let ton = 0
+    lista.forEach((e) => { ton += (e.weight || 0) * (e.reps || 0) })
+    const n = lista.length
+    const slowo = n === 1 ? 'seria' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? 'serie' : 'serii'
+    this.setText(w.logSub, n + ' ' + slowo + (ex.hasWeight && ton > 0
+      ? ' · ' + (ton >= 1000 ? this.num(Math.round(ton / 100) / 10) + ' t' : Math.round(ton) + ' ' + ex.unit)
+      : ''))
+    this.setText(w.logHead[1], ex.hasWeight && ex.unit ? String(ex.unit).toUpperCase() : 'KG')
     lista.slice(od, od + LOG_ROWS).forEach((e, i) => {
-      this.setBtn(w.logRows[i], {
-        text: (od + i + 1) + '.  ' + this.num(e.weight) + ' ' + ex.unit + '  x ' + e.reps +
-          (e.rir >= 0 ? '   RIR ' + (e.rir >= 3 ? '3+' : e.rir) : ''),
-        color: FG
-      })
+      const c = w.logCells[i]
+      this.setText(c[0], String(od + i + 1))
+      this.setText(c[1], ex.hasWeight ? this.num(e.weight) : '-')
+      this.setText(c[2], String(e.reps))
+      const z = e.rir >= 0 ? e.rir : -1
+      this.setText(c[3], z < 0 ? '-' : z >= 3 ? '3+' : String(z))
+      this.kolor(c[3], z < 0 ? DIM : z === 0 ? RED : z === 1 ? AMBER : TEAL)
+      // Najnowsza seria podświetlona - to ją poprawia się najczęściej.
+      const kolor = od + i === n - 1 ? LOG_NEWEST : 0x000000
+      if (w.logRows[i].tlo !== kolor) {
+        w.logRows[i].tlo = kolor
+        w.logRows[i].setProperty(hmUI.prop.MORE, {
+          x: px(LOG_X), y: px(LOG_TOP + i * LOG_ROW_GAP), w: px(LOG_W), h: px(LOG_ROW_H),
+          radius: px(12), color: kolor
+        })
+      }
     })
     // Podpis mówi, ile zostało poza oknem - inaczej nic nie zdradza,
     // że gest w dół w ogóle coś da.
     this.setText(
       w.logHint,
       lista.length === 0 ? 'brak zapisanych serii'
-        : lista.length <= LOG_ROWS ? 'dotknij, by poprawić'
+        : lista.length <= LOG_ROWS ? 'dotknij wiersza, by poprawić'
           : (od + 1) + '-' + Math.min(od + LOG_ROWS, lista.length) +
             ' z ' + lista.length + ' · w dół po resztę'
     )
@@ -2570,10 +3114,10 @@ Page({
     const fix = this.state.fix
     const ex = this.current()
     if (!fix || !ex) return
-    this.setText(w.fixTitle, 'Seria ' + fix.nr)
-    this.setText(w.fixWLabel, 'Ciężar')
+    this.setText(w.fixName, ex.name)
+    this.setText(w.fixTitle, 'SERIA ' + fix.nr + ' Z ' + this.logRows().length)
+    this.setText(w.fixWLabel, ex.hasWeight && ex.unit ? String(ex.unit).toUpperCase() : 'KG')
     this.setText(w.fixWValue, ex.hasWeight ? this.num(fix.weight) : '-')
-    this.setText(w.fixRLabel, 'Powtórzenia')
     this.setText(w.fixRValue, String(fix.reps))
     // Zapas napisany słowem, nie tylko podświetlony. Sam kolor przycisku
     // nie wystarczał: cztery szare pola i jedno zielone na małej tarczy
@@ -2585,11 +3129,17 @@ Page({
       wybrany < 0 ? 'zapas: nie podano'
         : 'zapas: ' + (wybrany >= 3 ? '3+' : wybrany)
     )
+    // Wybrany zapas w kolorze z dziennika: 0 czerwony, 1 bursztyn, 2+ turkus.
+    const tla = [0x3a1f1f, 0x3a2a12, 0x0b4a42, 0x0b4a42]
+    const napisy = [RED, AMBER, TEAL, TEAL]
     w.fixRirRow.forEach((btn, i) => {
-      this.setBtn(btn, { normal_color: i === wybrany ? GREEN : GREY })
+      this.setBtn(btn, {
+        normal_color: i === wybrany ? tla[i] : SIDE_COLOR,
+        color: i === wybrany ? napisy[i] : FG
+      })
     })
     this.setBtn(w.fixDelete, {
-      text: this.state.fixConfirm ? 'na pewno?' : 'usuń',
+      text: this.state.fixConfirm ? 'NA PEWNO?' : 'USUŃ',
       normal_color: this.state.fixConfirm ? 0x8a1f1f : 0x3a1f1f
     })
   },
@@ -2801,10 +3351,6 @@ Page({
     this.paintControlClock()
     this.setText(w.ctrlHint, 'przesuń w lewo, by wrócić')
     this.setBtn(w.ctrlPause, { text: paused ? 'WZNÓW' : 'WSTRZYMAJ' })
-    const ex = this.current()
-    this.setBtn(w.ctrlSkip, {
-      text: ex && this.isSkipped(ex.id) ? 'PRZYWRÓĆ ĆWICZENIE' : 'POMIŃ ĆWICZENIE'
-    })
   },
 
   paintStart() {
@@ -3155,6 +3701,8 @@ Page({
     this.state.pausedLocal = null
     this.state.hrMin = 0
     this.state.hrMax = 0
+    this.state.hrSum = 0
+    this.state.hrCnt = 0
     this.state.startedAt = 0
     this.state.planId = null
     this.forget()
@@ -3796,6 +4344,8 @@ Page({
       if (data.next && data.next.name) this.state.nextUnit = data.next.name
       this.state.hrMin = 0
       this.state.hrMax = 0
+      this.state.hrSum = 0
+      this.state.hrCnt = 0
       this.forget()
       this.state.view = VIEW_START
       // Zegarek sam zaczyna trening - inaczej "klikam tylko na zegarku"

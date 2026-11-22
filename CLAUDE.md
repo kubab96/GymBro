@@ -44,7 +44,7 @@ Demon Gradle'a zostaje w tle po buildzie i **trzyma uchwyty do katalogu projektu
 
 ```sh
 cd gymbro-watch
-node tools/check.js          # 494 sprawdzenia, bez zegarka
+node tools/check.js          # 549 sprawdzen, bez zegarka
 zeus build
 zeus preview -t "Amazfit Balance"
 ```
@@ -53,7 +53,16 @@ zeus preview -t "Amazfit Balance"
 
 W PowerShellu wołaj `zeus.cmd`, nie `zeus`.
 
-**Każda zmiana w `gymbro-watch/` kończy się kodem QR.** Bez niego poprawka leży w repozytorium, a na nadgarstku zostaje stara wersja - i następny trening wygląda tak, jakby nikt niczego nie naprawił. Więc po zmianie: `node tools/check.js`, `zeus build`, `zeus preview -t "Amazfit Balance"`, a obrazek QR podaj użytkownikowi do zeskanowania. Nie pytaj, czy go chce.
+**Każda zmiana w `gymbro-watch/` kończy się kodem QR pokazanym w rozmowie.** Bez niego poprawka leży w repozytorium, a na nadgarstku zostaje stara wersja - i następny trening wygląda tak, jakby nikt niczego nie naprawił. Więc po zmianie: `node tools/check.js`, `zeus build`, `zeus preview -t "Amazfit Balance"`, a obrazek QR wyślij użytkownikowi do rozmowy (plik przez `SendUserFile`). Nie pytaj, czy go chce, i nie kończ pracy nad zegarkiem bez niego - sam opis „trzeba jeszcze zbudować" się nie liczy. Gdy kodu nie da się zrobić (testy padają, `zeus` nie działa), napisz to wprost na końcu odpowiedzi jako niezałatwione.
+
+`zeus preview` rysuje kod w terminalu pół-blokami, a tekstu nie da się zeskanować. Na obrazek przerabia go `tools/qr.js`:
+
+```sh
+zeus.cmd preview -t "Amazfit Balance" *> podglad.txt     # PowerShell
+node tools/qr.js podglad.txt qr/zegarek-qr.png
+```
+
+Kod jest ważny tydzień. Katalog `qr/` jest poza repozytorium.
 
 `tools/check.js` ładuje prawdziwy `page/index.js` z zaślepkami pod `@zos/*` i pod telefon, po czym przechodzi scenariusze tak, jak robi to palec. **Sprawdza zachowanie, nie składnię** - przepływ ekranów, licznik serii, kolejkę offline, liczbę zapisów do widgetów. Nie powie, że napis się obcina.
 
@@ -269,7 +278,9 @@ Gałąź domyślna to `master`, zdalne `origin` to `github.com/kubab96/GymBro`.
 
 **Awarie zapisują się do pliku** (`CrashLog.kt`), bo HyperOS nie zostawia po awarii aplikacji zrzutu w systemie, a logcat nadpisuje się w kilka godzin. Odczyt: `adb exec-out run-as pl.gymbro cat files/awarie.txt`. Tam też lądują błędy złapane po drodze - liczenie propozycji po treningu nie może zatrzymać jego końca, więc jego wyjątek idzie do pliku, a trening się zamyka.
 
-**Na zegarku nic się nie animuje poza nazwą ćwiczenia** (raz tam i z powrotem). Pełnoekranowa zasłona przejścia i błysk w 60 klatkach były ćwierć sekundy głuchoty na palec przy każdej zmianie ekranu. Zapis do pamięci czeka na 1,2 s ciszy po ostatnim dotyku (`CISZA_MS`); tylko START i FINISH idą do pliku od razu.
+**Na zegarku nic się nie animuje poza nazwą ćwiczenia** (raz tam i z powrotem). Pełnoekranowa zasłona przejścia i błysk w 60 klatkach były ćwierć sekundy głuchoty na palec przy każdej zmianie ekranu. Lżejsza próba - 2-3 napisy nagłówka wjeżdżające o 28 px w 180 ms - też wyszła na zegarku gorzej niż brak przejścia i została cofnięta (2026-11-22). Zapis do pamięci czeka na 1,2 s ciszy po ostatnim dotyku (`CISZA_MS`); tylko START i FINISH idą do pliku od razu.
+
+**Ekran serii: pierścień na krawędzi, strzałki na bokach.** Odcinek pierścienia na serię (do 10), w przerwie bursztynowy łuk odlicza czas - i przesuwa się co 5 s, nie co sekundę, bo zegar już pisze raz na sekundę (`check.js` liczy zapisy łuku osobno). Strzałki poprzednie/następne ćwiczenie stoją po bokach bez nazw i nie znikają przy pytaniu o zapas. Ekran sterowania ma tylko Wstrzymaj i Zakończ - pomijanie ćwiczenia zostało usunięte. **Każde pole dotyku ma co najmniej 50 px w każdą stronę** (`check.js` to pilnuje) - zegarek jest mały, a palec nie. Ikony ekranu czasu to obrazki z `tools/ikony.js`, bo zegarek nie obraca prostokątów. **Gest zaczęty na przycisku liczy sam przycisk** (`sledzPalec`: naciśnięcie, ruch, wyjście palca) i oddaje go tej samej obsłudze co `onGesture` - dotyk na przycisku nie dochodził do systemu jako gest, a przyciski zajmują dziś większość ekranu serii. Ten sam ruch z dwóch źródeł w 450 ms liczy się raz. Dotknięcie pola, które nie jest przyciskiem (wiersz dziennika, odliczanie przerwy), działa po 190 ms i gest w tym czasie je odwołuje (`KLIK_ZWLOKA_MS`): wiersz nie zawsze dostaje ruch palca, system oddaje gest dopiero po podniesieniu i poprawka migała przy wyjściu z dziennika. Niesprawdzone w dokumentacji, czy system nie oddaje takich gestów sam - jeśli tak, chroni przed tym właśnie to okno. **W trakcie treningu żaden gest nie wraca do systemu** (`return true` poza wyborem jednostki): gest w prawo oddany systemowi zamykał aplikację, co ze sterowania wyglądało jak awaria „nie zawsze".
 
 **Mierz, nie dedukuj.** Lagi przycisków na zegarku dwa razy „naprawiono" bez pomiaru i dwa razy wróciły. Przyczyny okazały się trzy naraz: animacja nazwy chodząca bez przerwy, operacja na pamięci w ścieżce kliknięcia i 134 zapisy do widgetów przy przejściu, z których 110 nic nie zmieniało. `tools/check.js` liczy zapisy i zapisy do pamięci - używaj tego. Po naprawie cofnij poprawkę i sprawdź, czy test faktycznie pada.
 

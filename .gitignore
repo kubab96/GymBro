@@ -30,6 +30,7 @@ Thumbs.db
 # 127.0.0.1:48627, wiec nie ma go w repozytorium.
 # Wzor do skopiowania: gymbro-watch/utils/config/link.example.js
 gymbro-watch/utils/config/link.js
+gymbro-watch/qr/
 
 # Paczki .zab/.zpk zbudowane przez zeus
 *.zab
