@@ -51,6 +51,8 @@ import pl.gymbro.data.Food
 import pl.gymbro.data.FoodLogEntry
 import pl.gymbro.data.Meal
 import pl.gymbro.data.Nutrients
+import pl.gymbro.data.Phase
+import pl.gymbro.data.ProfileRepository
 import pl.gymbro.data.Recipe
 import pl.gymbro.data.todayEpochDay
 import pl.gymbro.net.Barcodes
@@ -86,6 +88,12 @@ fun FoodScreen() {
 
     var day by remember { mutableStateOf(todayEpochDay()) }
     var today by remember { mutableStateOf<NutritionReview.Today?>(null) }
+
+    // Faza siedzi tu, nie w Profilu: z niej liczy się cel kalorii, a obok
+    // celu treningowego („mięśnie") czytała się jak sprzeczność - „masa"
+    // i „redukcja" naraz. Progresja czyta to samo pole co dotąd.
+    val profileRepo = remember { ProfileRepository(context) }
+    var phase by remember { mutableStateOf<Phase?>(null) }
 
     // Niepusty posiłek znaczy „jesteśmy w widoku szukania i dodajemy do niego".
     var searchFor by remember { mutableStateOf<Meal?>(null) }
@@ -129,7 +137,8 @@ fun FoodScreen() {
     var filled by remember { mutableStateOf<Set<Long>>(emptySet()) }
 
     suspend fun reload() {
-        today = withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
+        phase = withContext(Dispatchers.IO) { profileRepo.get().phase }
+        today =withContext(Dispatchers.IO) { NutritionReview.refresh(day, repos) }
         val monday = weekStartDay(day)
         filled = withContext(Dispatchers.IO) { repos.diary.daysWithEntries(monday, monday + 6) }
     }
@@ -374,6 +383,20 @@ fun FoodScreen() {
             day = day,
             filled = filled,
             status = status,
+            phase = phase,
+            onPhase = { nowa ->
+                phase = nowa
+                scope.launch {
+                    // Profil z bazy tuż przed zapisem i zmiana tylko fazy -
+                    // reszta mogła się w międzyczasie zmienić w Profilu.
+                    withContext(Dispatchers.IO) {
+                        profileRepo.save(profileRepo.get().copy(phase = nowa))
+                    }
+                    // Cel kalorii przelicza się przy odczycie dnia, a Profil
+                    // i Trening żyją w tle.
+                    Refresh.bump()
+                }
+            },
             onDay = { day = it; status = null },
             onAdd = { m -> status = null; searchFor = m },
             onEntry = { e ->
@@ -505,6 +528,8 @@ private fun DayView(
     day: Long,
     filled: Set<Long>,
     status: String?,
+    phase: Phase?,
+    onPhase: (Phase) -> Unit,
     onDay: (Long) -> Unit,
     onAdd: (Meal) -> Unit,
     onEntry: (FoodLogEntry) -> Unit
@@ -538,6 +563,7 @@ private fun DayView(
             item(key = "podsumowanie") {
                 Spacer(Modifier.height(10.dp))
                 SummaryCard(today)
+                if (phase != null) PhaseRow(phase, onPhase)
                 status?.let {
                     Text(
                         it,
@@ -564,6 +590,25 @@ private fun DayView(
             }
             item(key = "dol") { Spacer(Modifier.height(16.dp)) }
         }
+    }
+}
+
+/**
+ * Co ma się dziać z masą ciała - z tego liczy się deficyt albo nadwyżka.
+ *
+ * Słowami celu, nie nazwami faz: „redukcja" obok „masy" w celu treningowym
+ * czytała się jak dwa wykluczające się wybory.
+ */
+@Composable
+private fun PhaseRow(phase: Phase, onPhase: (Phase) -> Unit) {
+    val fazy = listOf(Phase.CUT, Phase.MAINTAIN, Phase.BULK)
+    Column(Modifier.fillMaxWidth()) {
+        GroupLabel("Masa ciała")
+        SegmentedTabs(
+            labels = listOf("schudnąć", "utrzymać", "przybrać"),
+            selected = fazy.indexOf(phase),
+            onSelect = { onPhase(fazy[it]) }
+        )
     }
 }
 

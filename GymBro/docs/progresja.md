@@ -712,7 +712,8 @@ Zaimplementowane:
   plus przyciski zbiorcze nad listą.
 - **Plakietka przy zakładce Plan**, gasnąca po zajrzeniu.
 - **Kafelek w historii treningu** z przejściem do planu.
-- **Ustawienia w Profilu** - cel treningowy i faza.
+- **Ustawienia** - cel treningowy w Profilu, faza („Masa ciała": schudnąć,
+  utrzymać, przybrać) w zakładce Kalorie, bo z niej liczy się cel kalorii.
 - **Wyciszanie w edytorze planu** - wybór trybu „Progresja": pełna, bez
   ciężaru, bez powtórzeń, wyłączona (rozdział 8).
 

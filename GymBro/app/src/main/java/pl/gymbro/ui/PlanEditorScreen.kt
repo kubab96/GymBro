@@ -515,29 +515,19 @@ private fun UnitListCard(
         ) {
             Column(Modifier.weight(1f)) {
                 Text(plan.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Row(
-                    Modifier.padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // Propozycje po treningu widać już na liście - żeby było
+                // wiadomo, do której jednostki zajrzeć.
+                if (pending > 0) {
                     Text(
-                        plan.day?.let { dayLabel(it) } ?: "bez stałego dnia",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        plural(pending, "propozycja", "propozycje", "propozycji"),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier
+                            .padding(top = 4.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
                     )
-                    // Propozycje po treningu widać już na liście - żeby było
-                    // wiadomo, do której jednostki zajrzeć.
-                    if (pending > 0) {
-                        Text(
-                            plural(pending, "propozycja", "propozycje", "propozycji"),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
                 }
             }
             Box {
@@ -572,10 +562,6 @@ private fun UnitListCard(
         )
     }
 }
-
-private fun dayLabel(d: Int): String =
-    listOf("poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela")
-        .getOrElse(d - 1) { "dzień $d" }
 
 /** Zmiana nazwy - okno, bo to pytanie o jedno słowo, a nie miejsce pracy. */
 @Composable

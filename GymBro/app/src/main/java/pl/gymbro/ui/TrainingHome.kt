@@ -147,12 +147,11 @@ private fun TrainingPage(
     val suggested = options.minByOrNull { it.lastDoneAt ?: 0L }
     val rest = options.filter { it.plan.id != suggested?.plan?.id }
 
-    // Ten tydzień: treningi siłowe od poniedziałku. Cel „z N" tylko wtedy,
-    // gdy wszystkie jednostki mają przypisany dzień - liczba jednostek nie
-    // mówi, ile razy w tygodniu ktoś trenuje (PPL bywa i trzy, i sześć razy).
+    // Ten tydzień: treningi siłowe od poniedziałku. Bez celu „z N": liczba
+    // jednostek nie mówi, ile razy w tygodniu ktoś trenuje (PPL bywa i trzy,
+    // i sześć razy), a dni tygodnia przy jednostkach już nie ma.
     val weekFrom = ProgressStats.weekStart(System.currentTimeMillis())
     val thisWeek = activities.count { it is Activity.Strength && it.at >= weekFrom }
-    val goal = options.takeIf { o -> o.isNotEmpty() && o.all { it.plan.day != null } }?.size
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         Row(
@@ -175,7 +174,7 @@ private fun TrainingPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Text(
-                    if (goal != null) "$thisWeek z $goal" else "$thisWeek",
+                    "$thisWeek",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -321,8 +320,7 @@ private fun NextUnitCard(o: PlanOption, onClick: () -> Unit) {
             Text(
                 listOfNotNull(
                     "${o.exerciseCount} ćwiczeń",
-                    o.sets.takeIf { it > 0 }?.let { "$it serii" },
-                    o.plan.day?.let { dayName(it) }
+                    o.sets.takeIf { it > 0 }?.let { "$it serii" }
                 ).joinToString("  ·  "),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -352,8 +350,7 @@ internal fun UnitRow(o: PlanOption, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(o.plan.name, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    (o.plan.day?.let { dayName(it) + " · " } ?: "") +
-                        "${o.exerciseCount} ćwiczeń · ${lastDoneLabel(o.lastDoneAt)}",
+                    "${o.exerciseCount} ćwiczeń · ${lastDoneLabel(o.lastDoneAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -446,7 +443,3 @@ internal fun lastDoneLabel(ms: Long?): String {
         else -> "$days dni temu"
     }
 }
-
-private fun dayName(d: Int): String =
-    listOf("poniedziałek", "wtorek", "środa", "czwartek", "piątek", "sobota", "niedziela")
-        .getOrElse(d - 1) { "" }

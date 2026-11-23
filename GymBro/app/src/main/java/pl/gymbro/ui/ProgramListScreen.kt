@@ -174,8 +174,7 @@ private fun ProgramCard(
                 }
                 Text(
                     if (option.planCount == 0) "brak jednostek"
-                    else plural(option.planCount, "jednostka", "jednostki", "jednostek") +
-                        if (active) " · na zegarku" else "",
+                    else plural(option.planCount, "jednostka", "jednostki", "jednostek"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp)

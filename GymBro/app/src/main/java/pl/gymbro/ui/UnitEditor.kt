@@ -641,8 +641,6 @@ internal fun UnitEditorHeader(
         else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 48.dp)
     )
-    FieldLabel("Dzień tygodnia (opcjonalnie)")
-    DayChips(draft.day) { draft.day = it }
     Spacer(Modifier.height(10.dp))
 }
 
@@ -678,7 +676,7 @@ internal fun rememberAutoSavedDraft(plan: Plan): UnitDraft {
 private enum class UnitPhase { SETUP, LIBRARY, EXERCISES }
 
 /**
- * Nowa jednostka w krokach: nazwa i dzień, potem ćwiczenia z obciążeniem.
+ * Nowa jednostka w krokach: nazwa, potem ćwiczenia z obciążeniem.
  *
  * Z kreatora nowego planu i z listy jednostek - stąd [title], [stepOffset]
  * i [totalSteps]: w kreatorze to kroki 3 i 4 z czterech, przy dodawaniu do
@@ -707,7 +705,6 @@ internal fun NewUnitFlow(
 
     var phase by remember { mutableStateOf(UnitPhase.SETUP) }
     var name by remember { mutableStateOf("") }
-    var day by remember { mutableStateOf<Int?>(null) }
     var current by remember { mutableStateOf<Plan?>(null) }
 
     ScreenBackHandler {
@@ -743,15 +740,6 @@ internal fun NewUnitFlow(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                FieldLabel("Dzień tygodnia (opcjonalnie)")
-                DayChips(day) { day = it }
-                Text(
-                    if (day == null) "Bez dnia - jednostki robisz po kolei, a Trening " +
-                        "podpowie, która jest następna."
-                    else "Dzień $day w Twoim tygodniu. Dotknij jeszcze raz, żeby zdjąć.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 Spacer(Modifier.height(18.dp))
                 TextButton(
                     onClick = { phase = UnitPhase.LIBRARY },
@@ -763,7 +751,7 @@ internal fun NewUnitFlow(
                     scope.launch {
                         val id = withContext(Dispatchers.IO) {
                             val n = planRepo.plansOf(program.id).size
-                            planRepo.insertPlan(name.trim(), n, program.id, day)
+                            planRepo.insertPlan(name.trim(), n, program.id)
                         }
                         open(id)
                     }
@@ -781,9 +769,7 @@ internal fun NewUnitFlow(
                 onPick = { unit ->
                     scope.launch {
                         val id = withContext(Dispatchers.IO) {
-                            programRepo.addUnitFromLibrary(program.id, unit).also {
-                                if (day != null) planRepo.setPlanDay(it, day)
-                            }
+                            programRepo.addUnitFromLibrary(program.id, unit)
                         }
                         open(id)
                     }
@@ -807,7 +793,7 @@ internal fun NewUnitFlow(
                     StepHeader(title, stepOffset + 1, totalSteps, onDone)
                     Text(plan.name, style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        "Ćwiczenia i obciążenie" + (plan.day?.let { " · dzień $it" } ?: ""),
+                        "Ćwiczenia i obciążenie",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -819,7 +805,6 @@ internal fun NewUnitFlow(
                     TextButton(
                         onClick = {
                             name = ""
-                            day = null
                             current = null
                             phase = UnitPhase.SETUP
                         },

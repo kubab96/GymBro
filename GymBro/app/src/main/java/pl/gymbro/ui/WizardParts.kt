@@ -18,9 +18,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -81,37 +83,49 @@ internal fun StepProgress(index: Int, count: Int) {
 /**
  * Jedna odpowiedź w kreatorze - cała karta jest przyciskiem.
  *
- * Zaznaczona ma kolor, żeby po cofnięciu było widać, co się wybrało.
+ * Zaznaczona ma obwódkę w kolorze akcji, żeby po cofnięciu było widać, co
+ * się wybrało. Karta z [AppCard], nie szary prostokąt - kreator był ostatnim
+ * miejscem w starym wyglądzie, ze strzałką „▶" zamiast ikony.
  */
 @Composable
-internal fun ChoiceCard(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant
-        )
+internal fun ChoiceCard(
+    title: String,
+    subtitle: String?,
+    selected: Boolean,
+    icon: ImageVector? = null,
+    onClick: () -> Unit
+) {
+    AppCard(
+        Modifier.padding(vertical = 4.dp),
+        accent = if (selected) MaterialTheme.colorScheme.primary else null,
+        onClick = onClick
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (icon != null) {
+                IconBadge(icon)
+                Spacer(Modifier.width(12.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
-            Text("▶", style = MaterialTheme.typography.titleLarge)
+            Icon(
+                Icons.Filled.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -179,7 +193,7 @@ internal fun MiniStepper(
  * Rząd przycisków z jednym wyborem; ponowne dotknięcie wybranego go zdejmuje
  * tylko wtedy, gdy [allowNone].
  *
- * Przewijany w poziomie, bo poziomy zaawansowania i dni tygodnia nie mieszczą
+ * Przewijany w poziomie, bo poziomy zaawansowania nie mieszczą
  * się w jednej linii na węższym telefonie.
  */
 @Composable
@@ -225,34 +239,4 @@ internal fun SearchField(value: String, onChange: (String) -> Unit, placeholder:
         } else null,
         modifier = Modifier.fillMaxWidth()
     )
-}
-
-/**
- * Wybór dnia 1-7 albo żadnego - siedem równych przycisków w jednym rzędzie.
- *
- * Nie [ChipRow]: tam siódmy dzień wypadał za krawędź ekranu i trzeba było
- * przewijać rząd, żeby w ogóle zobaczyć, że niedziela istnieje.
- */
-@Composable
-internal fun DayChips(day: Int?, onDay: (Int?) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        (1..7).forEach { d ->
-            if (d == day) {
-                Button(
-                    onClick = { onDay(null) },
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.weight(1f).height(44.dp)
-                ) { Text("$d", style = MaterialTheme.typography.titleMedium) }
-            } else {
-                OutlinedButton(
-                    onClick = { onDay(d) },
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.weight(1f).height(44.dp)
-                ) { Text("$d", style = MaterialTheme.typography.titleMedium) }
-            }
-        }
-    }
 }

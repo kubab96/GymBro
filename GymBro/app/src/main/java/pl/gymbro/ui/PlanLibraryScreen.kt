@@ -15,9 +15,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -61,7 +69,7 @@ private const val ANY = 0
  *
  * Dwie ścieżki od pierwszego pytania, obie po cztery kroki:
  *
- * - **własny**: nazwa planu → nowa jednostka (nazwa, opcjonalnie dzień) →
+ * - **własny**: nazwa planu → nowa jednostka (nazwa) →
  *   ćwiczenia i obciążenie, z „Kolejna jednostka" albo „Gotowe" na końcu,
  * - **gotowy**: ile razy w tygodniu → plany z filtrami → plan rozpisany na
  *   ćwiczenia, z „Wybierz ten plan".
@@ -258,16 +266,16 @@ fun PlanLibraryScreen(
                 WizardStep.START -> StepColumn("Jak chcesz zacząć?") {
                     ChoiceCard(
                         title = "Gotowy plan",
-                        subtitle = "Wybierasz z kilkudziesięciu planów, a potem dostosowujesz " +
-                            "ćwiczenia i ciężary.",
+                        subtitle = "Wybierz oraz dostosuj gotowy plan",
                         selected = false,
+                        icon = Icons.AutoMirrored.Filled.LibraryBooks,
                         onClick = { step = WizardStep.DAYS }
                     )
                     ChoiceCard(
                         title = "Własny plan",
-                        subtitle = "Zaczynasz od pustego: sam nazywasz plan i jednostki " +
-                            "i sam dobierasz ćwiczenia.",
+                        subtitle = "Stwórz oraz dostosuj własny plan",
                         selected = false,
+                        icon = Icons.Filled.Edit,
                         onClick = { step = WizardStep.NAME }
                     )
                 }
@@ -548,37 +556,21 @@ private fun PlanDetailStep(
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Text(template.name, style = MaterialTheme.typography.headlineMedium)
-            Text(
-                metaLine(template),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                "sprzęt: " + PlanLibrary.gearSummary(template.units),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
+            TemplatePills(template, Modifier.padding(top = 6.dp))
+            Spacer(Modifier.height(10.dp))
             Text(template.description, style = MaterialTheme.typography.bodyMedium)
             MissingGear(template.units, profile)
 
+            GroupLabel("Jednostki")
             units.forEachIndexed { i, (name, note, rows) ->
-                Card(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp)
-                        .clickable { onUnit(i) },
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
+                AppCard(Modifier.padding(bottom = 8.dp), onClick = { onUnit(i) }) {
                     Column(Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(
                                     name,
                                     style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary
+                                    fontWeight = FontWeight.Bold
                                 )
                                 Text(
                                     "trening ${i + 1}" + if (note.isNotEmpty()) " · $note" else "",
@@ -586,13 +578,16 @@ private fun PlanDetailStep(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Text(
-                                "Edytuj ▶",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary
+                            Icon(
+                                Icons.Filled.Edit, contentDescription = "Edytuj",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(Modifier.height(6.dp))
+                        HorizontalDivider(
+                            Modifier.padding(top = 10.dp, bottom = 4.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant
+                        )
                         if (rows.isEmpty()) {
                             Text(
                                 "Bez ćwiczeń - dotknij, żeby dodać.",
@@ -611,12 +606,7 @@ private fun PlanDetailStep(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.weight(1f).padding(end = 8.dp)
                                 )
-                                Text(
-                                    row.prescription,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                TagPill(row.prescription)
                             }
                         }
                     }
@@ -640,9 +630,26 @@ private fun PlanDetailStep(
 
 // ---- Elementy wspólne -----------------------------------------------------
 
-/** „3 albo 6 dni · średniozaawansowany". Sprzęt idzie osobną linijką. */
-private fun metaLine(t: PlanLibrary.ProgramTemplate): String =
-    t.daysLabel + " · " + t.level.label
+/**
+ * Dni, poziom i sprzęt w pigułkach - to, po czym porównuje się plany.
+ *
+ * Sprzęt wprost, zamiast zgadniętego „dom" albo „siłownia": tylko to da się
+ * o planie powiedzieć na pewno. Pigułki zawijają się do drugiego rzędu, bo
+ * lista sprzętu bywa długa, a ucięta mówiłaby mniej niż nic.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun TemplatePills(t: PlanLibrary.ProgramTemplate, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.layout.FlowRow(
+        modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        TagPill(t.daysLabel, MaterialTheme.colorScheme.primary)
+        TagPill(t.level.label, MaterialTheme.colorScheme.primary)
+        TagPill(PlanLibrary.gearSummary(t.units))
+    }
+}
 
 /**
  * Która ścieżka doboru sprzętu obowiązuje - wynika wyłącznie z Profilu.
@@ -674,20 +681,33 @@ internal fun GearModeRow(
     what: String
 ) {
     if (!gear.limited) return
-    Row(
-        Modifier.fillMaxWidth().padding(top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text("Pokaż wszystkie $what", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                if (showAll) "Także te ze sprzętem spoza Twojej listy w Profilu."
-                else "Teraz tylko te, które zrobisz sprzętem z Profilu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    // Jeden przycisk-filtr, jak poziomy obok. Był tu przełącznik z dwiema
+    // linijkami objaśnienia, który zajmował więcej miejsca niż pierwszy plan
+    // na liście. Włączony znaczy „tylko mój sprzęt", bo tak brzmi domyślny
+    // stan, który widać po wejściu.
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        val napis = "Tylko mój sprzęt"
+        if (!showAll) {
+            Button(
+                onClick = { onShowAll(true) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(napis, style = MaterialTheme.typography.labelLarge)
+            }
+        } else {
+            OutlinedButton(
+                onClick = { onShowAll(false) },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+            ) { Text(napis, style = MaterialTheme.typography.labelLarge) }
         }
-        Switch(checked = showAll, onCheckedChange = onShowAll)
+        Text(
+            if (showAll) "wszystkie $what" else "",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.CenterVertically).padding(start = 10.dp)
+        )
     }
 }
 
@@ -697,52 +717,33 @@ private fun ProgramTemplateCard(
     profile: UserProfile,
     onClick: () -> Unit
 ) {
-    Card(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
+    AppCard(Modifier.padding(vertical = 4.dp), onClick = onClick) {
         Row(
-            Modifier.fillMaxWidth().padding(16.dp),
+            Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     template.name,
                     style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    fontWeight = FontWeight.Bold
                 )
-                Text(
-                    template.summary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    metaLine(template),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-                // Sprzęt wprost, zamiast zgadniętego „dom" albo „siłownia":
-                // tylko to da się o planie powiedzieć na pewno.
-                Text(
-                    "sprzęt: " + PlanLibrary.gearSummary(template.units),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // Bez opisu: na liście porównuje się dni, poziom i sprzęt,
+                // a trzy linijki prozy na karcie spychały resztę planów
+                // poza ekran. Opis czeka w szczegółach.
+                TemplatePills(template, Modifier.padding(top = 6.dp))
                 Text(
                     template.units.joinToString(" · ") { it.name },
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 2.dp)
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
                 )
                 MissingGear(template.units, profile)
             }
-            Text("▶", style = MaterialTheme.typography.titleLarge)
+            Icon(
+                Icons.Filled.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

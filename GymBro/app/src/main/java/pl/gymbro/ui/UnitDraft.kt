@@ -10,8 +10,13 @@ import pl.gymbro.data.PlanRepository
 import pl.gymbro.gym.ProgressionAdvisor
 
 /**
- * Szkic jednostki: ćwiczenia, nazwa i dzień, zmieniane na ekranie i zapisywane
+ * Szkic jednostki: ćwiczenia i nazwa, zmieniane na ekranie i zapisywane
  * jednym przyciskiem - tak jak Profil.
+ *
+ * Dnia tygodnia już tu nie ma. Był wybierany opcjonalnie przy jednostce,
+ * ale jednostki i tak robi się po kolei, a dzień tylko dokładał pytanie
+ * w kreatorze i linijkę na kartach. Kolumna `day` w bazie zostaje -
+ * danych użytkownika nie kasujemy - tylko nic jej już nie czyta.
  *
  * Dotąd każde dotknięcie plusa szło od razu do bazy. Przy przestawianiu
  * kilku ćwiczeń naraz nie było jak się wycofać, a zegarek potrafił w tym
@@ -30,19 +35,17 @@ internal class UnitDraft(plan: Plan) {
 
     private var original by mutableStateOf<List<PlanItem>>(emptyList())
     private var originalName by mutableStateOf(plan.name)
-    private var originalDay by mutableStateOf(plan.day)
 
     var items by mutableStateOf<List<PlanItem>>(emptyList())
         private set
     var name by mutableStateOf(plan.name)
-    var day by mutableStateOf(plan.day)
     var loaded by mutableStateOf(false)
         private set
 
     private var nextTemp = -1L
 
     val dirty: Boolean
-        get() = loaded && (items != original || name != originalName || day != originalDay)
+        get() = loaded && (items != original || name != originalName)
 
     /** Ile propozycji czeka w szkicu - te zastosowane albo pominięte już nie. */
     val pendingAdvice: Int get() = items.count { it.advice != null }
@@ -54,8 +57,6 @@ internal class UnitDraft(plan: Plan) {
         items = fromDb
         originalName = plan.name
         name = plan.name
-        originalDay = plan.day
-        day = plan.day
         loaded = true
     }
 
@@ -63,7 +64,6 @@ internal class UnitDraft(plan: Plan) {
     fun discard() {
         items = original
         name = originalName
-        day = originalDay
     }
 
     fun update(updated: PlanItem) {
@@ -143,7 +143,6 @@ internal class UnitDraft(plan: Plan) {
             }
         }
         if (name.isNotBlank() && name != originalName) repo.renamePlan(planId, name.trim())
-        if (day != originalDay) repo.setPlanDay(planId, day)
     }
 
     /**
@@ -164,7 +163,5 @@ internal class UnitDraft(plan: Plan) {
         items = fromDb
         originalName = plan?.name ?: name
         name = originalName
-        originalDay = plan?.day
-        day = originalDay
     }
 }
