@@ -782,8 +782,9 @@ const GRUPY = {
   0: ['hr', 'hrIcon', 'name', 'phase', 'prev', 'next'],
   1: ['editName', 'editCardW', 'wLabel', 'wMinus', 'wValue', 'wPlus',
     'editCardR', 'rLabel', 'rMinus', 'rValue', 'rPlus', 'editHint'],
-  2: ['doneTitle', 'doneTime', 'doneSets', 'doneTon', 'doneSkip', 'doneBtn',
-    'doneHint', 'doneMore', 'doneNext'],
+  2: ['doneTitle', 'doneTime', 'doneTimeL', 'doneSets', 'doneSetsL', 'doneTon',
+    'doneTonL', 'doneKcal', 'doneKcalL', 'doneSkip', 'doneBtn', 'doneBack',
+    'doneHint', 'doneNext'],
   3: ['ctrlTime', 'ctrlState', 'ctrlPause', 'ctrlEnd', 'ctrlHint'],
   4: ['startTitle'],
   5: ['statTime', 'statTimeLabel', 'statSets', 'statSetsLabel', 'statKcal',
@@ -834,6 +835,13 @@ function ekranCzysty(page) {
     if (x.visible !== chciane) bledy.push(opis + ' ' + i + (chciane ? ' schowany' : ' widoczny') + ' na ' + nazwa(widok))
   })
   tylkoNa(w.statIcons, 5, 'ikona czasu')
+  tylkoNa(w.doneTiles, 2, 'kafelek podsumowania')
+  // Wiersze cwiczen stoja tylko na swoim ekranie - ile, zalezy od planu.
+  if (widok !== 10) {
+    ;(w.tonVals || []).concat(...(w.tonDots || [])).forEach((x, i) => {
+      if (x.visible) bledy.push('wiersz cwiczen ' + i + ' widoczny na ' + nazwa(widok))
+    })
+  }
   tylkoNa(w.heartZones, 6, 'strefa tetna')
   tylkoNa(w.logHead, 8, 'naglowek dziennika')
   // Komorki i kreski wierszy stoja razem ze swoim wierszem, nigdy bez niego.
@@ -1241,6 +1249,15 @@ async function main() {
         String(page.w.ring[1].attrs.end_angle))
       ok('luk przerwy ubywa od poczatku, w prawo', page.w.ring[1].attrs.start_angle > przed,
         przed + ' -> ' + page.w.ring[1].attrs.start_angle)
+      // Co sekunde, nie skokami co piec - cięcia po 15 stopni wygladaly
+      // jak szarpanie zamiast plynnie ubywajacego czasu.
+      const poSekundzie = page.w.ring[1].attrs.start_angle
+      jump(1000)
+      page.paintClock()
+      ok('luk przerwy rusza sie co sekunde', page.w.ring[1].attrs.start_angle > poSekundzie,
+        poSekundzie + ' -> ' + page.w.ring[1].attrs.start_angle)
+      ok('napis pod odliczaniem bez "dalej"', /^seria \d+ z \d+$/.test(page.w.restNext.attrs.text),
+        String(page.w.restNext.attrs.text))
     }
 
     // Dotkniecie odliczania zaczyna nastepna serie, jak dotkniecie licznika.
@@ -1290,7 +1307,20 @@ async function main() {
   ok('linijka o brakach sie nie zawija',
     page.w.doneSkip.attrs.text_style === 'NONE', page.w.doneSkip.attrs.text_style)
   ok('podsumowanie zaprasza na ekran brakow',
-    /w gór/.test(page.w.doneMore.attrs.text), page.w.doneMore.attrs.text)
+    /w górę: pominięte/.test(page.w.doneHint.attrs.text), page.w.doneHint.attrs.text)
+
+  section('Podsumowanie w kafelkach, z powrotem do cwiczen')
+  ok('cztery kafelki', page.w.doneTiles.length === 4 && page.w.doneTiles.every((t) => t.visible))
+  ok('kafelki niosa same liczby', /^[0-9]+$/.test(page.w.doneSets.attrs.text) &&
+    /^[0-9]+$/.test(page.w.doneTon.attrs.text),
+    page.w.doneSets.attrs.text + ' / ' + page.w.doneTon.attrs.text)
+  ok('podpis tonazu pod liczba', page.w.doneTonL.attrs.text === 'kg tonażu', page.w.doneTonL.attrs.text)
+  ok('przycisk powrotu na podsumowaniu', page.w.doneBack.visible === true &&
+    page.visibleButtons().indexOf(page.w.doneBack) >= 0)
+  page.w.doneBack.onClick()
+  ok('powrot prowadzi na serie', page.state.view === VIEW.SETS, nazwa(page.state.view))
+  ok('ekran serii po powrocie czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+  page.showView(VIEW.DONE)
 
   section('Osobny ekran z pominietymi')
   handlers.gesture(GESTURE_UP)
@@ -2690,9 +2720,11 @@ async function main() {
   page.applyVisibility()
 
   const tonWiersze = page.tonRows()
-  ok('sa wiersze dla cwiczen z seriami', tonWiersze.length > 0, String(tonWiersze.length))
-  ok('kazdy wiersz ma nazwe, serie i tonaz',
-    tonWiersze.every((r) => r.name && r.sets > 0 && r.ton > 0), JSON.stringify(tonWiersze))
+  ok('wiersz na kazde cwiczenie planu, tez pominiete',
+    tonWiersze.length === ((page.state.data && page.state.data.exercises) || []).length,
+    String(tonWiersze.length))
+  ok('cwiczenie z seriami ma tonaz',
+    tonWiersze.filter((r) => r.sets > 0 && r.hasWeight).every((r) => r.ton > 0), JSON.stringify(tonWiersze))
 
   // Suma z wierszy musi sie zgadzac z tonazem policzonym recznie z dziennika.
   const tonRecznie = ((page.state.data && page.state.data.exercises) || []).reduce(
@@ -2706,15 +2738,34 @@ async function main() {
   handlers.gesture(GESTURE_DOWN)
   ok('w dol wchodzi tonaz', page.state.view === VIEW.TONS, nazwa(page.state.view))
   ok('ekran tonazu czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
-  ok('naglowek i suma na miejscu', page.w.tonTitle.attrs.text === 'Tonaż' &&
+  ok('naglowek i suma na miejscu', page.w.tonTitle.attrs.text === 'Ćwiczenia' &&
     /razem \d+ kg/.test(page.w.tonSub.attrs.text || ''),
     page.w.tonTitle.attrs.text + ' / ' + page.w.tonSub.attrs.text)
-  ok('pierwszy wiersz niesie kilogramy', /\d+ kg$/.test(page.w.tonRows[0].attrs.text || ''),
-    page.w.tonRows[0].attrs.text)
+  ok('tonaz stoi po prawej, osobno od nazwy',
+    /^[0-9]+ kg$|^[0-9]+ powt\.$|^-$/.test(page.w.tonVals[0].attrs.text || ''), page.w.tonVals[0].attrs.text)
+  ok('nazwa bez liczby', !/ kg$/.test(page.w.tonRows[0].attrs.text || ''), page.w.tonRows[0].attrs.text)
+  {
+    // Kropka na kazda serie z planu; zrobione turkusowe, reszta szara.
+    const wiersze = page.tonShown()
+    const zle = []
+    wiersze.forEach((r, i) => {
+      if (r.more) return
+      const widac = page.w.tonDots[i].filter((d) => d.visible)
+      const ile = Math.min(10, Math.max(r.planned, r.sets))
+      if (widac.length !== ile) zle.push(r.name + ': ' + widac.length + ' kropek, ma byc ' + ile)
+      const turkus = widac.filter((d) => d.attrs.color === 0x37d6c0).length
+      if (turkus !== Math.min(ile, r.sets)) zle.push(r.name + ': ' + turkus + ' zrobionych, serii ' + r.sets)
+    })
+    ok('kropki zgadzaja sie z seriami', zle.length === 0, zle.join('; '))
+    const pominiete = wiersze.findIndex((r) => !r.more && r.sets === 0)
+    ok('pominiete cwiczenie na bursztynowo, z kreska', pominiete >= 0 &&
+      page.w.tonVals[pominiete].attrs.text === '-' && page.w.tonRows[pominiete].attrs.color === 0xffb357,
+      pominiete >= 0 ? page.w.tonVals[pominiete].attrs.text : 'brak pominietego w scenariuszu')
+  }
   handlers.gesture(GESTURE_UP)
   ok('w gore wraca do podsumowania', page.state.view === VIEW.DONE, nazwa(page.state.view))
-  ok('podsumowanie mowi, gdzie szukac tonazu',
-    /tonaż/.test(page.w.doneHint.attrs.text || ''), page.w.doneHint.attrs.text)
+  ok('podsumowanie mowi, gdzie szukac cwiczen',
+    /w dół: ćwiczenia/.test(page.w.doneHint.attrs.text || ''), page.w.doneHint.attrs.text)
   page.state.view = VIEW.SETS
   page.applyVisibility()
 
@@ -3129,7 +3180,7 @@ async function main() {
   const sumy = p4.sumy()
   ok('podsumowanie zna serie bez telefonu', sumy.sets === 2, JSON.stringify(sumy))
   ok('i powtorzenia z tonazem', sumy.reps > 0 && sumy.tonnage > 0, JSON.stringify(sumy))
-  ok('tonaz po cwiczeniach tez cos pokazuje', p4.tonRows().length === 1,
+  ok('tonaz po cwiczeniach tez cos pokazuje', p4.tonRows().filter((r) => r.sets > 0).length === 1,
     JSON.stringify(p4.tonRows()))
   ok('widac, ile czeka na wyslanie', /Czeka|Wysyłam/.test(p4.syncText()), p4.syncText())
 
@@ -3669,9 +3720,9 @@ async function main() {
   for (let i = 0; i < 5; i++) q.onHeart()
   ok('piec odczytow tego samego tetna - zero zapisow', wszystkieZapisy() === przedTetnem,
     (wszystkieZapisy() - przedTetnem) + ' zapisow')
-  // Na przerwie dochodzi lyk pierscienia, ale on przesuwa sie co piec
-  // sekund - w pieciu sekundach najwyzej raz. Wiecej znaczy, ze luk pisze
-  // przy kazdym tyknieciu.
+  // Na przerwie dochodzi luk pierscienia: ubywa plynnie, wiec pisze raz na
+  // tyk - ale tylko on, jeden. Wiecej znaczy, ze szary okrag pod nim albo
+  // odcinki serii przepisuja sie przy kazdym tyknieciu.
   const lukiZapisy = () => q.w.ring.reduce((m, y) => m + (y.writes || 0), 0)
   const lukiPrzed = lukiZapisy()
   const naPrzerwie = q.resting()
@@ -3684,7 +3735,7 @@ async function main() {
   ok('piec sekund zegara - po jednym zapisie na sekunde',
     wszystkieZapisy() - przedTetnem - luki <= 5,
     (wszystkieZapisy() - przedTetnem - luki) + ' zapisow poza pierscieniem')
-  ok('pierscien w pieciu sekundach najwyzej raz', luki <= (naPrzerwie ? 1 : 0),
+  ok('pierscien w pieciu sekundach najwyzej piec zapisow', luki <= (naPrzerwie ? 5 : 0),
     luki + ' zapisow, przerwa: ' + naPrzerwie)
 
   section('Dluga nazwa przejezdza raz')

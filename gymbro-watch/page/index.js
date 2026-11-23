@@ -126,6 +126,11 @@ const HEART_DIGIT_W = 53
 // Tyle nazw mieści się na ekranie braków; reszta idzie w "i jeszcze N".
 const GAP_ROWS = 4
 const TON_ROWS = 6
+// Kropki serii pod nazwą ćwiczenia: tyle, ile serii w planie (albo więcej,
+// gdy dołożono), ale nie więcej niż się zmieści pod nazwą.
+const TON_DOTS = 10
+const TON_TOP = 98
+const TON_GAP = 50
 
 /**
  * Pionowa karuzela, jak w natywnym treningu siłowym: seria, czas, tętno.
@@ -240,6 +245,9 @@ const RING_TODO = 0x2a3036
 // Przycisk serii na środku i strzałki na bokach tarczy.
 const COUNT_SIZE = 62
 const SIDE_COLOR = 0x1c2024
+// Tło kafelka podsumowania: ciemniejsze od przycisku powrotu, żeby
+// kafelek nie wyglądał na coś do naciśnięcia.
+const DONE_TILE = 0x14181b
 
 // Rząd przycisków zapasu powtórzeń. Mieści się w okręgu na tej wysokości.
 const RIR_X0 = 88
@@ -933,7 +941,7 @@ Page({
           return true
         }
         // Tonaż leży pod podsumowaniem, braki nad nim.
-        if (event === GESTURE_DOWN && view === VIEW_DONE && this.tonRows().length) {
+        if (event === GESTURE_DOWN && view === VIEW_DONE && this.tonAny()) {
           this.showView(VIEW_TONS)
           return true
         }
@@ -1489,7 +1497,7 @@ Page({
         ? [w.prev, w.next].concat(this.askingRir() ? w.rirRow : [])
         : [w.count, w.prev, w.next]
       case VIEW_EDIT: return [w.wMinus, w.wPlus, w.rMinus, w.rPlus]
-      case VIEW_DONE: return [w.doneBtn]
+      case VIEW_DONE: return [w.doneBtn, w.doneBack]
       case VIEW_GAPS: return w.gapsRows.slice(0, this.gapsRows().length)
       case VIEW_LOG:
         return w.logRows.slice(0, this.logRows().length - this.logFrom())
@@ -1715,15 +1723,32 @@ Page({
     // Jedna linijka, bez zawijania. Lista nazw mieszkała tu wcześniej
     // i przy pięciu pominięciach rozpychała się na trzy wiersze, wchodząc
     // w tonaż i w przycisk. Nazwy są teraz na osobnym ekranie.
-    w.doneTitle = this.text(90, 44, 300, 38, 27, FG, hmUI.text_style.NONE)
-    w.doneTime = this.text(90, 84, 300, 46, 36, ACCENT, hmUI.text_style.NONE)
-    w.doneSets = this.text(80, 134, 320, 30, 21, DIM, hmUI.text_style.NONE)
-    w.doneTon = this.text(80, 166, 320, 30, 21, DIM, hmUI.text_style.NONE)
-    w.doneSkip = this.text(60, 200, 360, 30, 19, AMBER, hmUI.text_style.NONE)
-    w.doneBtn = this.button(80, 244, 320, 92, 29, 'ZAKOŃCZ', GREEN, () => this.finishWorkout())
-    w.doneHint = this.text(90, 342, 300, 28, 17, DIM, hmUI.text_style.NONE)
-    w.doneMore = this.text(90, 374, 300, 28, 17, AMBER, hmUI.text_style.NONE)
-    w.doneNext = this.text(70, 402, 340, 28, 17, ACCENT, hmUI.text_style.NONE)
+    //
+    // Cztery kafelki: czas, serie, tonaż, kalorie - każda liczba w swoim
+    // polu. Ciągłe linijki "18 serii, 142 powt." trzeba było czytać od
+    // lewej; w kafelku wzrok trafia od razu w liczbę, a podpis jest pod nią.
+    w.doneTitle = this.text(140, 30, 200, 32, 22, FG, hmUI.text_style.NONE)
+    w.doneSkip = this.text(100, 62, 280, 26, 17, AMBER, hmUI.text_style.NONE)
+    w.doneTiles = []
+    const kafel = (x, y, kolor) => {
+      const bg = this.rect(x, y, 152, 72, 16, DONE_TILE)
+      w.doneTiles.push(bg)
+      return [
+        this.text(x, y + 6, 152, 40, 30, kolor, hmUI.text_style.NONE),
+        this.text(x, y + 44, 152, 22, 15, DIM, hmUI.text_style.NONE)
+      ]
+    }
+    ;[w.doneTime, w.doneTimeL] = kafel(84, 92, ACCENT)
+    ;[w.doneSets, w.doneSetsL] = kafel(244, 92, FG)
+    ;[w.doneTon, w.doneTonL] = kafel(84, 172, FG)
+    ;[w.doneKcal, w.doneKcalL] = kafel(244, 172, HEART)
+    w.doneBtn = this.button(110, 254, 260, 66, 27, 'ZAKOŃCZ', GREEN, () => this.finishWorkout())
+    // Powrót bez gestu: w prawo działało od zawsze, ale nikt o nim nie
+    // wiedział, a po ostatniej serii często chce się jeszcze coś dorobić.
+    w.doneBack = this.button(140, 328, 200, 54, 19, 'Wróć do ćwiczeń', SIDE_COLOR,
+      () => this.showView(VIEW_SETS))
+    w.doneNext = this.text(110, 386, 260, 24, 16, ACCENT, hmUI.text_style.NONE)
+    w.doneHint = this.text(105, 410, 270, 22, 15, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: zapisane serie ----
     //
@@ -1828,14 +1853,31 @@ Page({
     }
     w.gapsHint = this.text(90, 390, 300, 30, 17, DIM, hmUI.text_style.NONE)
 
-    // ---- Widok: tonaż po ćwiczeniach ----
-    w.tonTitle = this.text(70, 30, 340, 36, 24, FG, hmUI.text_style.NONE)
-    w.tonSub = this.text(70, 66, 340, 28, 18, DIM, hmUI.text_style.NONE)
+    // ---- Widok: ćwiczenia po treningu ----
+    //
+    // Każde ćwiczenie planu: nazwa, tonaż po prawej i kropka na każdą
+    // serię - zrobione turkusowe, brakujące szare. Sama lista tonażu
+    // pomijała ćwiczenia bez serii, więc nie było widać, co zostało.
+    w.tonTitle = this.text(120, 30, 240, 36, 24, FG, hmUI.text_style.NONE)
+    w.tonSub = this.text(120, 64, 240, 26, 17, DIM, hmUI.text_style.NONE)
     w.tonRows = []
+    w.tonVals = []
+    w.tonDots = []
     for (let i = 0; i < TON_ROWS; i++) {
-      w.tonRows.push(this.text(50, 100 + i * 48, 380, 42, 20, FG, hmUI.text_style.NONE))
+      const y = TON_TOP + i * TON_GAP
+      w.tonRows.push(this.text(80, y, 190, 30, 19, FG, hmUI.text_style.ELLIPSIS, hmUI.align.LEFT))
+      w.tonVals.push(this.text(270, y, 130, 30, 18, 0xc9ced2, hmUI.text_style.NONE, hmUI.align.RIGHT))
+      const kropki = []
+      for (let j = 0; j < TON_DOTS; j++) {
+        const d = this.rect(82 + j * 15, y + 33, 10, 10, 5, GREY)
+        d.barwa = GREY
+        d.setProperty(hmUI.prop.VISIBLE, false)
+        d.widoczny = false
+        kropki.push(d)
+      }
+      w.tonDots.push(kropki)
     }
-    w.tonHint = this.text(90, 390, 300, 30, 17, DIM, hmUI.text_style.NONE)
+    w.tonHint = this.text(120, 400, 240, 26, 15, DIM, hmUI.text_style.NONE)
 
     // ---- Widok: sterowanie ----
     // Dwa przyciski zamiast trzech. Pomijanie ćwiczenia stąd zniknęło:
@@ -1986,8 +2028,9 @@ Page({
     ;[w.editName, w.editCardW, w.wLabel, w.wMinus, w.wValue, w.wPlus,
       w.editCardR, w.rLabel, w.rMinus, w.rValue, w.rPlus, w.editHint]
       .forEach((x) => this.setVisible(x, edit))
-    ;[w.doneTitle, w.doneTime, w.doneSets, w.doneTon, w.doneSkip, w.doneBtn,
-      w.doneHint, w.doneMore, w.doneNext].forEach((x) => this.setVisible(x, done))
+    ;[w.doneTitle, w.doneTime, w.doneTimeL, w.doneSets, w.doneSetsL, w.doneTon,
+      w.doneTonL, w.doneKcal, w.doneKcalL, w.doneSkip, w.doneBtn, w.doneBack,
+      w.doneHint, w.doneNext].concat(w.doneTiles).forEach((x) => this.setVisible(x, done))
     const gaps = !msg && view === VIEW_GAPS
     const log = !msg && view === VIEW_LOG
     const fix = !msg && view === VIEW_FIX
@@ -2006,8 +2049,14 @@ Page({
     w.fixRirRow.forEach((x) => this.setVisible(x, fix))
     ;[w.gapsTitle, w.gapsSub, w.gapsHint].forEach((x) => this.setVisible(x, gaps))
     ;[w.tonTitle, w.tonSub, w.tonHint].forEach((x) => this.setVisible(x, tons))
-    const wTon = this.tonRows()
-    w.tonRows.forEach((row, i) => this.setVisible(row, tons && i < wTon.length))
+    const wTon = this.tonShown()
+    w.tonRows.forEach((row, i) => {
+      const r = tons ? wTon[i] : null
+      this.setVisible(row, !!r)
+      this.setVisible(w.tonVals[i], !!r && !r.more)
+      const ile = r && !r.more ? this.tonDotCount(r) : 0
+      w.tonDots[i].forEach((d, j) => this.setVisible(d, j < ile))
+    })
     const rows = this.gapsRows()
     w.gapsRows.forEach((row, i) => this.setVisible(row, gaps && i < rows.length))
     ;[w.ctrlTime, w.ctrlState, w.ctrlPause, w.ctrlEnd, w.ctrlHint]
@@ -2313,10 +2362,11 @@ Page({
     if (!w || !w.ring || this.state.view !== VIEW_SETS) return
     const ex = this.current()
     if (this.resting()) {
-      // Łuk przesuwa się co pięć sekund, nie co sekundę: zegar już pisze
-      // raz na sekundę, a drugi zapis na każde tyknięcie podwajał koszt
-      // przerwy. Przy dwuminutowej przerwie to i tak 24 kroki po 15 stopni.
-      const since = Math.floor((Date.now() - this.state.phaseSince) / 5000) * 5
+      // Łuk przesuwa się z każdym tyknięciem zegara. Skok co pięć sekund
+      // oszczędzał zapis, ale przy dwóch minutach przerwy dawał cięcia po
+      // 15 stopni - wyglądało to jak szarpanie, nie jak ubywający czas.
+      // Teraz krok to 3 stopnie, jeden zapis na tyk, obok odliczania.
+      const since = (Date.now() - this.state.phaseSince) / 1000
       const total = ex && ex.restSec > 0 ? ex.restSec : 0
       // Bez zaplanowanej przerwy łuk stoi pełny - nie ma czego odliczać.
       const zostalo = total > 0 ? Math.max(0, Math.min(1, 1 - since / total)) : 1
@@ -2587,7 +2637,7 @@ Page({
       const done = this.shownDone(ex)
       this.setText(w.restNext, done >= ex.sets
         ? 'ćwiczenie zrobione'
-        : 'dalej seria ' + (done + 1) + ' z ' + ex.sets)
+        : 'seria ' + (done + 1) + ' z ' + ex.sets)
     }
     this.paintClock()
   },
@@ -3005,17 +3055,25 @@ Page({
     const data = this.state.data || {}
     const totals = data.totals || {}
     this.setText(w.doneTitle, 'Podsumowanie')
-    this.setText(w.doneTime, this.clock(this.sessionSeconds()))
     const sumy = this.sumy()
-    this.setText(w.doneSets, (sumy.sets || 0) + ' serii,  ' + (sumy.reps || 0) + ' powt.')
+    const serii = sumy.sets || 0
+    this.setText(w.doneTime, this.clock(this.sessionSeconds()))
+    this.setText(w.doneTimeL, 'czas')
+    this.setText(w.doneSets, String(serii))
+    this.setText(w.doneSetsL, this.serie(serii) + ' · ' + (sumy.reps || 0) + ' powt.')
+    this.setText(w.doneTon, String(Math.round(sumy.tonnage || 0)))
+    this.setText(w.doneTonL, 'kg tonażu')
+    this.setText(w.doneKcal, this.kcalText())
+    this.setText(w.doneKcalL, 'kcal')
     this.setText(w.doneSkip, this.gapsText())
     const g = this.gaps()
-    this.setText(w.doneMore, g.sets ? 'w górę: co pominięte' : '')
-    this.setText(
-      w.doneTon,
-      Math.round(sumy.tonnage || 0) + ' kg,  ' + this.kcalText() + ' kcal'
-    )
-    this.setText(w.doneHint, this.tonRows().length ? 'w dół: tonaż po ćwiczeniach' : 'w prawo: wróć do serii')
+    this.kolor(w.doneSkip, g.sets ? AMBER : PENDING)
+    // Jedna linijka na oba gesty - przycisk powrotu zajął miejsce,
+    // w którym stały dwie osobne podpowiedzi.
+    const gesty = []
+    if (g.sets) gesty.push('w górę: pominięte')
+    if (this.tonAny()) gesty.push('w dół: ćwiczenia')
+    this.setText(w.doneHint, gesty.join(' · '))
     // Po treningu to jedyny moment, w ktorym widac, czy cokolwiek zostalo
     // do wyslania. Wczesniej nie bylo tego nigdzie i trening lezal
     // w kolejce bez sladu na ekranie.
@@ -3340,26 +3398,72 @@ Page({
       // nie przysyla nic, a serie i tak sa - czekaja w kolejce.
       const e = widok[ex.id]
       const wpisy = ((e && e.entries) || []).filter((w) => !w.warmup)
-      if (!wpisy.length) return
       const ton = wpisy.reduce((suma, e) => suma + e.weight * e.reps, 0)
-      out.push({ name: ex.name, sets: wpisy.length, ton: Math.round(ton) })
+      out.push({
+        name: ex.name,
+        sets: wpisy.length,
+        planned: ex.sets || 0,
+        ton: Math.round(ton),
+        reps: wpisy.reduce((n, e) => n + e.reps, 0),
+        hasWeight: !!ex.hasWeight
+      })
     })
     return out
   },
 
+  /** Czy jest co pokazać na ekranie ćwiczeń - choć jedna seria. */
+  tonAny() {
+    return this.tonRows().some((r) => r.sets > 0)
+  },
+
+  /** Wiersze na ekran, z ogonem "i jeszcze N", gdy się nie mieszczą. */
+  tonShown() {
+    const wiersze = this.tonRows()
+    if (wiersze.length <= TON_ROWS) return wiersze
+    const widoczne = wiersze.slice(0, TON_ROWS - 1)
+    widoczne.push({ more: true, name: 'i jeszcze ' + (wiersze.length - (TON_ROWS - 1)) })
+    return widoczne
+  },
+
+  tonDotCount(r) {
+    return Math.min(TON_DOTS, Math.max(r.planned, r.sets))
+  },
+
   paintTons() {
     const w = this.w
-    const wiersze = this.tonRows()
-    const suma = wiersze.reduce((n, r) => n + r.ton, 0)
-    this.setText(w.tonTitle, 'Tonaż')
+    const suma = this.tonRows().reduce((n, r) => n + r.ton, 0)
+    const wiersze = this.tonShown()
+    this.setText(w.tonTitle, 'Ćwiczenia')
     this.setText(w.tonSub, 'razem ' + suma + ' kg')
     w.tonRows.forEach((row, i) => {
       if (i >= wiersze.length) return
       const r = wiersze[i]
-      // Nazwa skrócona, bo liczba po prawej jest tu ważniejsza niż
-      // ostatnie litery nazwy, którą i tak się zna.
-      const nazwa = r.name.length > 16 ? r.name.slice(0, 15) + "…" : r.name
-      this.setText(row, nazwa + '   ' + r.ton + ' kg')
+      if (r.more) {
+        this.setText(row, r.name)
+        this.kolor(row, DIM)
+        return
+      }
+      // Nazwa ucina się wielokropkiem: liczba po prawej jest tu ważniejsza
+      // niż ostatnie litery nazwy, którą i tak się zna.
+      const pominiete = r.sets === 0
+      this.setText(row, r.name)
+      this.kolor(row, pominiete ? AMBER : FG)
+      // Bez ciężaru tonaż wychodzi zero i nic nie mówi - wtedy powtórzenia.
+      this.setText(w.tonVals[i], pominiete ? '-'
+        : (r.hasWeight ? r.ton + ' kg' : r.reps + ' powt.'))
+      this.kolor(w.tonVals[i], pominiete ? AMBER : 0xc9ced2)
+      // Prostokąt, jak przycisk, przyjmuje zmianę tylko z kompletem
+      // położenia - sam kolor nie dochodzi (patrz wiersze dziennika).
+      w.tonDots[i].forEach((d, j) => {
+        if (j >= this.tonDotCount(r)) return
+        const kolor = j < r.sets ? PENDING : GREY
+        if (d.barwa === kolor) return
+        d.barwa = kolor
+        d.setProperty(hmUI.prop.MORE, {
+          x: px(82 + j * 15), y: px(TON_TOP + i * TON_GAP + 33), w: px(10), h: px(10),
+          radius: px(5), color: kolor
+        })
+      })
     })
     this.setText(w.tonHint, 'w górę: wróć do podsumowania')
   },
