@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import pl.gymbro.data.Cache
 import pl.gymbro.data.Activity
 import pl.gymbro.data.SessionRepository
 import pl.gymbro.data.SetEntry
@@ -99,7 +100,10 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
         val week = 7 * DAY
         data = withContext(Dispatchers.IO) {
             ProgresData(
-                exercises = repo.workingSetsByExercise(),
+                // Wspolne z Historia - obie strony dostaja te same serie.
+                exercises = Cache.getOrLoad(Cache.WORKING_SETS, activities) {
+                    repo.workingSetsByExercise()
+                },
                 thisWeek = repo.workingSetsByMuscle(now - week, now),
                 lastWeek = repo.workingSetsByMuscle(now - 2 * week, now - week)
             )

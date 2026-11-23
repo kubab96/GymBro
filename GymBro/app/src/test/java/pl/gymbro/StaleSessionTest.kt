@@ -45,6 +45,33 @@ class StaleSessionTest {
     }
 
     @Test
+    fun `pusta sesja z zegarka czeka zamknieta na zalegle serie`() {
+        // START doszedł, serie stoją jeszcze w kolejce zegarka. Skasowana sesja
+        // odrzucałaby każdą z nich jako "brak trwającego treningu".
+        assertEquals(
+            Verdict.Close(start),
+            StaleSession.verdict(start, lastSetAt = null, now = start + h(30), fromWatch = true)
+        )
+    }
+
+    @Test
+    fun `sesja z zegarka z seriami konczy sie jak kazda inna`() {
+        val last = start + h(1)
+        assertEquals(
+            Verdict.Close(last),
+            StaleSession.verdict(start, lastSetAt = last, now = start + h(30), fromWatch = true)
+        )
+    }
+
+    @Test
+    fun `swieza pusta sesja z zegarka trwa`() {
+        assertEquals(
+            Verdict.Active,
+            StaleSession.verdict(start, lastSetAt = null, now = start + h(1), fromWatch = true)
+        )
+    }
+
+    @Test
     fun `dokladnie na progu trening juz nie trwa`() {
         assertEquals(
             Verdict.Discard,

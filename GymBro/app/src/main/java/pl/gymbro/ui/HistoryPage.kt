@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import pl.gymbro.data.Cache
 import pl.gymbro.data.Activity
 import pl.gymbro.data.ExternalSession
 import pl.gymbro.data.SessionRepository
@@ -131,7 +132,10 @@ internal fun HistoryPage(activities: List<Activity>, onOpen: (Activity) -> Unit)
 
     LaunchedEffect(activities) {
         highlights = withContext(Dispatchers.IO) {
-            ProgressStats.highlights(repo.workingSetsByExercise())
+            // Wspolne z Progresem: te same serie z calej historii, wczytane raz.
+            ProgressStats.highlights(
+                Cache.getOrLoad(Cache.WORKING_SETS, activities) { repo.workingSetsByExercise() }
+            )
         }
     }
 

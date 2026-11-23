@@ -39,10 +39,17 @@ object StaleSession {
      * @param startedAt początek sesji
      * @param lastSetAt czas ostatniej zapisanej serii albo null, gdy nie było żadnej
      * @param now chwila bieżąca
+     * @param fromWatch czy sesję założył zegarek (ma znacznik `local_id`)
      */
-    fun verdict(startedAt: Long, lastSetAt: Long?, now: Long): Verdict {
+    fun verdict(startedAt: Long, lastSetAt: Long?, now: Long, fromWatch: Boolean = false): Verdict {
         if (now - startedAt < STALE_AFTER_MS) return Verdict.Active
-        if (lastSetAt == null) return Verdict.Discard
+        // Pusta sesja z zegarka nie jest pusta, tylko jeszcze nie dojechala.
+        // START doszedl, a serie czekaja w kolejce zegarka z numerem tej sesji -
+        // wystarczy, ze usluga pilota padla zaraz po starcie. Skasowana sesja
+        // oznaczala, ze kazda zalegla seria i FINISH dostawaly 404, zegarek
+        // wyrzucal je jako odmowe i caly trening przepadal. Zamknieta na
+        // godzinie startu czeka na nie, a FINISH poprawi godzine konca.
+        if (lastSetAt == null) return if (fromWatch) Verdict.Close(startedAt) else Verdict.Discard
         // Seria zapisana przed startem sesji nie powinna się zdarzyć, ale gdyby
         // zegar systemowy przeskoczył, nie chcemy ujemnego czasu trwania.
         return Verdict.Close(maxOf(lastSetAt, startedAt))

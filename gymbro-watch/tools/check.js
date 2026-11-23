@@ -160,11 +160,12 @@ class Calorie {
 Calorie.wartosc = 300
 Calorie.bezNasluchu = false
 
-const LICZNIK = { ile: 0, bajtow: 0, klucze: {} }
+const LICZNIK = { ile: 0, bajtow: 0, klucze: {}, odczyty: {} }
 class LocalStorage {
   constructor() { this.dane = LocalStorage.dane }
   setItem(k, v) { const t = String(v); LICZNIK.ile++; LICZNIK.bajtow += t.length; LICZNIK.klucze[k] = (LICZNIK.klucze[k] || 0) + 1; this.dane[k] = t }
-  getItem(k, d) { return this.dane[k] === undefined ? d : this.dane[k] }
+  // Odczyt pliku kosztuje na zegarku tyle co zapis - liczymy i jego.
+  getItem(k, d) { LICZNIK.odczyty[k] = (LICZNIK.odczyty[k] || 0) + 1; return this.dane[k] === undefined ? d : this.dane[k] }
   removeItem(k) { delete this.dane[k]; return true }
   clear() { Object.keys(this.dane).forEach((k) => delete this.dane[k]) }
 }
@@ -397,10 +398,10 @@ function makePhone() {
       switch (req.method) {
         case 'STATE':
           return phone.state()
-        case 'UNITS':
+        case 'UNITS': {
           // Jednostka niesie caly swoj plan: z tego zegarek sklada trening,
           // gdy telefonu nie ma w zasiegu.
-          return {
+          const lista = {
             program: 'FBW',
             hrZones: { max: 187, easy: 112, aerobic: 131, tempo: 150, anaerobic: 168 },
             burn: { k0: -6.1, k1: 0.116 },
@@ -411,6 +412,21 @@ function makePhone() {
               plan: phone.podglad()
             }))
           }
+          // Skrot jak w WatchApi.units: ta sama lista - samo "bez zmian".
+          // Telefon sprzed tej zmiany skrotu nie zna i zawsze odsyla calosc.
+          if (phone.bezSkrotu) return lista
+          const tekst = JSON.stringify(lista)
+          let h = 0
+          for (let i = 0; i < tekst.length; i++) h = (h * 31 + tekst.charCodeAt(i)) | 0
+          const v = 'v' + (h >>> 0).toString(16)
+          if (req.params && req.params.v === v) {
+            phone.unitsBezZmian = (phone.unitsBezZmian || 0) + 1
+            return { same: true, v: v }
+          }
+          phone.unitsPelne = (phone.unitsPelne || 0) + 1
+          lista.v = v
+          return lista
+        }
         case 'START': {
           // Sesja moze przyjsc ze znacznikiem nadanym na zegarku. Powtorzone
           // zgloszenie trafia na te sama sesje i nie zaklada drugiej - tak
@@ -587,7 +603,9 @@ function loadPage(phone) {
       // Zepp dziala, ale GymBro na telefonie nie slucha: usluga towarzyszaca
       // odpowiada bledem, niczego nie wykonawszy.
       if (phone.mostPadl) {
-        return Promise.resolve({ data: { error: 'Otwórz GymBro na telefonie', retry: true } })
+        return Promise.resolve({
+          data: { error: phone.mostBlad || 'Otwórz GymBro na telefonie', retry: true }
+        })
       }
       const wynik = phone.request(req)
       // Wykonane, ale odpowiedz nie wraca.
@@ -994,41 +1012,39 @@ async function main() {
   ok('podsumowanie nie wraca samo', page.state.view === VIEW.SETS, nazwa(page.state.view))
 
   section('Pomijanie cwiczenia')
+  // Pomijanie z ekranu sterowania zostalo usuniete razem z funkcja. Cwiczenie
+  // zostawia sie strzalka z boku tarczy i to ta droga ma dzialac tak samo:
+  // bez cofania na zostawione i z podsumowaniem po ostatniej serii planu.
   phone.reset()
   page.startUnit(0)
   await flush(); await flush()
-  ok('swiezy trening bez pominiec', Object.keys(page.state.skipped).length === 0)
+  ok('zegarek nie ma juz pomijania', typeof page.skipExercise === 'undefined' &&
+    page.state.skipped === undefined)
 
   // Drugie cwiczenie zostawiamy na potem i robimy trzecie do konca.
-  page.state.index = 1
-  page.state.view = VIEW.CONTROL
-  page.skipExercise()
-  await flush(); await flush()
-  ok('pominiete trafia na liste', page.isSkipped(2) === true)
-  ok('po pominieciu wchodzi trzecie cwiczenie', page.state.index === 2, 'index ' + page.state.index)
+  page.move(1)
+  page.move(1)
+  ok('strzalkami na trzecie cwiczenie', page.state.index === 2, 'index ' + page.state.index)
 
   await zapiszSerie(page)
   await zapiszSerie(page)
   ok('trzecie cwiczenie zrobione', (phone.done[3] || 0) === 2, 'serii ' + (phone.done[3] || 0))
-  ok('NIE wrocilo na pominiete', page.state.index !== 1, 'index ' + page.state.index)
-  ok('pominiete nie dostalo serii', (phone.done[2] || 0) === 0)
+  ok('NIE wrocilo na zostawione', page.state.index === 2, 'index ' + page.state.index)
+  ok('zostawione nie dostalo serii', (phone.done[2] || 0) === 0)
 
-  section('Pominiecie a podsumowanie')
-  page.state.index = 0
-  while ((phone.done[1] || 0) < 2) await zapiszSerie(page)
-  ok('plan uznany za wykonany mimo pominiecia', page.localComplete() === true)
+  section('Zostawione cwiczenie a podsumowanie')
+  ok('ostatnia seria planu konczy trening mimo zostawionego', page.localComplete() === true)
   // Wybor zapasu do ostatniej serii prowadzi do podsumowania od razu.
   page.setRir(2)
   ok('pokazalo podsumowanie zaraz po zapasie', page.state.view === VIEW.DONE, nazwa(page.state.view))
 
-  section('Powrot do pominietego cwiczenia')
+  section('Powrot do zostawionego cwiczenia')
   page.sideButton()
   await flush()
   page.state.index = 1
   page.paintSets()
-  ok('licznik mowi POMINIETE', page.w.count.attrs.text === 'POMINIĘTE', page.w.count.attrs.text)
+  ok('licznik pokazuje pierwsza serie', page.w.count.attrs.text === '1 / 2', page.w.count.attrs.text)
   await zapiszSerie(page)
-  ok('seria przywraca cwiczenie do planu', page.isSkipped(2) === false)
   ok('seria trafila na drugie cwiczenie', (phone.done[2] || 0) === 1, 'serii ' + (phone.done[2] || 0))
   ok('zostalo na drugim cwiczeniu', page.state.index === 1, 'index ' + page.state.index)
 
@@ -1433,19 +1449,25 @@ async function main() {
     JSON.stringify(handlers.dropWrist))
 
   // Zostawiamy pierwsze cwiczenie, idziemy na trzecie i tam cos robimy.
-  page.state.index = 1
-  page.state.view = VIEW.CONTROL
-  page.skipExercise()
-  await flush(); await flush()
+  // Zostawiamy pierwsze i drugie cwiczenie, idziemy strzalkami na trzecie.
+  page.state.view = VIEW.SETS
+  page.move(1)
+  page.move(1)
   await zapiszSerie(page)
   const gdzieBylem = page.state.index
-  const pominieteBylo = Object.keys(page.state.skipped).slice()
   page.onDestroy()
 
   // Tak wyglada ponowne uruchomienie: nowy obiekt strony, ta sama pamiec.
   const drugi = loadPage(phone)
   drugi.page.onInit()
+  LICZNIK.odczyty = {}
   drugi.page.build()
+  // Powrot czyta zapis sesji i plan po razie. Dotad oba po dwa razy -
+  // a plan z drabinkami to kilkanascie kilobajtow do rozlozenia.
+  ok('zapis sesji czytany raz', LICZNIK.odczyty['session'] === 1,
+    String(LICZNIK.odczyty['session']))
+  ok('plan i tetno czytane raz', LICZNIK.odczyty['gymbro-session-big'] === 1,
+    String(LICZNIK.odczyty['gymbro-session-big']))
   await flush(); await flush(); await flush()
   ok('po powrocie ten sam trening',
     drugi.page.state.sessionId === page.state.sessionId,
@@ -1453,9 +1475,6 @@ async function main() {
   ok('wraca na to cwiczenie, na ktorym bylem',
     drugi.page.state.index === gdzieBylem,
     'index ' + drugi.page.state.index + ', bylo ' + gdzieBylem)
-  ok('pamieta pominiete',
-    JSON.stringify(Object.keys(drugi.page.state.skipped)) === JSON.stringify(pominieteBylo),
-    Object.keys(drugi.page.state.skipped).join(','))
   ok('nie wita podsumowaniem', drugi.page.state.view === VIEW.SETS,
     nazwa(drugi.page.state.view))
 
@@ -3902,6 +3921,217 @@ async function main() {
   ok('powtorzenia z ostatniej serii', q.state.reps === zmienioneR,
     q.state.reps + ' zamiast ' + zmienioneR)
 
+  // ---- Bledy z audytu 23.11 ----------------------------------------------
+
+  section('Wstrzymanie potwierdzone przez telefon zostaje wstrzymaniem')
+  // Potwierdzenie zdejmowalo decyzje zegarka, a ten wracal do stanu sprzed
+  // niej: wstrzymany trening wygladal na wznowiony, czas lecial, a przycisk
+  // wysylal drugie wstrzymanie zamiast wznowienia. Telefon zostawal
+  // wstrzymany do konca treningu. Scenariusz wyzej robil PAUSE i od razu
+  // RESUME, wiec tego nie widzial.
+  const ra = await swieza()
+  const qa = ra.page
+  qa.startUnit(0)
+  // Zaraz po starcie, zanim odpowiedz telefonu podmieni cwiczenia na swoje.
+  // Przy zaleglym starcie (backfill) ta odpowiedz nie przychodzi wcale.
+  ok('trening ma wlasna kopie planu jednostki',
+    qa.state.data.exercises[0] !== qa.state.units[0].plan[0] &&
+    qa.state.data.exercises[0].entries !== qa.state.units[0].plan[0].entries)
+  await flush(); await flush()
+  await suszW(qa, ra.handlers)
+  phone.paused = false
+  phone.polecenia.length = 0
+  qa.state.view = VIEW.CONTROL
+  qa.applyVisibility()
+  qa.paint()
+  qa.togglePause()
+  await suszW(qa, ra.handlers)
+  ok('telefon wstrzymany', phone.paused === true)
+  ok('decyzja zegarka oddana telefonowi', qa.state.pausedLocal === null, String(qa.state.pausedLocal))
+  ok('po potwierdzeniu dalej wstrzymany', qa.paused() === true)
+  ok('przycisk mowi WZNOW', qa.w.ctrlPause.props.text === 'WZNÓW', qa.w.ctrlPause.props.text)
+  qa.paintControlClock()
+  ok('stan mowi wstrzymany', qa.w.ctrlState.attrs.text === 'wstrzymany', qa.w.ctrlState.attrs.text)
+  const czasWstrz = qa.sessionSeconds()
+  jump(60000)
+  ok('czas stoi po potwierdzeniu', qa.sessionSeconds() === czasWstrz,
+    czasWstrz + ' -> ' + qa.sessionSeconds())
+  qa.state.view = VIEW.STATS
+  qa.applyVisibility()
+  qa.paint()
+  ok('ekran czasu mowi WSTRZYMANY', qa.w.statTimeLabel.attrs.text === 'WSTRZYMANY',
+    qa.w.statTimeLabel.attrs.text)
+  qa.state.view = VIEW.CONTROL
+  qa.applyVisibility()
+  qa.paint()
+  qa.togglePause()
+  await suszW(qa, ra.handlers)
+  ok('drugie nacisniecie wznawia', phone.polecenia.join(',') === 'PAUSE,RESUME',
+    phone.polecenia.join(','))
+  ok('telefon i zegarek zgodnie: trwa', phone.paused === false && qa.paused() === false)
+  // Wstrzymanie zrobione na telefonie dociera z samym potwierdzeniem serii.
+  phone.paused = true
+  qa.state.view = VIEW.SETS
+  qa.applyVisibility()
+  await seriaW(qa)
+  await suszW(qa, ra.handlers)
+  ok('wstrzymanie z telefonu widac z potwierdzenia', qa.paused() === true)
+  phone.paused = false
+
+  section('Ekran czasu i tetna nie przemalowuje tego, co stoi')
+  qa.state.view = VIEW.STATS
+  qa.applyVisibility()
+  qa.paint()
+  let pomiary = 0
+  const pomiar = hmUI.getTextLayout
+  hmUI.getTextLayout = function (t, o) { pomiary += 1; return pomiar.call(hmUI, t, o) }
+  for (let i = 0; i < 10; i++) { jump(1000); qa.paintStats() }
+  hmUI.getTextLayout = pomiar
+  ok('10 s ekranu czasu bez nowych napisow - zero pomiarow', pomiary === 0, pomiary + ' pomiarow')
+  qa.state.hrLog = []
+  qa.state.view = VIEW.HEART
+  qa.applyVisibility()
+  qa.paint()
+  const zapisySlupkow = () => qa.w.bars.reduce((n, b) => n + (b.writes || 0), 0)
+  const slupkiPrzed = zapisySlupkow()
+  for (let i = 0; i < 6; i++) { jump(5000); qa.noteHeart(120) }
+  ok('nowa probka rysuje jeden slupek, nie wszystkie',
+    zapisySlupkow() - slupkiPrzed <= 12, (zapisySlupkow() - slupkiPrzed) + ' zapisow na 6 probek')
+
+  section('Komunikat mowi, czego naprawde brakuje')
+  // Kazda awaria z odpowiedzi uslugi towarzyszacej konczyla sie "Otworz Zepp" -
+  // takze zly token po przeinstalowaniu GymBro i GymBro, ktory nie slucha.
+  qa.finishWorkout()
+  await suszW(qa, ra.handlers)
+  delete LocalStorage.dane['gymbro-units']
+  qa.state.units = null
+  qa.state.unitsV = null
+  phone.mostPadl = true
+  phone.mostBlad = 'Zły token - sprawdź go w Profilu GymBro'
+  qa.send('STATE', {}, true)
+  await flush(); await flush()
+  ok('zly token mowi o tokenie', qa.state.message === 'Zły token - sprawdź go w Profilu GymBro',
+    qa.state.message)
+  phone.mostBlad = null
+  qa.state.message = null
+  qa.send('STATE', {}, true)
+  await flush(); await flush()
+  ok('GymBro, ktory nie slucha, to GymBro, nie Zepp',
+    qa.state.message === 'Otwórz GymBro na telefonie', qa.state.message)
+  phone.mostPadl = false
+  qa.state.message = null
+
+  section('Odmowy telefonu widac na zegarku')
+  // Odmowa wyrzuca polecenie z kolejki - i dotad nic wiecej. Po oproznieniu
+  // kolejki zegarek wibrowal "wszystko dojechalo", choc czesc nie weszla.
+  const rc = await swieza()
+  const qc = rc.page
+  qc.startUnit(0)
+  await flush(); await flush()
+  await suszW(qc, rc.handlers)
+  qc.queue('EDIT', { setId: 987654, reps: 5 })
+  await suszW(qc, rc.handlers)
+  ok('odrzucone wypada z kolejki', qc.czeka() === 0, kolejka(qc))
+  ok('ale zegarek je liczy', qc.state.odrzucone === 1, String(qc.state.odrzucone))
+  qc.finishWorkout()
+  await suszW(qc, rc.handlers)
+  await cichoW(rc.handlers, qc)
+  ok('licznik lezy w pamieci', LocalStorage.dane['gymbro-rejected'] === '1',
+    String(LocalStorage.dane['gymbro-rejected']))
+  ok('ekran wyboru mowi o odmowie', qc.w.startTitle.attrs.text === 'Telefon odrzucił: 1',
+    qc.w.startTitle.attrs.text)
+  const rc2 = loadPage(phone)
+  rc2.page.build()
+  await flush(); await flush(); await flush()
+  ok('i po restarcie strony', rc2.page.state.odrzucone === 1, String(rc2.page.state.odrzucone))
+  rc2.page.startUnit(0)
+  ok('nowy trening liczy od zera', rc2.page.state.odrzucone === 0)
+  rc2.page.rememberOutboxNow()
+  ok('zero trafia do pamieci', LocalStorage.dane['gymbro-rejected'] === '0',
+    String(LocalStorage.dane['gymbro-rejected']))
+
+  section('Lista jednostek: bez zmian to bez zmian')
+  // Zegarek pytal o liste co dwie minuty na ekranie wyboru, a telefon za
+  // kazdym razem odsylal kilkanascie kilobajtow, choc nic sie nie zmienilo.
+  const rf = await swieza()
+  const qf = rf.page
+  ok('pierwsza lista przyszla w calosci', (qf.state.units || []).length === 3 && !!qf.state.unitsV,
+    String(qf.state.unitsV))
+  const pelnePrzed = phone.unitsPelne || 0
+  const bezZmianPrzed = phone.unitsBezZmian || 0
+  const zapisyListy = LICZNIK.klucze['gymbro-units'] || 0
+  qf.askUnits()
+  await flush(); await flush()
+  ok('ta sama lista - samo "bez zmian"', (phone.unitsBezZmian || 0) === bezZmianPrzed + 1 &&
+    (phone.unitsPelne || 0) === pelnePrzed)
+  ok('lista zostaje i ekran wyboru tez', (qf.state.units || []).length === 3 &&
+    qf.state.view === VIEW.START, nazwa(qf.state.view))
+  ok('bez zapisu do pamieci', (LICZNIK.klucze['gymbro-units'] || 0) === zapisyListy)
+  phone.lastDone[3] = 9000
+  qf.askUnits()
+  await flush(); await flush()
+  ok('zmieniona lista przychodzi w calosci', (phone.unitsPelne || 0) === pelnePrzed + 1)
+  ok('i zmienia zegarek', qf.state.units.filter((u) => u.id === 3)[0].lastDone === 9000)
+  phone.bezSkrotu = true
+  qf.askUnits()
+  await flush(); await flush()
+  ok('telefon bez skrotu dalej dziala', (qf.state.units || []).length === 3 &&
+    qf.state.view === VIEW.START)
+  phone.bezSkrotu = false
+
+  section('Dwa zalegle treningi: koniec dostaje ten porzucony')
+  // Wystarczal jakikolwiek FINISH w kolejce, zeby uznac ja za zamknieta.
+  // Drugi trening, porzucony, dojezdzal wtedy jako START bez konca - na
+  // telefonie trening trwajacy zero minut.
+  Object.keys(LocalStorage.dane).forEach((k) => delete LocalStorage.dane[k])
+  const t0 = Date.now() - 12 * 3600000
+  const tB = t0 + 3 * 3600000
+  LocalStorage.dane['gymbro-outbox'] = JSON.stringify([
+    { m: 'START', cid: 'a1', at: t0, p: { planId: 1, localId: 'w-a', startedAt: t0, sid: 'w-a', cid: 'a1' } },
+    { m: 'SET', cid: 'a2', at: t0 + 60000, p: { exerciseId: 1, weight: 80, reps: 8, doneAt: t0 + 60000, sid: 'w-a', cid: 'a2' } },
+    { m: 'FINISH', cid: 'a3', at: t0 + 3600000, p: { endedAt: t0 + 3600000, planId: 1, sid: 'w-a', cid: 'a3' } },
+    { m: 'START', cid: 'b1', at: tB, p: { planId: 2, localId: 'w-b', startedAt: tB, sid: 'w-b', cid: 'b1' } },
+    { m: 'SET', cid: 'b2', at: tB + 60000, p: { exerciseId: 1, weight: 60, reps: 10, doneAt: tB + 60000, sid: 'w-b', cid: 'b2' } }
+  ])
+  const rd = loadPage(phone)
+  rd.page.state.outbox = []
+  rd.page.restoreOutbox()
+  const ostatniKoniec = (rd.page.state.outbox || []).slice(-1)[0] || {}
+  ok('porzucony drugi trening dostal koniec', ostatniKoniec.m === 'FINISH' &&
+    ostatniKoniec.p.sid === 'w-b', JSON.stringify(ostatniKoniec))
+  ok('na godzinie jego ostatniego polecenia', ostatniKoniec.p && ostatniKoniec.p.endedAt === tB + 60000,
+    JSON.stringify(ostatniKoniec.p))
+  ok('z jego jednostka', ostatniKoniec.p && ostatniKoniec.p.planId === 2,
+    JSON.stringify(ostatniKoniec.p))
+  ok('pierwszy zostal, jak byl', (rd.page.state.outbox || []).filter((x) => x.m === 'FINISH').length === 2)
+  LocalStorage.dane['gymbro-outbox'] = JSON.stringify(JSON.parse(LocalStorage.dane['gymbro-outbox']).slice(0, 3))
+  const re = loadPage(phone)
+  re.page.state.outbox = []
+  re.page.restoreOutbox()
+  ok('zamkniety trening nie dostaje drugiego konca',
+    (re.page.state.outbox || []).filter((x) => x.m === 'FINISH').length === 1,
+    kolejka(re.page))
+
+  section('Zapas do serii bez numeru niesie jej godzine')
+  // Telefon pamieta znaczniki polecen tylko w pamieci. Zrestartowany miedzy
+  // seria a zapasem nie wiedzial, o ktora serie chodzi, i wpisywal zapas
+  // ostatniej serii cwiczenia. Po godzinie zapisu znajdzie te wlasciwa.
+  const rg = await swieza()
+  const qg = rg.page
+  qg.startUnit(0)
+  await flush(); await flush()
+  await suszW(qg, rg.handlers)
+  phone.setGubiOdpowiedz(true)
+  await seriaW(qg)
+  await puscWysylke(qg, rg.handlers)
+  const seria = (qg.state.outbox || []).filter((x) => x.m === 'SET')[0]
+  ok('seria wyszla, ale bez odpowiedzi', !!seria && seria.s === 1, JSON.stringify(seria))
+  qg.setRir(2)
+  const zapas = (qg.state.outbox || []).filter((x) => x.m === 'RIR')[0]
+  ok('zapas wskazuje serie znacznikiem', zapas && zapas.p.ref === seria.cid, JSON.stringify(zapas))
+  ok('i godzina zapisu', zapas && zapas.p.doneAt === seria.p.doneAt, JSON.stringify(zapas && zapas.p))
+  phone.setGubiOdpowiedz(false)
+
   section('Most do telefonu przekazuje parametry')
   // Zgloszone 02.11: podany zapas wracal jako "nie podano". Dwa polecenia
   // siegaly w usludze towarzyszacej po gola nazwe `params` zamiast
@@ -3916,7 +4146,6 @@ async function main() {
     ['DELETE', { setId: 7, cid: 'c3' }],
     ['UNDO', { exerciseId: 1, cid: 'c4' }],
     ['EDIT', { setId: 7, reps: 9, cid: 'c5' }],
-    ['WEIGHT', { exerciseId: 1, from: 60, dir: 1 }],
     ['START', { planId: 1, localId: 'w1', cid: 'c6' }],
     // Te trzy szly z pustym cialem: bez sesji, znacznika i godziny konca.
     ['PAUSE', { sid: '101', cid: 'c7' }],
@@ -3949,6 +4178,30 @@ async function main() {
   ok('nikt nie slucha - ponowic', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
   odp = await zeStatusem(200, { active: true }).zadaj('SET', { exerciseId: 1 })
   ok('udane bez zadnej flagi', odp && odp.data && !odp.data.retry && !odp.data.reject, JSON.stringify(odp))
+  // Odpowiedz bez kodu szla dalej jako sukces z pustym cialem - zegarek
+  // skreslal wtedy polecenie z kolejki, choc nie wiadomo, czy cos sie wykonalo.
+  odp = await loadSide(() => ({ body: '{}' })).zadaj('SET', { exerciseId: 1 })
+  ok('odpowiedz bez kodu - ponowic', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
+  odp = await loadSide(() => undefined).zadaj('SET', { exerciseId: 1 })
+  ok('brak odpowiedzi - ponowic', odp && odp.data && odp.data.retry === true, JSON.stringify(odp))
+  odp = await zeStatusem(401, {}).zadaj('STATE', {})
+  ok('zly token mowi o tokenie', odp && odp.data && /token/i.test(odp.data.error || ''),
+    JSON.stringify(odp))
+
+  section('Most: skrot listy jednostek')
+  const mostJ = loadSide()
+  mostJ.wyslane.length = 0
+  await mostJ.zadaj('UNITS', { v: 'ab12' })
+  ok('skrot jedzie w adresie', mostJ.wyslane[0] && /\/units\?v=ab12$/.test(mostJ.wyslane[0].url),
+    mostJ.wyslane[0] && mostJ.wyslane[0].url)
+  ok('pytanie o jednostki bez ciala', mostJ.wyslane[0] && mostJ.wyslane[0].body === undefined)
+  mostJ.wyslane.length = 0
+  await mostJ.zadaj('UNITS', {})
+  ok('bez skrotu goly adres', mostJ.wyslane[0] && /\/units$/.test(mostJ.wyslane[0].url),
+    mostJ.wyslane[0] && mostJ.wyslane[0].url)
+  odp = await mostJ.zadaj('WEIGHT', { exerciseId: 1, from: 60, dir: 1 })
+  ok('martwe WEIGHT juz nie istnieje', odp && odp.data && odp.data.error === 'nieznane zadanie',
+    JSON.stringify(odp))
 
   console.log('\n' + (failures === 0
     ? 'Wszystko przeszlo: ' + checks + ' sprawdzen.'

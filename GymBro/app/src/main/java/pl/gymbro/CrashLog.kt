@@ -51,11 +51,24 @@ object CrashLog {
         runCatching { write(context.applicationContext, what, error) }
     }
 
-    private fun write(context: Context, what: String, error: Throwable) {
+    /**
+     * Zdarzenie bez wyjatku, ale z tej samej polki: cos przepadlo po drodze.
+     *
+     * Odmowa polecenia z zegarka jest tu najwazniejsza. Zegarek wyrzuca
+     * odrzucone polecenie z kolejki, wiec bez tego wpisu seria, ktora nigdy
+     * nie trafila do bazy, nie zostawiala sladu po zadnej stronie.
+     */
+    fun line(context: Context, what: String) {
+        Log.w("GymBro", what)
+        runCatching { write(context.applicationContext, what, null) }
+    }
+
+    @Synchronized
+    private fun write(context: Context, what: String, error: Throwable?) {
         val file = File(context.filesDir, FILE)
-        val stack = StringWriter().also { error.printStackTrace(PrintWriter(it)) }.toString()
+        val stack = error?.let { e -> StringWriter().also { e.printStackTrace(PrintWriter(it)) }.toString() }
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(Date())
-        val entry = "=== $time - $what\n$stack\n"
+        val entry = if (stack != null) "=== $time - $what\n$stack\n" else "=== $time - $what\n"
         val old = if (file.exists()) file.readText() else ""
         val joined = old + entry
         file.writeText(if (joined.length > MAX_BYTES) joined.takeLast(MAX_BYTES) else joined)

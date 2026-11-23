@@ -302,16 +302,33 @@ fun WorkoutScreen() {
     // wtedy usługa wstaje z sesją i gaśnie razem z nią. Nasłuch przekłada
     // zapis z zegarka na odświeżenie ekranu - serwer woła z własnego wątku,
     // a Refresh to stan Compose, więc musi to trafić na wątek główny.
-    val mainHandler = remember { android.os.Handler(android.os.Looper.getMainLooper()) }
+    //
+    // Seria i pauza odświeżają tylko trwający trening ([LiveRefresh]), reszta
+    // wszystko - a kilka zgłoszeń z jednej paczki składa się w jedno.
+    val watchChanges = remember {
+        WatchChanges(android.os.Handler(android.os.Looper.getMainLooper()))
+    }
     DisposableEffect(session?.id) {
         WatchLinkService.sync(context, sessionActive = session != null)
-        val off = WatchLinkService.Changes.listen { reason ->
-            mainHandler.post {
-                if (reason == "set") ExternalSet.bump()
-                Refresh.bump()
-            }
-        }
+        val off = WatchLinkService.Changes.listen { reason -> watchChanges.post(reason) }
         onDispose { off() }
+    }
+    // Zebrane zgłoszenie przeżywa zmianę sesji - seria, która przyszła tuż
+    // przed zakończeniem na telefonie, i tak ma odświeżyć ekran. Ginie dopiero
+    // razem z ekranem.
+    DisposableEffect(Unit) { onDispose { watchChanges.cancel() } }
+
+    // Seria albo pauza z zegarka: tylko trwający trening, bez planów,
+    // talerzy i historii. Pierwsze złożenie pomijamy - wczytuje start ekranu.
+    var seenLive by remember { mutableIntStateOf(LiveRefresh.version) }
+    LaunchedEffect(LiveRefresh.version) {
+        if (LiveRefresh.version == seenLive) return@LaunchedEffect
+        seenLive = LiveRefresh.version
+        if (session == null) return@LaunchedEffect
+        session = withContext(Dispatchers.IO) { sessionRepo.active() }
+        val live = session
+        val inv = inventory
+        if (live != null && inv != null) reload(live, inv)
     }
 
     // Historia wczytywana osobno od reszty ekranu - jedna lista dla Historii

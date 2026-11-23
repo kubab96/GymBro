@@ -44,7 +44,7 @@ Demon Gradle'a zostaje w tle po buildzie i **trzyma uchwyty do katalogu projektu
 
 ```sh
 cd gymbro-watch
-node tools/check.js          # 549 sprawdzen, bez zegarka
+node tools/check.js          # 591 sprawdzen, bez zegarka
 zeus build
 zeus preview -t "Amazfit Balance"
 ```
@@ -109,8 +109,12 @@ Zegarek działa, gdy telefon jest wyłączony albo poza zasięgiem:
 - **kolejka wyjściowa** w `@zos/storage` z ponawianiem od 5 s z podwajaniem do 2 min
 - każde polecenie ma `cid`; telefon trzyma LRU ostatnich 200 w pamięci
 - sesja założona na zegarku ma `local_id` z unikalnym indeksem częściowym w bazie - to **trwała** ochrona przed duplikatem, gdy telefon odpowie po restarcie
-- **zaległa kolejka nigdy nie jest wyrzucana** - baza na telefonie to jedyna kopia historii, więc trening dojeżdża choćby po dobie. Po 8 godzinach (`STALE_AFTER_MS`, ta sama granica po obu stronach) kolejce bez `FINISH` dopisywane jest zakończenie na godzinie ostatniego polecenia, żeby zaległy trening nie dojechał jako trwający
+- **zaległa kolejka nigdy nie jest wyrzucana** - baza na telefonie to jedyna kopia historii, więc trening dojeżdża choćby po dobie. Po 8 godzinach (`STALE_AFTER_MS`, ta sama granica po obu stronach) zakończenie na godzinie ostatniego polecenia dostaje **ostatni START bez FINISH po nim** (nie: kolejka bez żadnego FINISH - przy dwóch treningach koniec pierwszego „zamykał" porzucony drugi), żeby zaległy trening nie dojechał jako trwający
 - zaległy `START` ze znacznikiem zegarka telefon dopisuje **od razu zamkniętym** (`startClosed`) i rutuje do niego dalsze polecenia po `sid`: inaczej `active()` kasował właśnie założoną sesję jako porzuconą i cały trening przepadał z błędem „brak trwającego treningu"
+- **pustej sesji z zegarka telefon nie kasuje** (`StaleSession.verdict(fromWatch = true)` → zamknięcie na godzinie startu). START doszedł, a serie czekają w zegarku z numerem tej sesji - wystarczy, że usługa pilota padła zaraz po starcie. Skasowana dawała 404 każdej zaległej serii i cały trening przepadał jako odmowa
+- **odmowy nie są ciche**: telefon zapisuje każdą do `awarie.txt` (`CrashLog.line`), zegarek liczy je pod `gymbro-rejected` i pokazuje „Telefon odrzucił: N" na wyborze jednostki i w podsumowaniu, do startu następnego treningu
+- seria bez numeru jest wskazywana znacznikiem **i godziną zapisu** (`doneAt`); telefon po restarcie nie zna już znaczników, ale znajdzie serię po godzinie. Wskazanie, którego nie da się znaleźć, to odmowa - nie zapas wpisany ostatniej serii ćwiczenia
+- `/units` ma skrót (`v`, 64 bity SHA-1 z odpowiedzi): zegarek pyta o listę co dwie minuty na ekranie wyboru, a telefon przy zgodnym skrócie odsyła samo `same`. Plan trwającego treningu to **kopia** planu jednostki - na wspólnych obiektach potwierdzone serie dopisywały się do zapamiętanej listy
 - współczynniki spalania leżą w zapisie **jednostek**, nie sesji - ten drugi ginie na koniec treningu i dlatego kalorie stały na zerze przez cały trening bez telefonu
 - stan kolejki widać na zegarku: na wyborze jednostki, na ekranie czasu i w podsumowaniu, a jedna wibracja mówi, że wszystko dojechało
 - **kolejka leży wyłącznie pod `gymbro-outbox`**, nigdy w zapisie sesji. Dwie kopie sumowały się przy każdym restarcie strony i bez łączności kolejka podwajała się przy każdym opuszczeniu nadgarstka (zmierzone: 3 polecenia → 24 po trzech restartach) - stąd lagi i ubita aplikacja przy końcu treningu
@@ -245,6 +249,8 @@ Pięć: Trening, Kalorie, Waga, Plan, Profil (`MainActivity.kt`, `ui/TabHost.kt`
 **Trening ma trzy podzakładki: Trening, Progres, Historia** (`ui/TrainingHome.kt`, przełącznik i pager jak w Wadze). Trening pokazuje jednostki planu aktywnego z dużą kartą „następna w kolejce" i przycisk „Rozpocznij inny trening" (`ui/StartOtherScreen.kt`): jednostka z innego planu albo aktywność nagrywana telefonem. Jednorazowy trening z innego planu nie rusza `is_active`, więc zegarek dalej dostaje jednostki planu aktywnego. Progres (`ui/ProgressScreen.kt`) i Historia dostają z `WorkoutScreen` tę samą listę aktywności, żeby liczby w obu się zgadzały; liczby Progresu są czystymi funkcjami w `gym/ProgressStats.kt`. „Główne boje" to najcięższe ćwiczenia z co najmniej dwiema sesjami w okresie, nie najczęstsze - w FBW akcesoria siedzą w kilku jednostkach i wygrywały z przysiadem. Historia (`ui/HistoryPage.kt`) to karty z filtrami okresu, rodzaju i treningu; najlepsze serie i rekordy na kartach liczy `ProgressStats.highlights` tą samą regułą rekordu co Progres, a tętno i trasę karta doczytuje dopiero, gdy wjedzie na ekran.
 
 **Bieg, spacer i rower nagrywa też telefon** (`track/`). Aktywność jest zwykłym wierszem `external_session` ze źródłem `ExternalSession.PHONE_SOURCE` i tą samą nazwą typu co import z zegarka („Bieg", „Spacer"), więc historia i ekran szczegółów nie mają dla niej osobnej ścieżki. Trwająca leży w `app_state`, punkty trasy w `track_point` zapisywane na bieżąco - ubity proces wstaje przez `PhoneTracker.restore` z tym samym dystansem. GPS chodzi w usłudze pierwszoplanowej typu `location` (`TrackService`), startowanej zawsze z widocznej aplikacji, więc wystarcza zgoda „podczas używania". Odsiewanie odczytów, dystans, kilometry i energia są w `gym/TrackMath.kt` z testami. Ten sam bieg nagrany i telefonem, i zegarkiem `Timeline.build` skleja w jeden - zostaje zapis z telefonu. **Niesprawdzone w terenie** - na telefonie przeszedł tylko stoper bez GPS.
+
+**Zmiany z zegarka nie przeładowują wszystkiego.** `Refresh.bump()` przeładowuje wszystkie zakładki naraz (historia z trzech tysięcy aktywności, dzień w Kaloriach, Profil, Plan), a seria z zegarka przychodziła po kilkanaście w paczce. Zgłoszenia z `WatchLinkService.Changes` składa `WatchChanges` (`ui/Busy.kt`) po 250 ms ciszy; seria i pauza trwającego treningu dają tylko `LiveRefresh`, reszta - pełne `Refresh`. Seria dopisana do zamkniętego treningu idzie z `WatchApi` jako „other", bo zmienia historię.
 
 Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar zostaje, bo mierzenie rozbudowanego ekranu od nowa to kilkadziesiąt milisekund zwiechy przy każdym powrocie. Głuchota jest konieczna, bo ukryty ekran nadal leży w drzewie.
 

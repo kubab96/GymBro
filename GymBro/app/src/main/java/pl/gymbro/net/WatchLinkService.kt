@@ -61,10 +61,13 @@ class WatchLinkService : Service() {
         // Zgodę da się jednak cofnąć w ustawieniach, a START_STICKY podnosi
         // usługę bez pytania nas o zdanie - wtedy lepiej zgasnąć po cichu,
         // niż wywrócić całą aplikację.
+        // Ostatni napis, nie domyslny. Usluga dostaje to polecenie przy kazdej
+        // zmianie sesji na telefonie, a domyslny napis zamazywal "Ostatni zapis
+        // z zegarka" - jedyny slad po stronie telefonu, ze synchronizacja szla.
         val wystartowala = runCatching {
             startForeground(
                 NOTIFICATION_ID,
-                notification("Zegarek może zapisywać serie"),
+                notification(ostatniNapis),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             )
         }.onFailure { Log.w(TAG, "system nie pozwolil wystartowac pilotowi", it) }.isSuccess
@@ -126,13 +129,15 @@ class WatchLinkService : Service() {
         ostatnieOdswiezenie = teraz
         val godzina = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
             .format(java.util.Date(teraz))
+        ostatniNapis = "Ostatni zapis z zegarka: " + godzina
         runCatching {
             getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, notification("Ostatni zapis z zegarka: " + godzina))
+                .notify(NOTIFICATION_ID, notification(ostatniNapis))
         }
     }
 
     private var ostatnieOdswiezenie = 0L
+    private var ostatniNapis = "Zegarek może zapisywać serie"
 
     private fun notification(text: String): Notification {
         val manager = getSystemService(NotificationManager::class.java)

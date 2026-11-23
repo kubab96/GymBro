@@ -71,3 +71,57 @@ object ExternalSet {
         version++
     }
 }
+
+/**
+ * Sygnał „zmienił się trwający trening" - seria albo pauza z zegarka.
+ *
+ * Osobno od [Refresh], bo [Refresh] przeładowuje wszystkie zakładki naraz:
+ * historię z trzech tysięcy aktywności, dzień w Kaloriach, Profil, Plan.
+ * Seria z zegarka zmienia z tego tylko trwający trening, a przychodziła
+ * po kilkanaście w paczce - każda z pełnym przeładowaniem wszystkiego.
+ */
+object LiveRefresh {
+    var version by mutableIntStateOf(0)
+        private set
+
+    fun bump() {
+        version++
+    }
+}
+
+/**
+ * Zmiany z zegarka zebrane w jedną.
+ *
+ * Paczka zaległych poleceń to kilkanaście zgłoszeń w kilkadziesiąt
+ * milisekund. Odświeżenie leci raz, po chwili ciszy, i tylko takie, jakiego
+ * wymaga najszersza ze zgłoszonych zmian.
+ *
+ * [post] wolno wołać z dowolnego wątku; reszta dzieje się na głównym.
+ */
+class WatchChanges(private val handler: android.os.Handler) {
+    private val reasons = mutableSetOf<String>()
+
+    private val flush = Runnable {
+        val all = reasons.toSet()
+        reasons.clear()
+        if ("set" in all) ExternalSet.bump()
+        if (all.any { it != "set" && it != "pause" }) Refresh.bump() else LiveRefresh.bump()
+    }
+
+    fun post(reason: String) {
+        handler.post {
+            reasons += reason
+            handler.removeCallbacks(flush)
+            handler.postDelayed(flush, DELAY_MS)
+        }
+    }
+
+    fun cancel() {
+        handler.removeCallbacks(flush)
+    }
+
+    private companion object {
+        /** Dłużej niż przerwa między poleceniami jednej paczki, krócej niż da się zauważyć. */
+        const val DELAY_MS = 250L
+    }
+}

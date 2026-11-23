@@ -35,6 +35,37 @@ object Cache {
     @Synchronized
     fun clear() {
         entries.clear()
+        generation++
+    }
+
+    /** Rosnie przy kazdym [clear] - po nim poznaje sie wynik policzony sprzed zmiany. */
+    private var generation = 0
+    private val loadLock = Any()
+
+    /**
+     * Wartosc z pamieci albo wczytana raz, dla wszystkich pytajacych naraz.
+     *
+     * Progres i Historia potrzebuja tych samych serii z calej historii i pytaly
+     * o nie rownoczesnie, kazda osobno. Drugi pytajacy czeka teraz na wynik
+     * pierwszego. Wynik wczytany przed [clear] nie trafia do pamieci - inaczej
+     * zmiana w trakcie wczytywania zostawialaby tu stare dane do nastepnej.
+     *
+     * @param tag to, od czego wynik zalezy, a co zmienia sie bez [clear] -
+     *   zakonczenie treningu na telefonie zmienia liste aktywnosci, ale nie
+     *   podbija odswiezenia. Inny znacznik to inny wynik.
+     *
+     * Wolac z watku roboczego: [load] czyta baze.
+     */
+    fun <T : Any> getOrLoad(key: String, tag: Any?, load: () -> T): T {
+        synchronized(loadLock) {
+            @Suppress("UNCHECKED_CAST")
+            val stored = synchronized(this) { entries[key] as? Pair<Any?, T> }
+            if (stored != null && stored.first == tag) return stored.second
+            val gen = synchronized(this) { generation }
+            val value = load()
+            synchronized(this) { if (generation == gen) entries[key] = tag to value }
+            return value
+        }
     }
 
     // Klucze trzymamy w jednym miejscu, żeby literówka nie tworzyła po cichu
@@ -47,4 +78,5 @@ object Cache {
     const val BODY_TREND = "body_trend"
     const val PROGRAMS = "programs"
     const val EXERCISES = "exercises"
+    const val WORKING_SETS = "working_sets"
 }

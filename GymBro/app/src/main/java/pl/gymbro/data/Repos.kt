@@ -692,7 +692,8 @@ class SessionRepository(context: Context) {
             "SELECT * FROM session WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1", null
         ).mapAll(::sessionFrom).firstOrNull() ?: return null
 
-        return when (val v = StaleSession.verdict(s.startedAt, lastSetAt(s.id), now)) {
+        val v = StaleSession.verdict(s.startedAt, lastSetAt(s.id), now, fromWatch = s.localId != null)
+        return when (v) {
             StaleSession.Verdict.Active -> s
             StaleSession.Verdict.Discard -> { discard(s.id); null }
             is StaleSession.Verdict.Close -> { finish(s.id, v.endedAt); null }
@@ -856,18 +857,42 @@ class SessionRepository(context: Context) {
     ): Map<Long, List<List<SetEntry>>> {
         if (exerciseIds.isEmpty()) return emptyMap()
         val placeholders = exerciseIds.joinToString(",") { "?" }
-        val args = exerciseIds.map { it.toString() } + (excludeSessionId ?: -1L).toString()
+        val exclude = (excludeSessionId ?: -1L).toString()
+        val args = exerciseIds.map { it.toString() } + exclude
+
+        // Najpierw same numery sesji, potem serie tylko z tych, ktore wejda.
+        // Jednym zapytaniem przychodzila cala historia tych cwiczen - kazda
+        // seria jako obiekt, przy kazdej serii z zegarka - a z niej i tak
+        // zostawalo szesc ostatnich sesji na cwiczenie. Koszt rosl z historia.
+        val chosen = db.readableDatabase.rawQuery(
+            """
+            SELECT exercise_id, session_id, MAX(done_at) AS t
+            FROM set_entry
+            WHERE exercise_id IN ($placeholders)
+              AND is_warmup = 0
+              AND session_id <> ?
+            GROUP BY exercise_id, session_id
+            """.trimIndent(),
+            args.toTypedArray()
+        ).mapAll { Triple(it.long("exercise_id"), it.long("session_id"), it.long("t")) }
+            .groupBy { it.first }
+            .flatMap { (_, rows) -> rows.sortedByDescending { it.third }.take(limitPerExercise) }
+            .map { it.first to it.second }
+            .toSet()
+        if (chosen.isEmpty()) return emptyMap()
+        val sessions = chosen.map { it.second }.distinct()
 
         return db.readableDatabase.rawQuery(
             """
             SELECT * FROM set_entry
             WHERE exercise_id IN ($placeholders)
               AND is_warmup = 0
-              AND session_id <> ?
+              AND session_id IN (${sessions.joinToString(",") { "?" }})
             ORDER BY done_at DESC
             """.trimIndent(),
-            args.toTypedArray()
+            (exerciseIds.map { it.toString() } + sessions.map { it.toString() }).toTypedArray()
         ).mapAll(::setFrom)
+            .filter { (it.exerciseId to it.sessionId) in chosen }
             .groupBy { it.exerciseId }
             .mapValues { (_, sets) ->
                 sets.groupBy { it.sessionId }

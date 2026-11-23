@@ -34,8 +34,15 @@ class LocalServer(
         val method: String,
         val path: String,
         val token: String?,
-        val body: String
-    )
+        val body: String,
+        /** Parametry po znaku zapytania - GET nie niesie ciala. */
+        val query: String = ""
+    ) {
+        fun param(name: String): String? = query.split('&')
+            .firstOrNull { it.substringBefore('=') == name }
+            ?.substringAfter('=', "")
+            ?.let { runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it) }
+    }
 
     data class Response(val status: Int, val json: String) {
         companion object {
@@ -114,9 +121,17 @@ class LocalServer(
             }
         }
 
+        // Za duze cialo to odmowa, nie awaria: ponowione bedzie tak samo duze.
+        // Dotad czytalismy je jako puste, a puste polecenie konczylo sie 4xx
+        // "brak exerciseId" - zegarek wyrzucal je wtedy z kolejki jako odmowe.
+        if (length > MAX_BODY) {
+            write(client, Response.error(413, "za duze zadanie"))
+            return
+        }
+
         // Ciało czytamy co do bajta z Content-Length. Czytanie „do końca strumienia"
         // wisiałoby do limitu czasu, bo klient trzyma połączenie otwarte.
-        val body = if (length > 0 && length <= MAX_BODY) {
+        val body = if (length > 0) {
             val buf = ByteArray(length)
             var read = 0
             while (read < length) {
@@ -128,11 +143,24 @@ class LocalServer(
                 if (n <= 0) break
                 read += n
             }
+            // Urwane cialo to awaria po drodze i polecenie ma czekac w kolejce
+            // zegarka. Obsluzone jako puste dawalo odmowe, a odmowa wyrzuca
+            // polecenie na zawsze - razem z seria, ktorej nie ma jak odtworzyc.
+            if (read < length) {
+                write(client, Response.error(500, "urwane zadanie"))
+                return
+            }
             String(buf, 0, read, Charsets.UTF_8)
         } else ""
 
+        val target = parts[1]
         val response = runCatching {
-            route(Request(parts[0].uppercase(), parts[1].substringBefore('?'), token, body))
+            route(
+                Request(
+                    parts[0].uppercase(), target.substringBefore('?'), token, body,
+                    query = target.substringAfter('?', "")
+                )
+            )
         }.getOrElse {
             Log.i(TAG, "blad obslugi: ${it.message}")
             Response.error(500, "blad wewnetrzny")
@@ -181,6 +209,7 @@ class LocalServer(
         401 -> "Unauthorized"
         404 -> "Not Found"
         409 -> "Conflict"
+        413 -> "Payload Too Large"
         else -> "Internal Server Error"
     }
 

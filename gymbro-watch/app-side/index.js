@@ -31,11 +31,17 @@ const call = async (path, method, payload) => {
   const response = await fetch(options)
   const status = (response && response.status) || 0
 
+  // Bez odpowiedzi albo bez kodu nie wiadomo, czy cokolwiek sie wykonalo.
+  // Puste cialo szlo dalej jako sukces i zegarek skreslal polecenie z kolejki.
+  if (!status) {
+    return { error: 'Otwórz GymBro na telefonie', retry: true }
+  }
+
   // Zly token znaczy, ze telefon slucha, ale nas nie zna - zwykle po
   // przeinstalowaniu aplikacji, bo token rodzi sie na nowo. To zupelnie co
   // innego niz brak polaczenia i wymaga czego innego, wiec mowimy to wprost.
   if (status === 401) {
-    return { error: 'Zly token - sprawdz go w Profilu', retry: true }
+    return { error: 'Zły token - sprawdź go w Profilu GymBro', retry: true }
   }
 
   // Odpowiedź bywa już obiektem, a bywa tekstem - zależnie od wersji systemu.
@@ -86,12 +92,14 @@ const handle = async (ctx, request) => {
       case 'EDIT':
         data = await call('/edit', 'POST', request.params)
         break
-      case 'WEIGHT':
-        data = await call('/weight', 'POST', request.params)
+      // Skrot listy, ktora zegarek juz ma - przy zgodnosci telefon odpowiada
+      // samym "bez zmian" zamiast kilkunastu kilobajtow. GET nie niesie ciala,
+      // wiec skrot jedzie w adresie.
+      case 'UNITS': {
+        const v = request.params && request.params.v
+        data = await call('/units' + (v ? '?v=' + encodeURIComponent(v) : ''), 'GET')
         break
-      case 'UNITS':
-        data = await call('/units', 'GET')
-        break
+      }
       case 'START':
         data = await call('/start', 'POST', request.params)
         break

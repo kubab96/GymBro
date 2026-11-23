@@ -101,12 +101,24 @@ class WatchApi(context: Context) {
         return null
     }
 
-    /** Numer serii z polecenia: wprost albo przez znacznik polecenia, ktore ja zalozylo. */
-    private fun setIdOf(body: JSONObject): Long {
+    /**
+     * Numer serii z polecenia: wprost, przez znacznik polecenia, ktore ja
+     * zalozylo, albo - gdy znacznik przepadl - po godzinie zapisu.
+     *
+     * Znaczniki zyja tylko w pamieci. Telefon zrestartowany miedzy seria
+     * a zapasem do niej nie zna juz znacznika, ale zna serie: zegarek dokleja
+     * godzine, ktora sam nadal serii, a ta trafia do bazy co do milisekundy.
+     */
+    private fun setIdOf(body: JSONObject, sessionId: Long): Long {
         val wprost = body.optLong("setId")
         if (wprost > 0) return wprost
         val ref = body.optString("ref").takeIf { it.isNotBlank() } ?: return 0
-        return seen[ref] ?: 0
+        seen[ref]?.takeIf { it > 0 }?.let { return it }
+        val doneAt = body.optLong("doneAt").takeIf { it > 0 } ?: return 0
+        val exerciseId = body.optLong("exerciseId")
+        return sessionRepo.setsBySessionGrouped(sessionId).values.flatten()
+            .firstOrNull { it.doneAt == doneAt && (exerciseId <= 0 || it.exerciseId == exerciseId) }
+            ?.id ?: 0
     }
 
     /** Odpowiedz na polecenie zmieniajace zapis. */
@@ -148,11 +160,34 @@ class WatchApi(context: Context) {
         val body = runCatching { JSONObject(request.body.ifBlank { "{}" }) }
             .getOrElse { JSONObject() }
         if (request.method == "POST" && request.path == "/batch") return batch(body)
+        // Lista jednostek ze skrotem: zegarek pyta o nia co dwie minuty na
+        // ekranie wyboru, a odpowiedz to kilkanascie kilobajtow przez Bluetooth
+        // do rozlozenia w watku palca - prawie zawsze taka sama jak poprzednia.
+        if (request.method == "GET" && request.path == "/units") {
+            return LocalServer.Response.ok(units(request.param("v")).toString())
+        }
         // Tryb 2 to samo potwierdzenie; starszy zegarek zna tylko 1.
         lekki = body.optInt("lite") >= 1
         potwierdzenie = body.optInt("lite") == 2
         cichy = false
-        return wykonaj(request.method, request.path, body)
+        return wykonaj(request.method, request.path, body).also { odmowa(request.path, body, it) }
+    }
+
+    /**
+     * Odmowa polecenia z zegarka - do pliku awarii.
+     *
+     * Zegarek wyrzuca odrzucone polecenie z kolejki, bo ponowienie i tak
+     * dostaloby to samo. Bez tego wpisu seria, ktora nigdy nie trafila do bazy,
+     * nie zostawiala sladu ani tu, ani tam.
+     */
+    private fun odmowa(path: String, body: JSONObject, r: LocalServer.Response) {
+        if (r.status !in 400..499) return
+        val powod = runCatching { JSONObject(r.json).optString("error") }.getOrDefault("")
+        pl.gymbro.CrashLog.line(
+            app,
+            "zegarek: odmowa $path (${r.status} $powod) sid=${body.optString("sid")} " +
+                "cid=${body.optString("cid")}"
+        )
     }
 
     /**
@@ -185,6 +220,7 @@ class WatchApi(context: Context) {
                 val p = item.optJSONObject("p") ?: JSONObject()
                 val r = runCatching { wykonaj("POST", path, p) }.getOrNull() ?: break
                 if (r.status >= 500) break
+                odmowa(path, p, r)
                 val json = runCatching { JSONObject(r.json) }.getOrElse { JSONObject() }
                 if (r.status == 200) {
                     val wynik = JSONObject().put("ok", true)
@@ -237,7 +273,6 @@ class WatchApi(context: Context) {
     private fun route(method: String, path: String, body: JSONObject): LocalServer.Response {
         return when (method to path) {
             "GET" to "/state" -> LocalServer.Response.ok(state().toString())
-            "GET" to "/units" -> LocalServer.Response.ok(units().toString())
 
             "POST" to "/start" -> {
                 // Trening mogl zaczac sie na zegarku, bez lacznosci. Wtedy
@@ -328,7 +363,6 @@ class WatchApi(context: Context) {
             "POST" to "/rir" -> setRir(body)
             "POST" to "/delete" -> deleteSet(body)
             "POST" to "/edit" -> editSet(body)
-            "POST" to "/weight" -> nextWeight(body)
 
             else -> LocalServer.Response.error(404, "nieznana sciezka")
         }
@@ -373,7 +407,7 @@ class WatchApi(context: Context) {
             )
         )
         nowaSeria = id
-        changed("set")
+        changedSet(session)
         // Numer nowej serii wraca wprost. Zegarek zgadywal go dotad z "ostatniej
         // serii cwiczenia" w stanie, a przy kilku seriach w kolejce to zgadywanie
         // trafialo w cudza.
@@ -390,7 +424,7 @@ class WatchApi(context: Context) {
     private fun editSet(body: JSONObject): LocalServer.Response {
         val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-        val setId = setIdOf(body)
+        val setId = setIdOf(body, session.id)
         if (setId <= 0) return LocalServer.Response.error(404, "nie ma takiej serii")
 
         val states = states(session) ?: return LocalServer.Response.error(404, "plan pusty")
@@ -414,7 +448,7 @@ class WatchApi(context: Context) {
         }
 
         sessionRepo.updateSet(setId, weight, reps, rir)
-        changed("set")
+        changedSet(session)
         return LocalServer.Response.ok(stan().toString())
     }
 
@@ -429,15 +463,24 @@ class WatchApi(context: Context) {
         val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
         val exerciseId = body.optLong("exerciseId")
-        val serie = sessionRepo.setsForExerciseInSession(session.id, exerciseId)
-        val wskazana = setIdOf(body).takeIf { it > 0 }?.let { id ->
+        // Wskazanie serii jest wiazace. Seria, ktorej nie da sie znalezc ani
+        // po numerze, ani po znaczniku, ani po godzinie zapisu (skasowana,
+        // odrzucona), to odmowa - a nie zapas wpisany ostatniej serii
+        // cwiczenia, czyli cudzej. Ostatnia seria zostaje tylko dla zegarka,
+        // ktory serii nie wskazuje wcale.
+        val wskazuje = body.optLong("setId") > 0 || body.optString("ref").isNotBlank()
+        val last = if (wskazuje) {
+            val id = setIdOf(body, session.id).takeIf { it > 0 }
+                ?: return LocalServer.Response.error(404, "nie ma takiej serii")
             sessionRepo.setsBySessionGrouped(session.id).values.flatten().firstOrNull { it.id == id }
+                ?: return LocalServer.Response.error(404, "nie ma takiej serii w tym treningu")
+        } else {
+            sessionRepo.setsForExerciseInSession(session.id, exerciseId).lastOrNull()
+                ?: return LocalServer.Response.error(404, "nie ma takiej serii")
         }
-        val last = wskazana ?: serie.lastOrNull()
-            ?: return LocalServer.Response.error(404, "nie ma takiej serii")
         val rir = body.optInt("rir", -1).takeIf { it >= 0 }?.coerceAtMost(10)
         sessionRepo.updateSet(last.id, last.weightKg, last.reps, rir)
-        changed("set")
+        changedSet(session)
         return LocalServer.Response.ok(stan().toString())
     }
 
@@ -445,12 +488,12 @@ class WatchApi(context: Context) {
     private fun deleteSet(body: JSONObject): LocalServer.Response {
         val session = sesja(body)
             ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-        val setId = setIdOf(body)
+        val setId = setIdOf(body, session.id)
         val istnieje = sessionRepo.setsBySessionGrouped(session.id).values
             .flatten().any { it.id == setId }
         if (!istnieje) return LocalServer.Response.error(404, "nie ma takiej serii")
         sessionRepo.deleteSet(setId)
-        changed("set")
+        changedSet(session)
         return LocalServer.Response.ok(stan().toString())
     }
 
@@ -461,36 +504,8 @@ class WatchApi(context: Context) {
         val last = sessionRepo.setsForExerciseInSession(session.id, exerciseId).lastOrNull()
             ?: return LocalServer.Response.error(404, "nie ma czego cofnac")
         sessionRepo.deleteSet(last.id)
-        changed("set")
+        changedSet(session)
         return LocalServer.Response.ok(stan().toString())
-    }
-
-    /**
-     * Następny możliwy ciężar w górę lub w dół.
-     *
-     * Robi to telefon, bo tylko on zna gryf i talerze. Zegarek przy każdym
-     * naciśnięciu pyta o kolejną wartość - to jedno żądanie po pętli zwrotnej,
-     * czyli ułamek milisekundy, a w zamian plusy i minusy na zegarku chodzą
-     * dokładnie po tych samych progach co na telefonie.
-     */
-    private fun nextWeight(body: JSONObject): LocalServer.Response {
-        val session = sesja(body)
-            ?: return LocalServer.Response.error(404, "brak trwajacego treningu")
-        val exerciseId = body.optLong("exerciseId")
-        val states = states(session) ?: return LocalServer.Response.error(404, "plan pusty")
-        val st = states.firstOrNull { it.item.exerciseId == exerciseId }
-            ?: return LocalServer.Response.error(404, "cwiczenia nie ma w tej jednostce")
-
-        val from = body.optDouble("from", st.nextWeight)
-        val up = body.optInt("dir", 1) >= 0
-        val mode = LoadMode.of(st.item.equipment, gymRepo.inventory())
-        val next = if (mode != null) {
-            if (up) PlateCalculator.nextUp(from, mode, gymRepo.inventory())?.totalKg
-            else PlateCalculator.nextDown(from, mode, gymRepo.inventory())?.totalKg
-        } else {
-            StepLadder.next(from, st.item.stepKg, up)
-        }
-        return LocalServer.Response.ok("""{"weight":${round(next ?: from)}}""")
     }
 
     private fun snap(
@@ -594,7 +609,7 @@ class WatchApi(context: Context) {
             .put("plan", "")
             .put("exercises", JSONArray())
 
-        val plan = session.planId?.let { id -> planRepo.plans().firstOrNull { it.id == id } }
+        val plan = session.planId?.let { planRepo.planById(it) }
         val exercises = exercisesJson(states, lite)
 
         // Liczby na podsumowanie. Zegarek ma pokazać to samo co telefon po
@@ -714,12 +729,35 @@ class WatchApi(context: Context) {
 
     private fun nextUnit(): JSONObject {
         val id = nextPlanId() ?: return JSONObject()
-        val plan = planRepo.plans().firstOrNull { it.id == id } ?: return JSONObject()
+        val plan = planRepo.planById(id) ?: return JSONObject()
         return JSONObject().put("id", plan.id).put("name", plan.name)
     }
 
-    /** Jednostki aktywnego programu - zegarek musi wiedzieć, co może zacząć. */
-    private fun units(): JSONObject {
+    /**
+     * Jednostki aktywnego programu - zegarek musi wiedzieć, co może zacząć.
+     *
+     * @param znana skrot listy, ktora zegarek juz ma. Gdy sie zgadza, wraca
+     *   samo "bez zmian": zegarek pyta o liste co dwie minuty na ekranie
+     *   wyboru, a pelna odpowiedz to kilkanascie kilobajtow przez Bluetooth,
+     *   rozkladanych potem w watku, ktory obsluguje palec.
+     */
+    private fun units(znana: String?): JSONObject {
+        val out = unitsJson()
+        val wersja = skrot(out.toString())
+        if (znana != null && znana == wersja) {
+            return JSONObject().put("same", true).put("v", wersja)
+        }
+        return out.put("v", wersja)
+    }
+
+    /** Krotki odcisk tekstu - 64 bity SHA-1 wystarcza, zeby dwie rozne listy sie nie pomylily. */
+    private fun skrot(tekst: String): String =
+        java.security.MessageDigest.getInstance("SHA-1")
+            .digest(tekst.toByteArray(Charsets.UTF_8))
+            .take(8)
+            .joinToString("") { "%02x".format(it) }
+
+    private fun unitsJson(): JSONObject {
         val program = programRepo.active()
         val plans = program?.let { planRepo.plansOf(it.id) }.orEmpty()
         val counts = sessionRepo.itemCounts()
@@ -868,6 +906,16 @@ class WatchApi(context: Context) {
     private fun round(value: Double): Double = roundKg(value)
 
     private fun changed(reason: String) = onChanged?.invoke(reason)
+
+    /**
+     * Zmiana serii - "set" tylko dla trwajacego treningu.
+     *
+     * Ekran telefonu po "set" przelicza wylacznie trwajacy trening, bez
+     * historii. Zalegla seria dopisana do zamknietego treningu zmienia jednak
+     * wlasnie historie, wiec idzie jako zwykla zmiana.
+     */
+    private fun changedSet(session: pl.gymbro.data.Session) =
+        changed(if (session.endedAt == null) "set" else "other")
 
     private companion object {
         /** Polecenia z kolejki zegarka i ich sciezki - dla paczki. */
