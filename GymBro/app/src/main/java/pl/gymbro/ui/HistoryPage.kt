@@ -315,7 +315,8 @@ private fun HistoryCard(
     }
 
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp).clickable { onOpen(item) },
+        onClick = { onOpen(item) },
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)

@@ -1,6 +1,6 @@
 package pl.gymbro.ui
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -80,7 +80,7 @@ internal fun Stepper(
                     fontSize = 22.sp,
                     textDecoration = TextDecoration.Underline,
                     modifier = Modifier
-                        .clickable(onClick = onLabelClick)
+                        .tap(RoundedCornerShape(8.dp), onClick = onLabelClick)
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }

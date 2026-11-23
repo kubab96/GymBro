@@ -236,7 +236,8 @@ private fun SectionLabel(text: String) {
 @Composable
 private fun ActivityTile(kind: PhoneActivity, modifier: Modifier, onClick: () -> Unit) {
     Card(
-        modifier.clickable(onClick = onClick),
+        onClick = onClick,
+        modifier = modifier,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {

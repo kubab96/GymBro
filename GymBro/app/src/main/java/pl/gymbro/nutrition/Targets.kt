@@ -67,6 +67,37 @@ object Targets {
     }
 
     /**
+     * Tempa do wyboru w Profilu, od najwolniejszego; środkowe jest domyślne.
+     *
+     * Trzy progi zamiast suwaka: krańce to granice zakresu z `kalorie.md`,
+     * a liczba z dokładnością do setnej procenta udawałaby wiedzę, której
+     * nikt nie ma - różnicę między 0.65 a 0.7 % zje błąd oszacowania wydatku.
+     */
+    fun ratePresets(phase: Phase): List<Double> = when (phase) {
+        Phase.CUT -> listOf(0.5, CUT_RATE_PCT, 1.0)
+        Phase.BULK -> listOf(0.25, BULK_RATE_PCT, 0.5)
+        Phase.MAINTAIN -> emptyList()
+    }
+
+    /**
+     * Tempo, które faktycznie obowiązuje: zapisane, gdy pasuje do fazy,
+     * inaczej domyślne.
+     *
+     * Zapisane tempo zostaje w bazie po zmianie fazy - 0.7 % z redukcji
+     * wzięte do nadwyżki dałoby dwa razy szybsze przybieranie, niż ktokolwiek
+     * wybrał. Dlatego liczy się tylko w zakresie swojej fazy.
+     */
+    fun effectiveRatePct(phase: Phase, stored: Double?): Double {
+        val presets = ratePresets(phase)
+        if (presets.isEmpty()) return 0.0
+        return stored?.takeIf { it >= presets.first() - 1e-9 && it <= presets.last() + 1e-9 }
+            ?: defaultRatePct(phase)
+    }
+
+    /** Zmiana masy ciała na tydzień w kilogramach przy danym tempie. */
+    fun kgPerWeek(weightKg: Double, ratePct: Double): Double = weightKg * ratePct / 100.0
+
+    /**
      * Cel kaloryczny na dobę.
      *
      * Tempo w procentach masy ciała, nie w kilogramach: ten sam ubytek

@@ -186,6 +186,12 @@ odwrotnie proporcjonalnie do wariancji. Ważenie raz w tygodniu wyklucza
 średnią kroczącą po dniach - progi wejścia i niepewność pomiaru opisuje
 `kalorie.md`, rozdział 3.
 
+**Cel kalorii liczy się z fazy i tempa w Profilu → Cel** (schudnąć /
+utrzymać wagę / przybrać na wadze, trzy progi tempa z `Targets.ratePresets`),
+nie z zakładki Kalorie - ta pokazuje tylko napis, skąd wziął się cel. Jedno
+miejsce zmiany, bo Profil pracuje na szkicu i drugi zapis tej samej kolumny
+z Kalorii cofałby się przy jego Zapisz.
+
 **Klawiatura podnosi się tu sama** i zasłania dolne kilkaset pikseli. Każdy
 ekran z polem tekstowym musi to uwzględniać: przyciski idą nad pole albo
 dostają `imePadding()`. Trzy razy okazało się, że przycisk kończący robotę
@@ -254,7 +260,7 @@ Ukryta zakładka jest **mierzona, ale nierysowana i głucha na dotyk**. Pomiar z
 
 `ui/Busy.kt` to **licznik, nie flaga** - kilka ekranów ładuje się naraz.
 
-**Jeden język wyglądu we wszystkich zakładkach** - klocki w `ui/Style.kt`: `AppCard` (karta w kolorze `surface` z obwódką `outlineVariant`, nie szary prostokąt `surfaceVariant`), `TagPill`, `GroupLabel` (nagłówek grupy wersalikami), `IconBadge`, `SettingsGroup`/`SettingsRow` (lista ustawień jak w Profilu) i `SubScreenHeader` (strzałka wstecz po lewej zamiast „Zamknij" w rogu). Podzakładki to `SegmentedTabs` z `WeightScreen.kt`. Pytanie przy wyjściu z niezapisanymi zmianami to jedno `UnsavedChangesDialog` - samo „Zmiany nie zostały zapisane", bez wyliczania co. Nowy ekran składa się z tych klocków, a nie z gołych `Card`. Pasek postępu na karcie potrzebuje tła `surfaceVariant` - na `surface` znika razem z kartą.
+**Jeden język wyglądu we wszystkich zakładkach** - klocki w `ui/Style.kt`: `AppCard` (karta w kolorze `surface` z obwódką `outlineVariant`, nie szary prostokąt `surfaceVariant`), `TagPill`, `GroupLabel` (nagłówek grupy wersalikami), `IconBadge`, `SettingsGroup`/`SettingsRow` (lista ustawień jak w Profilu) i `SubScreenHeader` (strzałka wstecz po lewej zamiast „Zamknij" w rogu). Podzakładki to `SegmentedTabs` z `WeightScreen.kt`. Pytanie przy wyjściu z niezapisanymi zmianami to jedno `UnsavedChangesDialog` - samo „Zmiany nie zostały zapisane", bez wyliczania co. Nowy ekran składa się z tych klocków, a nie z gołych `Card`. **Dotyk zawsze z tą samą falą od palca, przyciętą do kształtu**: karta dostaje go przez `Card(onClick)` / `AppCard(onClick)`, nigdy przez `.clickable` doklejone z zewnątrz (fala wychodziła kanciasta za zaokrąglone rogi), a każdy inny element przez `Modifier.tap` ze `Style.kt`, postawione przed `padding`. Pasek postępu na karcie potrzebuje tła `surfaceVariant` - na `surface` znika razem z kartą.
 
 ## Konwencje
 

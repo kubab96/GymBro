@@ -538,7 +538,7 @@ private fun SetsDialog(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clickable { onEdit(s) }
+                            .tap { onEdit(s) }
                             .padding(vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -658,7 +658,8 @@ private fun ExerciseBlockRow(
     onClick: () -> Unit
 ) {
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 3.dp).clickable(onClick = onClick),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )

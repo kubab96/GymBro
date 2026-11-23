@@ -25,6 +25,37 @@ class TargetsTest {
     }
 
     @Test
+    fun `tempa do wyboru maja domyslne w srodku`() {
+        for (phase in listOf(Phase.CUT, Phase.BULK)) {
+            val tempa = Targets.ratePresets(phase)
+            assertEquals(3, tempa.size)
+            assertEquals(Targets.defaultRatePct(phase), tempa[1], 0.001)
+            assertTrue("$phase rosnaco", tempa[0] < tempa[1] && tempa[1] < tempa[2])
+        }
+        assertTrue(Targets.ratePresets(Phase.MAINTAIN).isEmpty())
+    }
+
+    @Test
+    fun `tempo z innej fazy nie przechodzi do nowej`() {
+        // 0.7 % zapisane na redukcji, potem zmiana na nadwyzke: dwa razy
+        // szybsze przybieranie, niz ktokolwiek wybral. Obowiazuje domyslne.
+        assertEquals(0.35, Targets.effectiveRatePct(Phase.BULK, 0.7), 0.001)
+        assertEquals(0.7, Targets.effectiveRatePct(Phase.CUT, 0.25), 0.001)
+        assertEquals(0.0, Targets.effectiveRatePct(Phase.MAINTAIN, 0.7), 0.001)
+    }
+
+    @Test
+    fun `tempo wybrane w zakresie fazy obowiazuje`() {
+        assertEquals(1.0, Targets.effectiveRatePct(Phase.CUT, 1.0), 0.001)
+        assertEquals(0.25, Targets.effectiveRatePct(Phase.BULK, 0.25), 0.001)
+        assertEquals(0.7, Targets.effectiveRatePct(Phase.CUT, null), 0.001)
+        // 1 % z 85 kg to 850 g na tydzien, czyli 935 kcal na dobe - ale to
+        // 32 % wydatku, wiec wiaze limit cwiartki: 2938 - 735.
+        assertEquals(2200.0, Targets.kcalTarget(wydatek, masa, Phase.CUT, 1.0), 0.01)
+        assertEquals(0.85, Targets.kgPerWeek(masa, 1.0), 0.001)
+    }
+
+    @Test
     fun `redukcja odejmuje 0_7 procent masy na tydzien`() {
         // 0.7 % z 85 kg to 0.595 kg na tydzien, czyli 654.5 kcal na dobe.
         assertEquals(2280.0, Targets.kcalTarget(wydatek, masa, Phase.CUT), 0.01)

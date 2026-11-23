@@ -224,6 +224,15 @@ utrata 0.5 kg/tydzień jest umiarkowana przy 100 kg i agresywna przy 55 kg.
 | utrzymanie | 0 | 0 |
 | nadwyżka | 0.25-0.5 %/tyg. | **0.35 %** |
 
+Faza i tempo ustawia się w Profilu → Cel, razem z celem treningu. Tempo to
+trzy progi, nie suwak: oba krańce zakresu i domyślne pośrodku
+(`Targets.ratePresets`) - **konwencja**, różnicy między 0.65 a 0.7 % nie
+odróżni żaden pomiar wydatku. Zapisane tempo liczy się tylko w zakresie swojej
+fazy (`Targets.effectiveRatePct`); 0.7 % z redukcji przeniesione do nadwyżki
+dawałoby dwa razy szybsze przybieranie, niż ktoś wybrał. Uwaga: „szybko" przy
+85 kg dobija już do limitu deficytu (1 % to 935 kcal, limit 735), więc
+faktyczny ubytek jest mniejszy, niż mówią procenty przy progu.
+
 Garthe porównał 0.7 % z 1.4 % na tydzień u sportowców: wolniejsza redukcja
 lepiej chroniła masę beztłuszczową i wyniki siłowe **[?]**. Domyślna wartość
 to ta wolniejsza. Nadwyżka jest wyraźnie mniejsza, bo nadmiar nadwyżki idzie
@@ -749,4 +758,4 @@ Po podmianie pliku **podbij `FoodPack.VERSION`** - inaczej aplikacja uzna,
 | przepisy w interfejsie | nie ma |
 | paczka offline z Open Food Facts | nie ma, etap 4 |
 | wykresy i krzywa wydatku | nie ma |
-| tempo diety do ustawienia w Profilu | nie ma, na razie domyślne dla fazy |
+| faza i tempo diety w Profilu → Cel | zrobione, przetestowane jednostkowo, niesprawdzone na telefonie |

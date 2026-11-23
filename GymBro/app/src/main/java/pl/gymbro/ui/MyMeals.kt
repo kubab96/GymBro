@@ -1,6 +1,5 @@
 package pl.gymbro.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.filled.RestaurantMenu
 import androidx.compose.foundation.layout.Arrangement
@@ -456,7 +455,7 @@ private fun ColumnScope.SkladnikPicker(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable { wybrany = food }
+                    .tap { wybrany = food }
                     .padding(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

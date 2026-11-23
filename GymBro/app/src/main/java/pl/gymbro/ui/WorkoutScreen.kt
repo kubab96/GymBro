@@ -861,7 +861,7 @@ private fun CollapsedExercise(state: ExerciseState, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .tap(onClick = onClick)
             .padding(vertical = 14.dp, horizontal = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically

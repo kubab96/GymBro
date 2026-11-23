@@ -233,7 +233,7 @@ object NutritionReview {
             weightKg = weightKg,
             phase = profile.phase,
             leanKg = leanKg,
-            ratePct = profile.dietRatePct
+            ratePct = Targets.effectiveRatePct(profile.phase, profile.dietRatePct)
         )
 
         if (existing != null && !worthSaving(existing, fresh)) return existing

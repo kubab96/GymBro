@@ -1,6 +1,5 @@
 package pl.gymbro.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -11,6 +10,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingFlat
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Balance
 import androidx.compose.material.icons.filled.BatteryChargingFull
@@ -83,6 +85,9 @@ import pl.gymbro.data.Plate
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.data.SessionRepository
 import pl.gymbro.data.TrainingGoal
+import pl.gymbro.data.BodyRepository
+import pl.gymbro.data.Phase
+import pl.gymbro.nutrition.Targets
 import pl.gymbro.data.Sex
 import pl.gymbro.data.UserProfile
 import pl.gymbro.net.WatchLinkService
@@ -117,8 +122,9 @@ private enum class ProfileSub { NONE, GOAL, GEAR, GEAR_PICK, WATCH, HEALTH, DATA
  * zmianie. Wyjście z zakładki z niezapisanymi zmianami pyta, co z nimi
  * zrobić. Poza szkicem zostają tylko rzeczy, które nie są danymi profilu:
  * przełącznik pilota (włącza i gasi usługę od razu), zgody systemowe
- * i czyszczenie historii. Faza (schudnąć, utrzymać, przybrać) mieszka
- * w zakładce Kalorie.
+ * i czyszczenie historii. Cel wagi ciała (schudnąć, utrzymać, przybrać)
+ * i jego tempo stoją w „Cel" razem z celem treningu - z nich Kalorie liczą
+ * dzienny cel.
  */
 @Composable
 fun ProfileScreen() {
@@ -154,6 +160,15 @@ fun ProfileScreen() {
 
     var sub by rememberSaveable { mutableStateOf(ProfileSub.NONE) }
     var lastSync by remember { mutableStateOf<Long?>(null) }
+
+    // Ostatnia waga do kilogramów na tydzień przy progach tempa w Celu.
+    // Czytana przy każdym wejściu w Cel, bo zmienia się poza Profilem.
+    var goalWeight by remember { mutableStateOf<Double?>(null) }
+    LaunchedEffect(sub) {
+        if (sub == ProfileSub.GOAL) {
+            goalWeight = withContext(Dispatchers.IO) { BodyRepository(context).latest()?.weightKg }
+        }
+    }
     val health = remember { HealthRepository(context) }
 
     var editingPlate by remember { mutableStateOf<Plate?>(null) }
@@ -248,7 +263,7 @@ fun ProfileScreen() {
 
     // Liczniki starzeją się same: zakładka żyje w tle i nie składa się od
     // nowa po treningu. Profil też bywa zapisywany poza tym ekranem (wzrost
-    // przy obwodach, faza w Kaloriach), więc czytamy go na nowo - ale tylko
+    // przy obwodach), więc czytamy go na nowo - ale tylko
     // wtedy, gdy nie ma tu rozgrzebanych zmian, bo odczyt zamazałby szkic.
     LaunchedEffect(Refresh.version) {
         counts = withContext(Dispatchers.IO) { sessions.historyCounts() }
@@ -266,9 +281,8 @@ fun ProfileScreen() {
      * Zapis całego szkicu.
      *
      * Profil czytany z bazy tuż przed zapisem i nadpisywany tylko w polach
-     * tego ekranu: faza, tempo diety i dzień odcięcia wydatku należą do
-     * zakładki Kalorie, a zapisanie ich z kopii sprzed kwadransa cofałoby
-     * tamte zmiany.
+     * tego ekranu: dzień odcięcia wydatku należy do zakładki Kalorie,
+     * a zapisanie go z kopii sprzed kwadransa cofałoby tamtą zmianę.
      */
     fun save(then: () -> Unit = {}) {
         val p = target
@@ -282,6 +296,8 @@ fun ProfileScreen() {
                         sex = p.sex,
                         birthYear = p.birthYear,
                         trainingGoal = p.trainingGoal,
+                        phase = p.phase,
+                        dietRatePct = p.dietRatePct,
                         customGear = p.customGear,
                         ownedGear = p.ownedGear
                     )
@@ -290,8 +306,8 @@ fun ProfileScreen() {
                 profileRepo.get() to gymRepo.inventory()
             }
             adopt(fresh.first, fresh.second)
-            // Cel w Kaloriach liczy się ze wzrostu, załadunek w Treningu
-            // z talerzy - a tamte zakładki żyją w tle.
+            // Cel w Kaloriach liczy się ze wzrostu, fazy i tempa, załadunek
+            // w Treningu z talerzy - a tamte zakładki żyją w tle.
             Refresh.bump()
             then()
         }
@@ -445,12 +461,12 @@ fun ProfileScreen() {
 
         ProfileSub.GOAL -> {
             GoalScreen(
-                goal = draft.trainingGoal,
+                draft = draft,
+                weightKg = goalWeight,
+                canSave = canSave,
+                onSave = { save() },
                 onBack = { sub = ProfileSub.NONE },
-                onPick = {
-                    draft = draft.copy(trainingGoal = it)
-                    sub = ProfileSub.NONE
-                }
+                onChange = { draft = it }
             )
             return
         }
@@ -757,11 +773,16 @@ fun ProfileScreen() {
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
                     )
-                    Row(
+                    // Z zawijaniem: trzy pigułki z „siła i mięśnie" na końcu
+                    // nie mieszczą się w jednym rzędzie na wąskim telefonie.
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
                         Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         TagPill(if (draft.sex == Sex.MALE) "mężczyzna" else "kobieta", MaterialTheme.colorScheme.primary)
+                        TagPill(phaseShort(draft.phase), MaterialTheme.colorScheme.primary)
                         TagPill(goalLabel(draft.trainingGoal).lowercase(), MaterialTheme.colorScheme.primary)
                     }
                 }
@@ -813,7 +834,10 @@ fun ProfileScreen() {
         SettingsGroup {
             SettingsRow(
                 title = "Cel",
-                subtitle = goalLabel(draft.trainingGoal),
+                subtitle = phaseLabel(draft.phase) +
+                    (if (draft.phase == Phase.MAINTAIN) ""
+                    else ", " + fmtPct(Targets.effectiveRatePct(draft.phase, draft.dietRatePct)) + " %/tydz.") +
+                    " · " + goalLabel(draft.trainingGoal),
                 icon = Icons.Filled.Flag,
                 first = true,
                 chevron = true,
@@ -910,16 +934,72 @@ private fun ProfileSubScreen(
 }
 
 /**
- * Cel treningu: jedno pytanie, trzy odpowiedzi.
+ * Cel: co ma się dziać z wagą ciała, w jakim tempie i co ma rosnąć na
+ * treningu.
  *
- * Stało tu „Co ma rosnąć: siła / masa / mieszany" i pod spodem „Faza:
- * redukcja / utrzymanie / budowa" - a „masa" w pierwszym i „redukcja"
- * w drugim czytały się jak sprzeczność, bo jedno słowo znaczyło raz mięśnie,
- * raz wagę ciała. Faza poszła do Kalorii, tu został sam trening.
+ * Waga ciała była przez chwilę tylko w Kaloriach, bo „masa" w celu
+ * treningowym i „redukcja" obok czytały się jak sprzeczność. Sprzeczność
+ * siedziała w słowach, nie w miejscu: teraz waga ciała mówi „schudnąć /
+ * utrzymać wagę / przybrać na wadze", a trening „siła / mięśnie" - i oba
+ * pytania stoją razem, bo razem odpowiadają na „po co to wszystko".
+ *
+ * Ekran nie zamyka się po wyborze, bo pytań jest kilka. Zmiany idą do
+ * szkicu Profilu, jak każda inna, i do bazy przyciskiem Zapisz.
+ *
+ * Bez opisów pod progami tempa i bez podglądu kalorii - sama liczba
+ * procentów i kilogramów wystarcza do wyboru, a cel kalorii widać w Kaloriach.
+ *
+ * @param weightKg ostatnia waga - z niej kilogramy na tydzień przy progach
  */
 @Composable
-private fun GoalScreen(goal: TrainingGoal, onBack: () -> Unit, onPick: (TrainingGoal) -> Unit) {
-    ProfileSubScreen(title = "Cel treningu", onBack = onBack) {
+private fun GoalScreen(
+    draft: UserProfile,
+    weightKg: Double?,
+    canSave: Boolean,
+    onSave: () -> Unit,
+    onBack: () -> Unit,
+    onChange: (UserProfile) -> Unit
+) {
+    ProfileSubScreen(title = "Cel", onBack = onBack, canSave = canSave, onSave = onSave) {
+        GroupLabel("Waga ciała")
+        listOf(
+            Triple(Phase.CUT, Icons.AutoMirrored.Filled.TrendingDown, "Deficyt kalorii, więcej białka"),
+            Triple(Phase.MAINTAIN, Icons.AutoMirrored.Filled.TrendingFlat, "Jesz tyle, ile spalasz"),
+            Triple(Phase.BULK, Icons.AutoMirrored.Filled.TrendingUp, "Niewielka nadwyżka kalorii")
+        ).forEach { (ph, icon, opis) ->
+            OptionCard(
+                title = phaseLabel(ph),
+                subtitle = opis,
+                icon = icon,
+                selected = ph == draft.phase,
+                // Tempo zerowane przy zmianie fazy: tempo redukcji nie jest
+                // tempem nadwyżki, a zostawione w bazie wyglądałoby jak wybór.
+                onClick = { if (ph != draft.phase) onChange(draft.copy(phase = ph, dietRatePct = null)) }
+            )
+        }
+
+        val tempo = Targets.effectiveRatePct(draft.phase, draft.dietRatePct)
+        val presets = Targets.ratePresets(draft.phase)
+        if (presets.isNotEmpty()) {
+            GroupLabel("Tempo")
+            presets.forEachIndexed { i, rate ->
+                val kg = weightKg?.let { " · ok. " + fmtKg(Targets.kgPerWeek(it, rate)) + " kg" }.orEmpty()
+                OptionCard(
+                    title = listOf("Spokojnie", "Umiarkowanie", "Szybko")[i],
+                    subtitle = fmtPct(rate) + " % wagi na tydzień" + kg,
+                    icon = null,
+                    selected = kotlin.math.abs(rate - tempo) < 1e-9,
+                    // Domyślne zapisane jako null, nie jako liczba: inaczej
+                    // dotknięcie tego, co już obowiązuje, świeciłoby Zapisz.
+                    onClick = {
+                        val zapis = rate.takeIf { kotlin.math.abs(it - Targets.defaultRatePct(draft.phase)) > 1e-9 }
+                        onChange(draft.copy(dietRatePct = zapis))
+                    }
+                )
+            }
+        }
+
+        GroupLabel("Trening")
         listOf(
             Triple(TrainingGoal.STRENGTH, Icons.Filled.FitnessCenter, "Progresja głównie ciężarem"),
             Triple(TrainingGoal.HYPERTROPHY, Icons.Filled.SportsGymnastics, "Ciężar, powtórzenia i serie"),
@@ -929,11 +1009,31 @@ private fun GoalScreen(goal: TrainingGoal, onBack: () -> Unit, onPick: (Training
                 title = goalLabel(g),
                 subtitle = opis,
                 icon = icon,
-                selected = g == goal,
-                onClick = { onPick(g) }
+                selected = g == draft.trainingGoal,
+                onClick = { onChange(draft.copy(trainingGoal = g)) }
             )
         }
     }
+}
+
+/** 0,5 / 0,35 / 1 - bez zer na końcu, które czytały się jak większa precyzja. */
+internal fun fmtPct(v: Double): String =
+    "%.2f".format(java.util.Locale.forLanguageTag("pl"), v).trimEnd('0').trimEnd(',')
+
+private fun fmtKg(v: Double): String = "%.1f".format(java.util.Locale.forLanguageTag("pl"), v)
+
+/** Cel dla wagi ciała słowami celu - „przybrać na wadze", nie „masa". */
+private fun phaseLabel(p: Phase): String = when (p) {
+    Phase.CUT -> "Schudnąć"
+    Phase.MAINTAIN -> "Utrzymać wagę"
+    Phase.BULK -> "Przybrać na wadze"
+}
+
+/** Krótka nazwa do pigułki na wizytówce i do podpisu w Kaloriach. */
+internal fun phaseShort(p: Phase): String = when (p) {
+    Phase.CUT -> "redukcja"
+    Phase.MAINTAIN -> "utrzymanie wagi"
+    Phase.BULK -> "przybieranie"
 }
 
 /** Karta jednej odpowiedzi z ikoną; wybrana ma obwódkę w kolorze akcji i ptaszek. */
@@ -1045,7 +1145,7 @@ private fun StatusDot(ok: Boolean, warn: Boolean = false) {
     )
 }
 
-/** Nazwa celu treningu - „mięśnie", nie „masa": masa to waga ciała, a ta jest w Kaloriach. */
+/** Nazwa celu treningu - „mięśnie", nie „masa": „masa" czytała się jak waga ciała. */
 private fun goalLabel(g: TrainingGoal): String = when (g) {
     TrainingGoal.STRENGTH -> "Siła"
     TrainingGoal.HYPERTROPHY -> "Mięśnie"

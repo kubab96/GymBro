@@ -3,7 +3,6 @@ package pl.gymbro.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -339,7 +338,8 @@ private fun NextUnitCard(o: PlanOption, onClick: () -> Unit) {
 @Composable
 internal fun UnitRow(o: PlanOption, onClick: () -> Unit) {
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = onClick),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
@@ -380,7 +380,7 @@ private fun OtherWorkoutButton(onClick: () -> Unit) {
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
                 )
             }
-            .clickable(onClick = onClick)
+            .tap(onClick = onClick)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

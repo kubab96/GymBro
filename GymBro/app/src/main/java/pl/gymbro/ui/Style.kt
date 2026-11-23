@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,6 +42,21 @@ import androidx.compose.ui.unit.dp
  * zakładkach odcienie i zaokrąglenia zaczęły się rozjeżdżać - stąd jedno
  * miejsce.
  */
+
+/**
+ * Dotyk z falą od palca, przyciętą do zaokrąglonego kształtu.
+ *
+ * Fala jest jedna w całej aplikacji - ta z kart wyboru w Celu, rozlewająca
+ * się po całym elemencie. Goły `clickable` rysował ją jako kanciasty
+ * prostokąt wystający za zaokrąglone rogi, a przed `padding` - tylko na
+ * środku elementu. Stąd zasada: `tap` przed `padding`, a karta dostaje
+ * dotyk przez `Card(onClick)`, nie przez modyfikator z zewnątrz.
+ */
+internal fun Modifier.tap(
+    shape: Shape = RoundedCornerShape(10.dp),
+    enabled: Boolean = true,
+    onClick: () -> Unit
+): Modifier = clip(shape).clickable(enabled = enabled, onClick = onClick)
 
 /** Karta: tło ekranu o ton jaśniejsze i obwódka. [accent] - obwódka w kolorze akcji. */
 @Composable

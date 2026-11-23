@@ -344,7 +344,8 @@ private fun metricValue(m: ProgressStats.Metric, v: Double): String = when (m) {
 @Composable
 private fun LiftCard(l: ProgressStats.Lift, onClick: () -> Unit) {
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = onClick),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
@@ -376,7 +377,7 @@ private fun LiftCard(l: ProgressStats.Lift, onClick: () -> Unit) {
 @Composable
 private fun LiftRow(l: ProgressStats.Lift, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 11.dp),
+        Modifier.fillMaxWidth().tap(onClick = onClick).padding(vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {

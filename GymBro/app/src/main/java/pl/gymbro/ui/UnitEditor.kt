@@ -2,7 +2,6 @@ package pl.gymbro.ui
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -229,7 +228,7 @@ private fun AddExercisesButton(onClick: () -> Unit) {
                     cornerRadius = CornerRadius(10.dp.toPx())
                 )
             }
-            .clickable(onClick = onClick)
+            .tap(onClick = onClick)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -313,7 +312,7 @@ private fun ExerciseCard(
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(
-                Modifier.fillMaxWidth().clickable(onClick = onToggle),
+                Modifier.fillMaxWidth().tap(RoundedCornerShape(8.dp), onClick = onToggle),
                 verticalAlignment = Alignment.Top
             ) {
                 Box(
@@ -624,7 +623,7 @@ internal fun UnitEditorHeader(
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć")
         }
-        Column(Modifier.weight(1f).clickable(onClick = onRename)) {
+        Column(Modifier.weight(1f).tap(RoundedCornerShape(8.dp), onClick = onRename)) {
             Text(
                 programName,
                 style = MaterialTheme.typography.labelLarge,
@@ -886,10 +885,10 @@ private fun UnitLibraryContent(
                 pairs.forEach { (program, unit) ->
                     val rozwinieta = open == unit
                     Card(
-                        Modifier
+                        onClick = { open = if (rozwinieta) null else unit },
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { open = if (rozwinieta) null else unit },
+                            .padding(vertical = 4.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant
                         )

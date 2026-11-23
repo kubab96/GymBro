@@ -15,7 +15,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -139,10 +138,10 @@ private fun ProgramCard(
     var menu by remember { mutableStateOf(false) }
 
     Card(
-        Modifier
+        onClick = onOpen,
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp)
-            .clickable(onClick = onOpen),
+            .padding(vertical = 5.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = if (active) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)

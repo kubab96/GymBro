@@ -1,6 +1,5 @@
 package pl.gymbro.ui
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -504,7 +503,8 @@ private fun UnitListCard(
     var menu by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf(false) }
     Card(
-        Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(onClick = onOpen),
+        onClick = onOpen,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
