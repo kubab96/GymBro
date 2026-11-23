@@ -1,6 +1,7 @@
 package pl.gymbro.nutrition
 
 import android.content.Context
+import pl.gymbro.data.Bia
 import pl.gymbro.data.BodyFat
 import pl.gymbro.data.BodyRepository
 import pl.gymbro.data.DiaryRepository
@@ -120,6 +121,12 @@ object NutritionReview {
         // ciała, a dwa ekrany pokazujące różny procent tłuszczu dla tego
         // samego dnia byłyby gorsze niż brak tej liczby w ogóle. Wartość
         // z wagi zostaje jako zapas, gdy obwodów nie ma.
+        //
+        // Z oporu bierzemy tylko pomiar ręka - stopa. Stopa - stopa liczy się
+        // wzorem pożyczonym z innej drogi prądu: kierunek zmian jest prawdziwy,
+        // ale przesunięcie wartości bezwzględnej szłoby prosto w przemianę
+        // materii, a potem w cel kalorii. Wzór producenta wagi jest dalej
+        // ostatni - nie wiemy, z czego go liczy.
         val girths = repos.metrics.latestPerSite()
         val bodyFatPct = BodyFat.navy(
             sex = profile.sex,
@@ -127,7 +134,9 @@ object NutritionReview {
             waistCm = girths[MeasurementSite.WAIST]?.valueCm,
             neckCm = girths[MeasurementSite.NECK]?.valueCm,
             hipsCm = girths[MeasurementSite.HIPS]?.valueCm
-        ) ?: latest?.composition?.bodyFatPct
+        ) ?: latest?.let { Bia.of(it, profile) }
+            ?.takeIf { it.basis == Bia.Basis.DIRECT }?.fatPct
+            ?: latest?.composition?.bodyFatPct
 
         val resting = Bmr.resting(
             weightKg = weightKg,

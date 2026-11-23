@@ -6,6 +6,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import pl.gymbro.data.BiaPath
+import pl.gymbro.data.BiaValue
 import java.util.UUID
 
 class ScaleDecodersTest {
@@ -31,7 +33,7 @@ class ScaleDecodersTest {
         assertEquals(84.05, s.weightKg, 0.001)
         assertEquals(true, s.stable)
         // 0x1388 to stala wpisywana przez firmware, nie pomiar.
-        assertNull(s.impedanceOhm)
+        assertTrue(s.bia.isEmpty())
     }
 
     @Test
@@ -106,14 +108,14 @@ class ScaleDecodersTest {
         // masa 0x41AA = 16810 -> 84,05 kg; impedancja 0x01F4 = 500 omow
         val s = service("181b", "02 26 E3 07 07 11 0F 1F 11 F4 01 AA 41")!!.sample!!
         assertEquals(84.05, s.weightKg, 0.001)
-        assertEquals(500.0, s.impedanceOhm!!, 0.001)
+        assertEquals(listOf(BiaValue(BiaPath.FOOT_TO_FOOT, 500.0)), s.bia)
         assertEquals(true, s.stable)
     }
 
     @Test
     fun `impedancja bez bitu potwierdzenia jest pomijana`() {
         val s = service("181b", "02 20 E3 07 07 11 0F 1F 11 F4 01 AA 41")!!.sample!!
-        assertNull(s.impedanceOhm)
+        assertTrue(s.bia.isEmpty())
     }
 
     // ---- Standard Bluetooth SIG -------------------------------------------
@@ -142,7 +144,7 @@ class ScaleDecodersTest {
         val frame = "02 06  C8 00  E3 07 07 11 0F 1F 11  88 13  AA 41".replace("  ", " ")
         val s = ScaleDecoders.fromGatt(sig("2a9c"), bytes(frame), 100)!!
         assertEquals(84.05, s.weightKg, 0.001)
-        assertEquals(500.0, s.impedanceOhm!!, 0.001)
+        assertEquals(listOf(BiaValue(BiaPath.FOOT_TO_FOOT, 500.0)), s.bia)
     }
 
     @Test

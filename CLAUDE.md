@@ -193,9 +193,9 @@ jest niewidoczny dokładnie wtedy, gdy się go potrzebuje.
 
 ### Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 29. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
+`data/Schema.kt`, `SQLiteOpenHelper`, schemat w wersji 30. Bez Room celowo: Room wymaga KSP, czyli kolejnej wtyczki Gradle z własną macierzą zgodności.
 
-Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia dwie tabele; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
+Każda zmiana schematu podbija `VERSION`, dopisuje `Vn_STATEMENTS` i gałąź w `onUpgrade`. **Nigdy nie kasujemy tabel z danymi użytkownika.** Dwadzieścia trzy tabele; `session` / `set_entry` / `plan_item` to rdzeń treningu, `food` / `food_log` / `food_portion` to rdzeń dziennika jedzenia.
 
 **`onCreate` i `onUpgrade` to dwie drogi do tej samej bazy i nic poza `GymBro/tools/schemat.sh` nie pilnuje, żeby kończyły się w tym samym miejscu.** Skrypt składa świeżą bazę z SQL-a wyciągniętego z `Schema.kt` i porównuje ją z kopią z telefonu - kolumny, typy, klucze, indeksy. Puszczaj go po każdej zmianie schematu, na kopii ściągniętej już po migracji: `GymBro/tools/schemat.sh GymBro/kopie/<plik>.db`. Nową listę `Vn_STATEMENTS` wołaną z `onCreate` trzeba dopisać do `LISTY` w skrypcie. Testu jednostkowego na to nie ma, bo `SQLiteOpenHelper` wymaga Androida.
 
@@ -219,6 +219,8 @@ Nie ma protokołu wspólnego dla wszystkich wag - „łączy się z każdą" zna
 **Dlatego wynik nie może zależeć od jednej ramki.** Liczba idzie na ekran od pierwszego pakietu, a wynikiem staje się na trzy sposoby: waga ustawiła bit „ustalone", ta sama liczba stoi odpowiednio długo, albo waga zamilkła - wtedy ostatnia liczba przychodzi z zastrzeżeniem. Czekanie wyłącznie na bit kończyło się tym, że pomiar łapał się po kilkunastu sekundach albo wcale.
 
 **Fałszywy pomiar jest gorszy niż brak pomiaru.** Dekoder dobiera się po ID producenta, UUID serwisu albo charakterystyce, nigdy po samym kształcie bajtów - dopasowany „na oko" wyciągnął kiedyś 26,50 kg z rozgłoszenia komputera.
+
+**Sterownik wagi podaje surowe opory, nie skład ciała.** `WeightSample.bia` to lista `BiaValue` (droga prądu, częstotliwość, omy), w bazie tabela `bia_value`. Skład ciała liczy wyłącznie `data/Bia.kt` opublikowanymi wzorami, przy każdym rysowaniu - poprawka wzoru przelicza całą historię. Źródła, droga prądu i to, czemu stopa - stopa nie idzie do przemiany materii: `GymBro/docs/sklad-ciala.md`, źródło prawdy dla tych liczb. Waga bez oporu daje samą masę - składu nie zgadujemy.
 
 `GymBro/tools/sztuczna-waga.ps1` nadaje z komputera ramki takie jak domowa waga (Windows PowerShell 5.1, nie `pwsh`). Pozwala przejść cały kreator pomiaru bez stawania na wadze; nie nadaje się do mierzenia opóźnień, bo Windows nadaje rzadko i nierówno. **Próbnego pomiaru nie zapisuj** - kończ przez Anuluj, inaczej 84,05 kg ląduje w historii.
 

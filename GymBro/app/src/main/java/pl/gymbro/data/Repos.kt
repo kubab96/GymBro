@@ -1139,7 +1139,6 @@ class BodyRepository(context: Context) {
         id = c.long("id"),
         measuredAt = c.long("measured_at"),
         weightKg = c.dbl("weight_kg"),
-        impedanceOhm = c.dblOrNull("impedance_ohm"),
         source = c.str("source"),
         composition = BodyComposition(
             bodyFatPct = c.dblOrNull("body_fat_pct"),
@@ -1162,10 +1161,10 @@ class BodyRepository(context: Context) {
      */
     fun record(
         weightKg: Double,
-        impedanceOhm: Double?,
         source: String,
         at: Long = System.currentTimeMillis(),
         composition: BodyComposition = BodyComposition.EMPTY,
+        bia: List<BiaValue> = emptyList(),
         dedupeWindowMs: Long = 10 * 60 * 1000
     ): Long? {
         // Deduplikacja dotyczy tylko zapisów "na teraz". Przy uzupełnianiu historii
@@ -1184,20 +1183,40 @@ class BodyRepository(context: Context) {
             if (duplicate > 0) return null
         }
 
-        return db.writable.insert("body_measurement", null, ContentValues().apply {
-            put("measured_at", at)
-            put("weight_kg", weightKg)
-            if (impedanceOhm != null) put("impedance_ohm", impedanceOhm) else putNull("impedance_ohm")
-            put("source", source)
-            putOrNull("body_fat_pct", composition.bodyFatPct)
-            putOrNull("water_pct", composition.waterPct)
-            putOrNull("muscle_mass_kg", composition.muscleMassKg)
-            putOrNull("bone_mass_kg", composition.boneMassKg)
-            putOrNull("visceral_fat", composition.visceralFat)
-            putOrNull("bmr_kcal", composition.bmrKcal)
-            putOrNull("protein_pct", composition.proteinPct)
-            putOrNull("metabolic_age", composition.metabolicAge)
-        })
+        // Pomiar i jego opory razem albo wcale: pomiar bez oporów, które waga
+        // podała, wyglądałby w historii jak ważenie wagą bez elektrod.
+        val w = db.writable
+        w.beginTransaction()
+        try {
+            val id = w.insert("body_measurement", null, ContentValues().apply {
+                put("measured_at", at)
+                put("weight_kg", weightKg)
+                put("source", source)
+                putOrNull("body_fat_pct", composition.bodyFatPct)
+                putOrNull("water_pct", composition.waterPct)
+                putOrNull("muscle_mass_kg", composition.muscleMassKg)
+                putOrNull("bone_mass_kg", composition.boneMassKg)
+                putOrNull("visceral_fat", composition.visceralFat)
+                putOrNull("bmr_kcal", composition.bmrKcal)
+                putOrNull("protein_pct", composition.proteinPct)
+                putOrNull("metabolic_age", composition.metabolicAge)
+            })
+            if (id < 0) return null
+            // REPLACE, bo klucz to (pomiar, droga, częstotliwość): ramka
+            // powtórzona przez wagę nie może wywrócić zapisu całego pomiaru.
+            bia.forEach { v ->
+                w.insertWithOnConflict("bia_value", null, ContentValues().apply {
+                    put("measurement_id", id)
+                    put("path", v.path.name)
+                    put("freq_khz", v.freqKHz)
+                    put("ohm", v.ohm)
+                }, android.database.sqlite.SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            w.setTransactionSuccessful()
+            return id
+        } finally {
+            w.endTransaction()
+        }
     }
 
     fun delete(id: Long): Int =
@@ -1216,7 +1235,6 @@ class BodyRepository(context: Context) {
             ContentValues().apply {
                 put("measured_at", m.measuredAt)
                 put("weight_kg", m.weightKg)
-                putOrNull("impedance_ohm", m.impedanceOhm)
                 put("source", m.source)
                 putOrNull("body_fat_pct", m.composition.bodyFatPct)
                 putOrNull("water_pct", m.composition.waterPct)
@@ -1241,13 +1259,34 @@ class BodyRepository(context: Context) {
             ORDER BY measured_at DESC LIMIT 1
             """.trimIndent(),
             null
-        ).mapAll(::from).firstOrNull()
+        ).mapAll(::from).let(::withBia).firstOrNull()
 
     fun recent(limit: Int = 90): List<BodyMeasurement> =
         db.readableDatabase.rawQuery(
             "SELECT * FROM body_measurement ORDER BY measured_at DESC LIMIT ?",
             arrayOf(limit.toString())
-        ).mapAll(::from)
+        ).mapAll(::from).let(::withBia)
+
+    /**
+     * Dokłada opory jednym zapytaniem na całą listę, nie jednym na pomiar -
+     * ekran Masy wczytuje sto dwadzieścia pomiarów naraz.
+     */
+    private fun withBia(list: List<BodyMeasurement>): List<BodyMeasurement> {
+        if (list.isEmpty()) return list
+        val ids = list.joinToString(",") { it.id.toString() }
+        val byId = db.readableDatabase.rawQuery(
+            "SELECT * FROM bia_value WHERE measurement_id IN ($ids)",
+            null
+        ).mapAll { c ->
+            // Droga spoza listy to zapis z nowszej wersji aplikacji - pomijamy
+            // ten jeden opór zamiast wywracać cały ekran.
+            BiaPath.parse(c.str("path"))?.let { path ->
+                c.long("measurement_id") to BiaValue(path, c.dbl("ohm"), c.dbl("freq_khz"))
+            }
+        }.filterNotNull().groupBy({ it.first }, { it.second })
+        if (byId.isEmpty()) return list
+        return list.map { m -> byId[m.id]?.let { m.copy(bia = it) } ?: m }
+    }
 
     fun latest(): BodyMeasurement? = recent(1).firstOrNull()
 

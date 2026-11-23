@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import pl.gymbro.BuildConfig
+import pl.gymbro.data.BiaValue
 import pl.gymbro.data.roundKg
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -73,8 +74,8 @@ data class ScaleReading(
     val detail: String?,
     val stable: Boolean,
     val source: String,
-    /** Surowa impedancja w omach, jesli waga ja podaje. Potrzebna do zapisu w bazie. */
-    val impedanceOhm: Double? = null,
+    /** Surowe opory, jesli waga je podaje. Ida do bazy bez przeliczania. */
+    val bia: List<BiaValue> = emptyList(),
     /** Moment odczytu - czyni kazda emisje unikalna. */
     val at: Long = System.currentTimeMillis(),
     /**
@@ -404,7 +405,7 @@ class ScaleScanner(private val context: Context) {
                 log(
                     (if (s.stable == true) ">>> POMIAR STABILNY: " else "    pomiar w trakcie: ") +
                         "%.2f kg".format(s.weightKg) +
-                        (s.impedanceOhm?.let { "   impedancja %.1f Ohm".format(it) } ?: "") +
+                        (WeightSample.describe(s.bia)?.let { "   opor: $it" } ?: "") +
                         "   [" + s.source + "]"
                 )
             }
@@ -455,10 +456,10 @@ class ScaleScanner(private val context: Context) {
         )
         _lastStable.value = ScaleReading(
             weightKg = roundKg(s.weightKg),
-            detail = s.impedanceOhm?.let { "impedancja %.1f Ohm".format(it) },
+            detail = WeightSample.describe(s.bia)?.let { "opor: $it" },
             stable = true,
             source = s.source,
-            impedanceOhm = s.impedanceOhm,
+            bia = s.bia,
             at = now,
             certain = verdict.certain
         )

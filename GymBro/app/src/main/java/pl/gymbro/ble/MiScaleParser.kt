@@ -68,7 +68,7 @@ object MiScaleParser {
             WeightSample(
                 weight,
                 stable = status and 0x20 != 0,
-                impedanceOhm = imp?.toDouble(),
+                footToFootOhm = imp?.toDouble(),
                 source = "Xiaomi Body Composition Scale"
             )
         )

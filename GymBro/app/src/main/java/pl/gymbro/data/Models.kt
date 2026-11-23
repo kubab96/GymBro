@@ -267,9 +267,11 @@ data class BodyMeasurement(
     val id: Long = 0,
     val measuredAt: Long,
     val weightKg: Double,
-    val impedanceOhm: Double? = null,
     val source: String,
-    val composition: BodyComposition = BodyComposition.EMPTY
+    /** Wartości policzone przez wagę lub aplikację producenta, przepisane bez zmian. */
+    val composition: BodyComposition = BodyComposition.EMPTY,
+    /** Surowe opory, z których skład ciała liczy [Bia]. Pusta lista: waga oporu nie podała. */
+    val bia: List<BiaValue> = emptyList()
 )
 
 /**

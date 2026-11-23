@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import pl.gymbro.data.Bia
 import pl.gymbro.data.BodyMeasurement
 import pl.gymbro.data.BodyMetric
 import pl.gymbro.data.BodyRepository
@@ -181,6 +182,7 @@ fun WeightScreen() {
             when (page) {
                 0 -> MassPage(
                     measurements = measurements,
+                    profile = profile,
                     trend = trend,
                     weekly = weekly,
                     status = status,
@@ -313,6 +315,7 @@ internal fun SegmentedTabs(labels: List<String>, selected: Int, onSelect: (Int) 
 @Composable
 private fun MassPage(
     measurements: List<BodyMeasurement>,
+    profile: UserProfile,
     trend: List<Pair<Long, Double>>,
     weekly: Double?,
     status: String?,
@@ -321,6 +324,12 @@ private fun MassPage(
 ) {
     val latest = measurements.firstOrNull()
     val previous = measurements.getOrNull(1)
+    // Skład liczony przy rysowaniu, nie czytany z bazy: w bazie leżą tylko
+    // opory, więc poprawka wzoru albo wzrostu w profilu zmienia od razu
+    // całą historię. Karta znika, gdy waga oporu nigdy nie podała.
+    val withBia = remember(measurements, profile) {
+        measurements.mapNotNull { m -> Bia.of(m, profile)?.let { m to it } }
+    }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
         // Liczba, zmiana i przycisk w jednej karcie: to, co się robi na tym
@@ -409,6 +418,41 @@ private fun MassPage(
                         note = "od " + shortDate(first.measuredAt),
                         modifier = Modifier.weight(1f)
                     )
+                }
+            }
+        }
+
+        withBia.firstOrNull()?.let { (m, est) ->
+            item(key = "sklad") {
+                Spacer(Modifier.height(10.dp))
+                AppCard {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Skład ciała",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TagPill(shortDate(m.measuredAt))
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        BiaRows(est)
+                        // Zmiana od najstarszego pomiaru z oporem, nie od
+                        // poprzedniego: między dwoma ważeniami opór skacze
+                        // z nawodnieniem bardziej, niż zmienia się ciało.
+                        val (firstM, first) = withBia.last()
+                        if (withBia.size > 1) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "od " + shortDate(firstM.measuredAt) + ": tłuszcz " +
+                                    signed(est.fatKg - first.fatKg, "kg") + ", beztłuszczowa " +
+                                    signed(est.leanKg - first.leanKg, "kg"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
         }

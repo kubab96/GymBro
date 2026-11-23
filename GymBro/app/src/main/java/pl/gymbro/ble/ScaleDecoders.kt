@@ -1,5 +1,7 @@
 package pl.gymbro.ble
 
+import pl.gymbro.data.BiaPath
+import pl.gymbro.data.BiaValue
 import java.util.UUID
 
 /**
@@ -8,13 +10,38 @@ import java.util.UUID
  * [stable] ma trzy stany celowo. Czesc protokolow mowi wprost "ustalone" albo
  * "jeszcze nie", a czesc nie niesie tej informacji wcale - i wtedy o tym, czy
  * liczba przestala sie zmieniac, musi rozstrzygnac [WeightSettler].
+ *
+ * [bia] to surowe opory, kazdy z droga pradu. Sterownik wagi nie liczy
+ * skladu ciala - podaje, co zmierzyla waga, a reszta jest w `data/Bia.kt`,
+ * wspolna dla wszystkich rodzin. Nowa waga z raczka dopisuje tu piec
+ * segmentow i nic poza parserem nie musi sie zmienic.
  */
 data class WeightSample(
     val weightKg: Double,
     val stable: Boolean?,
-    val impedanceOhm: Double? = null,
+    val bia: List<BiaValue> = emptyList(),
     val source: String
-)
+) {
+    /** Opor z wagi z czterema elektrodami w podstawie albo nic. */
+    constructor(weightKg: Double, stable: Boolean?, footToFootOhm: Double?, source: String) :
+        this(weightKg, stable, footToFoot(footToFootOhm), source)
+
+    companion object {
+        /**
+         * Kazda obslugiwana dzis rodzina to waga z czterema elektrodami pod
+         * stopami, mierzaca przy 50 kHz - stad jedna droga dla wszystkich.
+         */
+        fun footToFoot(ohm: Double?): List<BiaValue> =
+            ohm?.takeIf { it > 0 }?.let { listOf(BiaValue(BiaPath.FOOT_TO_FOOT, it)) } ?: emptyList()
+
+        /** Do logu skanera: "stopa - stopa 512.0 Ohm". */
+        fun describe(bia: List<BiaValue>): String? =
+            bia.takeIf { it.isNotEmpty() }?.joinToString(", ") {
+                "%s %.1f Ohm".format(it.path.label, it.ohm) +
+                    if (it.freqKHz != 50.0) " @%.0f kHz".format(it.freqKHz) else ""
+            }
+    }
+}
 
 /**
  * Co wyczytalismy z rozgloszenia: [sample] jest puste, gdy to na pewno waga,
@@ -67,7 +94,7 @@ object ScaleDecoders {
                 if (m != null) {
                     return AdvertRead(
                         family,
-                        WeightSample(m.weightKg, m.stable, m.impedanceOhm, m.variant)
+                        WeightSample(m.weightKg, m.stable, footToFootOhm = m.impedanceOhm, source = m.variant)
                     )
                 }
                 awake = AdvertRead(family, null)
@@ -115,8 +142,9 @@ object ScaleDecoders {
                     y.weightKg,
                     y.stable,
                     // Rodzina QN podaje opor w surowych jednostkach przetwornika,
-                    // nie w omach - do pola impedancji sie nie nadaje.
-                    impedanceOhm = null,
+                    // nie w omach - wzory by go wziely za prawdziwy i policzyly
+                    // sklad ciala z liczby bez jednostki.
+                    bia = emptyList(),
                     source = y.source
                 )
             }

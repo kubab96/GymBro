@@ -43,8 +43,9 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 27 - opcjonalny dzien tygodnia jednostki
          * 28 - cwiczenia pod nowy sprzet: landmine, kamizelka, paralletki, pilki, sanki
          * 29 - trasa GPS aktywnosci nagranych telefonem
+         * 30 - surowe opory z wagi (bia_value), sklad ciala liczony w aplikacji
          */
-        const val VERSION = 29
+        const val VERSION = 30
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -132,6 +133,42 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
             """.trimIndent(),
             "CREATE INDEX idx_track_activity ON track_point(activity, at)"
         )
+
+        /**
+         * Surowe opory z wagi, po jednym wierszu na drogę prądu i częstotliwość.
+         *
+         * Wcześniej był jeden opór w `body_measurement.impedance_ohm`, co
+         * starczało wadze z czterema elektrodami i nie mieściło wagi z rączką:
+         * ta podaje pięć segmentów, czasem przy kilku częstotliwościach.
+         * Skład ciała nie leży w bazie wcale - liczy go `Bia` z tych oporów,
+         * więc poprawka wzoru przelicza całą historię.
+         *
+         * `impedance_ohm` zostaje w tabeli pomiarów (danych nie kasujemy), ale
+         * nic już do niej nie pisze; migracja przepisuje stare wartości tutaj.
+         * Klucz obcy z kaskadą: usunięcie pomiaru zabiera jego opory.
+         */
+        private val V30_STATEMENTS = listOf(
+            """
+            CREATE TABLE bia_value (
+                measurement_id INTEGER NOT NULL REFERENCES body_measurement(id) ON DELETE CASCADE,
+                path           TEXT    NOT NULL,
+                freq_khz       REAL    NOT NULL,
+                ohm            REAL    NOT NULL,
+                PRIMARY KEY (measurement_id, path, freq_khz)
+            )
+            """.trimIndent()
+        )
+
+        /**
+         * Opory zapisane przed wersją 30. Wszystkie pochodzą z wag z czterema
+         * elektrodami w podstawie, przy 50 kHz - innych parser wtedy nie znał.
+         */
+        private const val V30_COPY =
+            """
+            INSERT OR IGNORE INTO bia_value (measurement_id, path, freq_khz, ohm)
+            SELECT id, 'FOOT_TO_FOOT', 50.0, impedance_ohm FROM body_measurement
+            WHERE impedance_ohm IS NOT NULL AND impedance_ohm > 0
+            """
 
         /**
          * Bez tego indeksu zapytanie o ostatnie ukończenie jednostki skanowało
@@ -694,6 +731,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V24_STATEMENTS.forEach { db.execSQL(it) }
         V27_STATEMENTS.forEach { db.execSQL(it) }
         V29_STATEMENTS.forEach { db.execSQL(it) }
+        V30_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -872,6 +910,11 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
 
         if (oldVersion < 29) {
             V29_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        if (oldVersion < 30) {
+            V30_STATEMENTS.forEach { db.execSQL(it) }
+            db.execSQL(V30_COPY.trimIndent())
         }
     }
 }

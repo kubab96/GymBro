@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -58,6 +59,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.gymbro.ble.ScaleReading
 import pl.gymbro.ble.ScaleScanner
+import pl.gymbro.data.Bia
+import pl.gymbro.data.BiaValue
 import pl.gymbro.data.BodyFat
 import pl.gymbro.data.BodyMetric
 import pl.gymbro.data.BodyRepository
@@ -100,7 +103,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
         }
     }
     var weightKg by remember { mutableStateOf<Double?>(null) }
-    var impedance by remember { mutableStateOf<Double?>(null) }
+    var bia by remember { mutableStateOf<List<BiaValue>>(emptyList()) }
     var source by remember { mutableStateOf("waga BLE") }
     var measuredAt by remember { mutableStateOf(System.currentTimeMillis()) }
     // Data wybrana ręcznie. null znaczy „dzisiaj, teraz" - i wtedy liczy się
@@ -165,7 +168,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
         val s = stable ?: return@LaunchedEffect
         if (step != FlowStep.SCALE) return@LaunchedEffect
         weightKg = s.weightKg
-        impedance = s.impedanceOhm
+        bia = s.bia
         source = "waga BLE"
         certain = s.certain
         measuredAt = System.currentTimeMillis()
@@ -243,7 +246,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
                     capturedKg = weightKg,
                     onManual = { kg ->
                         weightKg = kg
-                        impedance = null
+                        bia = emptyList()
                         source = "ręcznie"
                         certain = true
                         measuredAt = System.currentTimeMillis()
@@ -251,7 +254,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
                     },
                     onRetry = {
                         weightKg = null
-                        impedance = null
+                        bia = emptyList()
                         // Odrzucony odczyt idzie do skanera: waga nadaje go jeszcze
                         // chwilę i bez tego wracał w pierwszej sekundzie nasłuchu.
                         listen(rejected = stable)
@@ -268,6 +271,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
 
                 FlowStep.SUMMARY -> SummaryStep(
                     weightKg = weightKg,
+                    bia = bia,
                     girths = girths,
                     profile = profile,
                     onSave = {
@@ -277,7 +281,7 @@ fun MeasurementFlow(onDone: () -> Unit, onCancel: () -> Unit) {
                             withContext(Dispatchers.IO) {
                                 bodyRepo.record(
                                     weightKg = kg,
-                                    impedanceOhm = impedance,
+                                    bia = bia,
                                     source = source,
                                     at = at
                                 )
@@ -634,6 +638,7 @@ private fun GirthsStep(
 @Composable
 private fun SummaryStep(
     weightKg: Double?,
+    bia: List<BiaValue>,
     girths: Map<MeasurementSite, String>,
     profile: UserProfile,
     onSave: () -> Unit
@@ -690,6 +695,29 @@ private fun SummaryStep(
                             Text(
                                 "Do tkanki tłuszczowej brakuje: " +
                                     missing.joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.tertiary
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Skład z oporu osobno od tłuszczu z obwodów: to dwa niezależne
+            // pomiary i zgoda albo rozjazd między nimi też coś mówi.
+            if (bia.isNotEmpty() && weightKg != null) {
+                val est = Bia.estimate(bia, weightKg, profile.heightCm, profile.age, profile.sex)
+                Spacer(Modifier.height(10.dp))
+                AppCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Z oporu ciała", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        if (est != null) {
+                            BiaRows(est)
+                        } else {
+                            Text(
+                                if (profile.heightCm == null) "Do składu ciała brakuje wzrostu w profilu."
+                                else "Opór poza zakresem - stań boso na środku wagi.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.tertiary
                             )

@@ -172,8 +172,10 @@ Mifflin-St Jeor:   10 * kg + 6.25 * cm - 5 * lat + 5        (mężczyzna)
 Katch-McArdle:     370 + 21.6 * masa beztłuszczowa [kg]
 ```
 
-Jeśli waga podała procent tkanki tłuszczowej, bierzemy Katcha-McArdle'a.
-Powód: wzór Mifflina nie wie nic o składzie ciała, więc dla dwóch osób o tej
+Jeśli znamy procent tkanki tłuszczowej, bierzemy Katcha-McArdle'a. Skąd
+procent, w tej kolejności: obwody (US Navy), opór ręka - stopa liczony
+w `data/Bia.kt`, na końcu liczba z aplikacji producenta. Opór stopa - stopa
+się nie liczy - powody w `sklad-ciala.md`, rozdział 4 i 7. Powód: wzór Mifflina nie wie nic o składzie ciała, więc dla dwóch osób o tej
 samej masie i wzroście daje tę samą liczbę - a osoba z 12 % tłuszczu ma
 istotnie więcej tkanki metabolicznie czynnej niż osoba z 30 %. Dla kogoś, kto
 trenuje siłowo, to nie jest różnica teoretyczna.

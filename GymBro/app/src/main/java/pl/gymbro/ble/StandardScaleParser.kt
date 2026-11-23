@@ -69,6 +69,8 @@ object StandardScaleParser {
         }
         if (flags and (1 shl 10) == 0 || d.size < at + 2) return null
         val weight = kg(u16le(d, at), imperial) ?: return null
-        return WeightSample(weight, stable = true, impedanceOhm = impedance, source = "standard BLE")
+        // Standard nie mowi, ktoredy plynal prad. Wagi z raczka podaja segmenty
+        // wlasnym protokolem, a przez 0x2A9C ida wagi z elektrodami pod stopami.
+        return WeightSample(weight, stable = true, footToFootOhm = impedance, source = "standard BLE")
     }
 }
