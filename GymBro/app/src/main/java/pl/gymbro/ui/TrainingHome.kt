@@ -1,5 +1,7 @@
 package pl.gymbro.ui
 
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,7 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,7 +41,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import pl.gymbro.gym.PhoneActivity
 import pl.gymbro.data.Activity
 import pl.gymbro.data.ExternalSession
 import pl.gymbro.data.Plan
@@ -74,7 +76,7 @@ internal data class PlanOption(
     val sets: Int = 0
 )
 
-/** Plan z jednostkami - do ekranu „Rozpocznij inny trening". */
+/** Plan z jednostkami - do sekcji „Z innych planów" na ekranie Treningu. */
 internal data class ProgramUnits(val program: Program, val units: List<PlanOption>)
 
 internal val TRAINING_PAGES = listOf("Trening", "Progres", "Historia")
@@ -92,8 +94,12 @@ internal fun TrainingHome(
     program: Program?,
     options: List<PlanOption>,
     activities: List<Activity>,
+    otherPrograms: List<ProgramUnits>,
     onStart: (Plan) -> Unit,
-    onOther: () -> Unit,
+    /** Kafelek „Z innych planów" - otwiera ich listę na pełnym ekranie. */
+    onOtherPlans: () -> Unit,
+    /** Wybrana aktywność z kafelka - czeka na ekranie przygotowania na „Start". */
+    onPrepare: (PhoneActivity) -> Unit,
     onOpen: (Activity) -> Unit,
     onExercise: (Long, String) -> Unit
 ) {
@@ -122,7 +128,7 @@ internal fun TrainingHome(
             pageSpacing = 14.dp
         ) { page ->
             when (page) {
-                0 -> TrainingPage(program, options, activities, onStart, onOther)
+                0 -> TrainingPage(program, options, otherPrograms, activities, onStart, onOtherPlans, onPrepare, onOpen)
                 1 -> ProgresPage(activities, onExercise)
                 else -> HistoryPage(activities, onOpen)
             }
@@ -136,70 +142,51 @@ internal fun TrainingHome(
 private fun TrainingPage(
     program: Program?,
     options: List<PlanOption>,
+    otherPrograms: List<ProgramUnits>,
     activities: List<Activity>,
     onStart: (Plan) -> Unit,
-    onOther: () -> Unit
+    onOtherPlans: () -> Unit,
+    onPrepare: (PhoneActivity) -> Unit,
+    onOpen: (Activity) -> Unit
 ) {
     var confirming by remember { mutableStateOf<PlanOption?>(null) }
     // Przy rotacji A/B/C najdawniej robiona jednostka jest następna
     // w kolejce. Nigdy nierobiona wyprzedza wszystkie.
     val suggested = options.minByOrNull { it.lastDoneAt ?: 0L }
-    val rest = options.filter { it.plan.id != suggested?.plan?.id }
+    val recent = remember(activities) { activities.sortedByDescending { it.at }.take(3) }
+    val startActivity = rememberActivityStarter(onPrepare)
 
-    // Ten tydzień: treningi siłowe od poniedziałku. Bez celu „z N": liczba
-    // jednostek nie mówi, ile razy w tygodniu ktoś trenuje (PPL bywa i trzy,
-    // i sześć razy), a dni tygodnia przy jednostkach już nie ma.
-    val weekFrom = ProgressStats.weekStart(System.currentTimeMillis())
-    val thisWeek = activities.count { it is Activity.Strength && it.at >= weekFrom }
-
+    // Wszystko, od czego zaczyna się trening, na jednym ekranie: jednostki
+    // planu w jego kolejności z zaznaczoną następną, kafelki innych
+    // treningów i kafelek z innymi planami. Osobny ekran „Nowy trening"
+    // za przyciskiem chował bieg i trening siłowy o jeden ekran za daleko.
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Text(
-                program?.name ?: "Bez planu",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    "ten tydzień",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "$thisWeek",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        HealthAccessBanner(Modifier.padding(bottom = 12.dp))
+        HealthAccessBanner(Modifier.padding(bottom = 4.dp))
 
         if (suggested == null) {
+            Spacer(Modifier.height(8.dp))
             EmptyPlanCard(program)
         } else {
-            NextUnitCard(suggested) { confirming = suggested }
-            if (rest.isNotEmpty()) {
-                Spacer(Modifier.height(18.dp))
-                Text(
-                    "Pozostałe jednostki planu",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(6.dp))
-                rest.forEach { o -> UnitRow(o) { confirming = o } }
+            GroupLabel("Jednostki w planie " + (program?.name ?: ""))
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Kolejność z planu, nie od najdawniej robionej - A, B, C
+                // stoją tam, gdzie się ich szuka, a następna jest zaznaczona.
+                options.forEach { o ->
+                    PlanUnitRow(o, next = o.plan.id == suggested.plan.id) { confirming = o }
+                }
             }
         }
 
-        Spacer(Modifier.height(14.dp))
-        OtherWorkoutButton(onOther)
+        GroupLabel("Inny trening")
+        ActivityTiles(startActivity)
+        if (otherPrograms.isNotEmpty()) OtherPlansTile(otherPrograms.size, onOtherPlans)
+
+        if (recent.isNotEmpty()) {
+            GroupLabel("Ostatnie treningi")
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                recent.forEach { a -> LastActivityRow(a) { onOpen(a) } }
+            }
+        }
         Spacer(Modifier.height(24.dp))
     }
 
@@ -219,18 +206,15 @@ private fun TrainingPage(
 
 @Composable
 internal fun StartConfirmDialog(option: PlanOption, onDismiss: () -> Unit, onConfirm: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Zacząć " + option.plan.name + "?") },
-        text = {
-            Text(
-                option.exerciseCount.toString() + " ćwiczeń · " +
-                    lastDoneLabel(option.lastDoneAt) + "\n\n" +
-                    "Licznik czasu ruszy od razu."
-            )
-        },
-        confirmButton = { Button(onClick = onConfirm) { Text("Zacznij") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
+    ActionSheet(
+        onDismiss = onDismiss,
+        icon = Icons.Filled.FitnessCenter,
+        tone = MaterialTheme.colorScheme.primary,
+        title = "Zacząć " + option.plan.name + "?",
+        text = plural(option.exerciseCount, "ćwiczenie", "ćwiczenia", "ćwiczeń") + " · " +
+            lastDoneLabel(option.lastDoneAt) + ". Licznik czasu ruszy od razu.",
+        primary = SheetAction("Zacznij", onClick = onConfirm),
+        secondary = SheetAction("Anuluj", onClick = onDismiss)
     )
 }
 
@@ -262,95 +246,114 @@ private fun EmptyPlanCard(program: Program?) {
 }
 
 /**
- * Następna jednostka w dużej karcie z przyciskiem.
+ * Jednostka planu na ekranie Treningu: nazwa, liczba ćwiczeń i serii, kiedy
+ * ostatnio. Następna w kolejce ma kolor i okrągły start zamiast strzałki -
+ * w dziewięciu treningach na dziesięć robi się właśnie ją.
  *
- * Dotąd wszystkie jednostki były tej samej wielkości i podpowiedź „następny
- * w kolejce" była jedną linijką drobnego druku. W dziewięciu treningach na
- * dziesięć robi się właśnie ją, więc dostaje cały przycisk.
+ * Bez nazw ćwiczeń: wypisane zajmowały pół ekranu, a podgląd jest w Planie.
+ * Dotknięcie wiersza i okrągły start prowadzą do tego samego pytania.
  */
 @Composable
-private fun NextUnitCard(o: PlanOption, onClick: () -> Unit) {
+private fun PlanUnitRow(o: PlanOption, next: Boolean, onClick: () -> Unit) {
     Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-        )
+            containerColor = if (next) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surface,
+            contentColor = if (next) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface
+        ),
+        border = if (next) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(Modifier.padding(18.dp)) {
-            Text(
-                "NASTĘPNA W KOLEJCE",
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Bottom
-            ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                if (next) {
+                    Text(
+                        "NASTĘPNY TRENING",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 Text(
                     o.plan.name,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = if (next) FontWeight.Bold else null,
                     color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.weight(1f, fill = false),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    "ostatnio " + lastDoneLabel(o.lastDoneAt),
+                    listOfNotNull(
+                        plural(o.exerciseCount, "ćwiczenie", "ćwiczenia", "ćwiczeń"),
+                        o.sets.takeIf { it > 0 }?.let { plural(it, "seria", "serie", "serii") },
+                        lastDoneLabel(o.lastDoneAt)
+                    ).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
-                )
-            }
-            if (o.exercises.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    o.exercises.joinToString(" · "),
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 3,
+                    color = if (next) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                listOfNotNull(
-                    "${o.exerciseCount} ćwiczeń",
-                    o.sets.takeIf { it > 0 }?.let { "$it serii" }
-                ).joinToString("  ·  "),
-                style = MaterialTheme.typography.bodySmall
-            )
-            Spacer(Modifier.height(14.dp))
-            Button(
-                onClick = onClick,
-                shape = ButtonShape,
-                modifier = Modifier.fillMaxWidth().height(52.dp)
-            ) {
-                Text("Zacznij " + o.plan.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            if (next) {
+                Box(
+                    Modifier
+                        .padding(start = 10.dp)
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                        .tap(CircleShape, onClick = onClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow, contentDescription = "Zacznij " + o.plan.name,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            } else {
+                Icon(
+                    Icons.Filled.ChevronRight, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
 }
 
+/** Ostatni trening jednym wierszem - otwiera jego szczegóły, jak w Historii. */
 @Composable
-internal fun UnitRow(o: PlanOption, onClick: () -> Unit) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
+private fun LastActivityRow(a: Activity, onClick: () -> Unit) {
+    val (title, sub) = when (a) {
+        is Activity.Strength -> (a.summary.planName ?: "Trening") to listOfNotNull(
+            lastDoneLabel(a.at),
+            durationLabel(a.summary.durationMin),
+            a.summary.tonnage.takeIf { it > 0 }?.let { tonnageLabel(it) }
+        ).joinToString(" · ")
+        is Activity.Watch -> a.session.type to listOfNotNull(
+            lastDoneLabel(a.at),
+            durationLabel(a.session.durationMin),
+            a.session.distanceM?.takeIf { it > 0 }?.let {
+                String.format(java.util.Locale.getDefault(), "%.2f km", it / 1000.0)
+            }
+        ).joinToString(" · ")
+    }
+    AppCard(onClick = onClick) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(o.plan.name, style = MaterialTheme.typography.titleMedium)
+            IconBadge(activityIcon(a), size = 32)
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${o.exerciseCount} ćwiczeń · ${lastDoneLabel(o.lastDoneAt)}",
+                    sub,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -364,41 +367,28 @@ internal fun UnitRow(o: PlanOption, onClick: () -> Unit) {
 }
 
 @Composable
-private fun OtherWorkoutButton(onClick: () -> Unit) {
-    val outline = MaterialTheme.colorScheme.outline
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .drawBehind {
-                drawRoundRect(
-                    color = outline,
-                    style = Stroke(
-                        width = 1.5.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))
-                    ),
-                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(10.dp.toPx())
+internal fun UnitRow(o: PlanOption, onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(o.plan.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    plural(o.exerciseCount, "ćwiczenie", "ćwiczenia", "ćwiczeń") + " · " + lastDoneLabel(o.lastDoneAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            .tap(onClick = onClick)
-            .padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Filled.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        }
-        Column(Modifier.padding(start = 14.dp)) {
-            Text("Rozpocznij inny trening", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "z innego planu, bieg, spacer, rower…",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Icon(
+                Icons.Filled.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

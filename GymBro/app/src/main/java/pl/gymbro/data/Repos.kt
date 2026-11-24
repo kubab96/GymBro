@@ -1393,6 +1393,35 @@ class HealthRepository(context: Context) {
      */
     fun upsertSession(s: ExternalSession): Long = insert(db.writable, s)
 
+    /**
+     * Usuwa trening z zegarka z historii i zapamiętuje, żeby import go nie
+     * przyniósł z powrotem. Razem albo wcale: sam wpis na liście bez
+     * skasowania zostawiłby trening w historii, samo skasowanie - wróciłoby.
+     */
+    fun hide(externalId: String) {
+        val w = db.writable
+        w.beginTransaction()
+        try {
+            w.insertWithOnConflict(
+                "hidden_session", null,
+                android.content.ContentValues().apply {
+                    put("external_id", externalId)
+                    put("hidden_at", System.currentTimeMillis())
+                },
+                SQLiteDatabase.CONFLICT_IGNORE
+            )
+            w.delete("external_session", "external_id = ?", arrayOf(externalId))
+            w.setTransactionSuccessful()
+        } finally {
+            w.endTransaction()
+        }
+    }
+
+    /** Treningi usunięte z historii - import ich nie zapisuje. */
+    fun hiddenIds(): Set<String> =
+        db.readableDatabase.rawQuery("SELECT external_id FROM hidden_session", null)
+            .mapAll { it.str("external_id") }.toSet()
+
     companion object {
         /** Na podanym połączeniu - [TrackRepository.finish] robi to w swojej transakcji. */
         internal fun insert(w: SQLiteDatabase, s: ExternalSession): Long =
@@ -1412,6 +1441,16 @@ class HealthRepository(context: Context) {
                 },
                 SQLiteDatabase.CONFLICT_REPLACE
             )
+    }
+
+    /** Wszystkie sesje danych typów, z zegarka i z telefonu - do rekordów biegowych. */
+    fun byTypes(types: Collection<String>): List<ExternalSession> {
+        if (types.isEmpty()) return emptyList()
+        return db.readableDatabase.rawQuery(
+            "SELECT * FROM external_session WHERE type IN (${types.joinToString(",") { "?" }}) " +
+                "ORDER BY started_at",
+            types.toTypedArray()
+        ).mapAll(::sessionFrom)
     }
 
     fun sessions(limit: Int = 60): List<ExternalSession> =

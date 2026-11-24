@@ -31,7 +31,8 @@ object Timeline {
      * a trzy razy poszedłeś na spacer.
      */
     private val CARDIO_TYPES = listOf(
-        "Bieg", "Spacer", "Marsz", "Trekking", "Rower", "Pływanie", "Orbitrek", "Wioślarz"
+        "Bieg", "Spacer", "Marsz", "Trekking", "Rower", "Pływanie", "Orbitrek", "Wioślarz",
+        "Schody", "Rolki", "Narty biegowe", "Kajak", "Deska SUP"
     )
 
     /**

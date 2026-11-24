@@ -212,7 +212,7 @@ internal fun UnitEditorScreen(
     }
 }
 
-/** Ten sam przerywany przycisk co „Rozpocznij inny trening" - dokładanie czegoś nowego. */
+/** Przerywany przycisk - dokładanie czegoś nowego. */
 @Composable
 private fun AddExercisesButton(onClick: () -> Unit) {
     val outline = MaterialTheme.colorScheme.outline

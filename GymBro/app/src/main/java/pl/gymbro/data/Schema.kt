@@ -44,8 +44,10 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
          * 28 - cwiczenia pod nowy sprzet: landmine, kamizelka, paralletki, pilki, sanki
          * 29 - trasa GPS aktywnosci nagranych telefonem
          * 30 - surowe opory z wagi (bia_value), sklad ciala liczony w aplikacji
+         * 31 - serie ogolnego treningu silowego nagranego telefonem (phone_set)
+         * 32 - treningi z zegarka usuniete z historii (hidden_session)
          */
-        const val VERSION = 30
+        const val VERSION = 32
 
         /**
          * Stan aplikacji - pary klucz-wartosc, ktore nie naleza do zadnej
@@ -155,6 +157,45 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
                 freq_khz       REAL    NOT NULL,
                 ohm            REAL    NOT NULL,
                 PRIMARY KEY (measurement_id, path, freq_khz)
+            )
+            """.trimIndent()
+        )
+
+        /**
+         * Serie ogólnego treningu siłowego nagranego telefonem: sam czas, bez
+         * ćwiczenia i ciężaru - po to ten trening istnieje, żeby niczego nie
+         * wpisywać. Klucz jak w `track_point`: `external_id` aktywności,
+         * bo wiersz w historii powstaje dopiero na końcu.
+         *
+         * Osobna tabela, a nie `set_entry`: tamta wymaga ćwiczenia i sesji
+         * z planem, a seria bez ćwiczenia wpadałaby do progresji i rekordów.
+         */
+        private val V31_STATEMENTS = listOf(
+            """
+            CREATE TABLE phone_set (
+                activity   TEXT    NOT NULL,
+                idx        INTEGER NOT NULL,
+                started_at INTEGER NOT NULL,
+                ended_at   INTEGER NOT NULL,
+                PRIMARY KEY (activity, idx)
+            )
+            """.trimIndent()
+        )
+
+        /**
+         * Treningi z zegarka usunięte z historii.
+         *
+         * Import z Health Connect co synchronizację czyta cały okres i zapisuje
+         * każdy trening od nowa, więc samo skasowanie wiersza nic nie dawało -
+         * trening wracał przy następnej synchronizacji. Ta lista mówi importowi,
+         * czego już nie przynosić. W Health Connect i w aplikacji zegarka
+         * trening zostaje: stamtąd tylko czytamy.
+         */
+        private val V32_STATEMENTS = listOf(
+            """
+            CREATE TABLE hidden_session (
+                external_id TEXT    PRIMARY KEY,
+                hidden_at   INTEGER NOT NULL
             )
             """.trimIndent()
         )
@@ -732,6 +773,8 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         V27_STATEMENTS.forEach { db.execSQL(it) }
         V29_STATEMENTS.forEach { db.execSQL(it) }
         V30_STATEMENTS.forEach { db.execSQL(it) }
+        V31_STATEMENTS.forEach { db.execSQL(it) }
+        V32_STATEMENTS.forEach { db.execSQL(it) }
 
         Seed.populate(db)
         FoodSeed.populate(db)
@@ -915,6 +958,14 @@ class Db(context: Context) : SQLiteOpenHelper(context, NAME, null, VERSION) {
         if (oldVersion < 30) {
             V30_STATEMENTS.forEach { db.execSQL(it) }
             db.execSQL(V30_COPY.trimIndent())
+        }
+
+        if (oldVersion < 31) {
+            V31_STATEMENTS.forEach { db.execSQL(it) }
+        }
+
+        if (oldVersion < 32) {
+            V32_STATEMENTS.forEach { db.execSQL(it) }
         }
     }
 }

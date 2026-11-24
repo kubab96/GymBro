@@ -1,6 +1,5 @@
 package pl.gymbro.track
 
-import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,8 +8,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.location.LocationListener
-import android.location.LocationManager
 import android.os.HandlerThread
 import android.os.IBinder
 import android.util.Log
@@ -29,7 +26,7 @@ import android.util.Log
 class TrackService : Service() {
 
     private var thread: HandlerThread? = null
-    private var listener: LocationListener? = null
+    private var stopListening: (() -> Unit)? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -58,28 +55,24 @@ class TrackService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (listener == null) listen()
+        if (stopListening == null) listen()
         return START_STICKY
     }
 
-    @SuppressLint("MissingPermission") // sprawdzone wyżej, w onStartCommand
     private fun listen() {
-        val lm = getSystemService(LocationManager::class.java) ?: return
         val t = HandlerThread("gps").also { it.start() }
         thread = t
-        val l = LocationListener { loc -> PhoneTracker.onLocation(applicationContext, loc) }
-        listener = l
-        // Sam GPS, bez lokalizacji z sieci: ta skacze o dziesiątki metrów
-        // między masztami i każdy skok byłby kawałkiem biegu. Co sekundę -
-        // gęściej nic nie daje, bo odsiewanie i tak trzyma co kilka metrów.
-        runCatching {
-            lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, l, t.looper)
-        }.onFailure { Log.w(TAG, "brak GPS", it) }
+        // Źródło odczytów wybiera [LocationFeed] - sam GPS w budynku nie łapał
+        // nic. Co sekundę: gęściej nic nie daje, bo odsiewanie i tak trzyma
+        // co kilka metrów.
+        stopListening = LocationFeed.listen(applicationContext, t.looper) { loc ->
+            PhoneTracker.onLocation(applicationContext, loc)
+        }
     }
 
     override fun onDestroy() {
-        listener?.let { l -> getSystemService(LocationManager::class.java)?.removeUpdates(l) }
-        listener = null
+        stopListening?.invoke()
+        stopListening = null
         thread?.quitSafely()
         thread = null
         super.onDestroy()

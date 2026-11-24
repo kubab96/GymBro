@@ -110,6 +110,88 @@ class TrackMathTest {
     }
 
     @Test
+    fun `kazda aktywnosc ma wlasna nazwe w historii i wraca po niej`() {
+        val types = PhoneActivity.entries.map { it.type }
+        assertEquals(types.size, types.toSet().size)
+        PhoneActivity.entries.forEach { assertEquals(it, PhoneActivity.byType(it.type)) }
+    }
+
+    @Test
+    fun `kazda aktywnosc z ekranu wyboru ma energie`() {
+        // Bieg i spacer liczą się z dystansu, reszta z MET. Kafelek bez
+        // jednego i drugiego zapisywałby trening z kaloriami równymi zeru.
+        PhoneActivity.entries.filter { it.group != ActivityGroup.HIDDEN }.forEach { k ->
+            val kcal = TrackMath.energyKcal(k, 5000.0, 1_800_000, 80.0)
+            assertTrue("${k.name} bez energii", kcal != null && kcal > 0)
+        }
+    }
+
+    @Test
+    fun `na ekranie wyboru jest osiem aktywnosci i trening silowy`() {
+        val shown = PhoneActivity.entries.filter { it.group != ActivityGroup.HIDDEN }
+        assertEquals(9, shown.size)
+        assertEquals(listOf(PhoneActivity.STRENGTH), shown.filter { it.sets })
+        assertEquals(4, shown.count { it.gps })
+    }
+
+    @Test
+    fun `znaczniki kilometrow stoja na kazdym pelnym kilometrze`() {
+        // 2,5 km prosto na północ.
+        val pts = (0..625).map { fix(it * 4.0, it) }
+        val marks = TrackMath.kmMarks(pts)
+        assertEquals(2, marks.size)
+        assertEquals(1000.0, TrackMath.meters(pts.first(), marks[0]), 1.0)
+        assertEquals(2000.0, TrackMath.meters(pts.first(), marks[1]), 1.0)
+        // Czas przekroczenia ten sam co w tabeli kilometrów.
+        assertEquals(TrackMath.splits(pts)[0].to.toDouble(), marks[0].at.toDouble(), 1000.0)
+    }
+
+    @Test
+    fun `kolor tempa wzgledem sredniej z tego samego biegu`() {
+        // Pierwsze 500 m po 4 m/s, drugie po 2 m/s.
+        val fast = (0..125).map { fix(it * 4.0, it) }
+        val slow = (1..250).map { fix(500.0 + it * 2.0, 125 + it) }
+        val chunks = TrackMath.paceChunks(fast + slow)
+        assertTrue(chunks.first().ratio > 1.04)
+        assertTrue(chunks.last().ratio < 0.96)
+        // Odcinki stykają się - linia na mapie bez dziur.
+        chunks.zipWithNext().forEach { (a, b) -> assertEquals(a.points.last(), b.points.first()) }
+    }
+
+    @Test
+    fun `po pauzie odcinki tempa sie nie lacza`() {
+        val a = (0..50).map { fix(it * 3.0, it) }
+        val b = (0..50).map { fix(1000.0 + it * 3.0, 200 + it, seg = 1) }
+        val chunks = TrackMath.paceChunks(a + b)
+        assertTrue(chunks.none { c -> c.points.map { it.seg }.distinct().size > 1 })
+    }
+
+    @Test
+    fun `najlepszy kilometr z dowolnego miejsca biegu`() {
+        // Kilometr po 3 m/s, kilometr po 5 m/s, kilometr po 3 m/s.
+        var t = 0
+        val pts = mutableListOf<TrackMath.Fix>()
+        var m = 0.0
+        fun go(speed: Double, meters: Double) {
+            val steps = (meters / speed).toInt()
+            repeat(steps) { m += speed; t += 1; pts += fix(m, t) }
+        }
+        pts += fix(0.0, 0)
+        go(3.0, 1000.0); go(5.0, 1000.0); go(3.0, 1000.0)
+        val best = TrackMath.bestEffortMs(pts, 1000.0)!!
+        assertEquals(200_000.0, best.toDouble(), 2_000.0)
+        assertNull(TrackMath.bestEffortMs(pts, 5000.0))
+    }
+
+    @Test
+    fun `najlepszy wynik nie przechodzi przez pauze`() {
+        // Dwa razy po 600 m - kilometra w jednym kawałku nie było.
+        val a = (0..200).map { fix(it * 3.0, it) }
+        val b = (0..200).map { fix(5000.0 + it * 3.0, 1000 + it, seg = 1) }
+        assertNull(TrackMath.bestEffortMs(a + b, 1000.0))
+    }
+
+    @Test
     fun `bez masy ciala nie zgadujemy energii`() {
         assertNull(TrackMath.energyKcal(PhoneActivity.RUN, 5000.0, 1_800_000, null))
         assertNull(TrackMath.energyKcal(PhoneActivity.OTHER, 0.0, 1_800_000, 80.0))

@@ -7,19 +7,30 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Aktywność nagrywana telefonem - bieg, spacer i reszta z ekranu
- * „Rozpocznij inny trening".
+ * Aktywność nagrywana telefonem - z kafelków „Inny trening" na ekranie Treningu.
  *
  * [type] to nazwa, pod jaką aktywność ląduje w `external_session`, i musi
  * być tą samą, którą import z Health Connect nadaje treningom z zegarka
- * („Bieg", „Spacer"). Dzięki temu historia, podział na kardio i ekran
- * szczegółów nie mają dla telefonu osobnej ścieżki.
+ * („Bieg", „Spacer", „Trening siłowy"). Dzięki temu historia, podział na
+ * kardio i siłę i ekran szczegółów nie mają dla telefonu osobnej ścieżki.
  *
  * Nazw stałych nie zmieniaj - są formatem zapisu trwającej aktywności.
+ * Nazwy typów też nie: przy tych, które zna import z zegarka („Bieg
+ * (bieżnia)", „Orbitrek", „Trekking"), są tymi samymi napisami.
+ *
+ * Na ekranie wyboru jest osiem pozycji i trening siłowy. Wcześniej było
+ * ich ponad trzydzieści, ale poza GPS każda prowadziła do tego samego
+ * stopera i różniła się tylko nazwą. Reszta jest ukryta
+ * ([ActivityGroup.HIDDEN]), nie skasowana: aktywność zaczęta w starszej
+ * wersji musi wstać po aktualizacji.
+ *
+ * MET z Compendium of Physical Activities, wartość dla wysiłku
+ * umiarkowanego - konwencja, nie pomiar.
  */
 enum class PhoneActivity(
     val label: String,
     val type: String,
+    val group: ActivityGroup,
     /** Czy telefon mierzy trasę. Bez GPS to sam stoper. */
     val gps: Boolean,
     /**
@@ -30,12 +41,76 @@ enum class PhoneActivity(
     /** Koszt energetyczny w MET, gdy nie liczymy go z prędkości. Null - nie zgadujemy. */
     val met: Double?
 ) {
-    RUN("Bieganie", "Bieg", gps = true, maxSpeedMs = 9.0, met = null),
-    WALK("Chodzenie", "Spacer", gps = true, maxSpeedMs = 3.5, met = null),
-    BIKE("Rower", "Rower", gps = true, maxSpeedMs = 22.0, met = 7.5),
-    SWIM("Pływanie", "Pływanie", gps = false, maxSpeedMs = 0.0, met = 6.0),
-    STRETCH("Rozciąganie", "Rozciąganie", gps = false, maxSpeedMs = 0.0, met = 2.5),
-    OTHER("Inna aktywność", "Trening dowolny", gps = false, maxSpeedMs = 0.0, met = null);
+    RUN("Bieganie", "Bieg", ActivityGroup.OUTDOOR, gps = true, maxSpeedMs = 9.0, met = null),
+    WALK("Chodzenie", "Spacer", ActivityGroup.OUTDOOR, gps = true, maxSpeedMs = 3.5, met = null),
+    BIKE("Rower", "Rower", ActivityGroup.OUTDOOR, gps = true, maxSpeedMs = 22.0, met = 7.5),
+    HIKE("Wędrówka", "Trekking", ActivityGroup.OUTDOOR, gps = true, maxSpeedMs = 3.5, met = 6.0),
+
+    TREADMILL("Bieżnia", "Bieg (bieżnia)", ActivityGroup.INDOOR, gps = false, maxSpeedMs = 0.0, met = 9.0),
+    BIKE_INDOOR("Rower stacjonarny", "Rower stacjonarny", ActivityGroup.INDOOR, gps = false, maxSpeedMs = 0.0, met = 7.0),
+    ELLIPTICAL("Orbitrek", "Orbitrek", ActivityGroup.INDOOR, gps = false, maxSpeedMs = 0.0, met = 5.0),
+    ROWING("Wioślarz", "Wioślarz", ActivityGroup.INDOOR, gps = false, maxSpeedMs = 0.0, met = 7.0),
+
+    /**
+     * Ogólny trening siłowy: serie i przerwy, bez nazw ćwiczeń - jak „Siła"
+     * w zegarkach. Typ ten sam co z importu zegarka, więc w historii stoi
+     * razem z siłą, a ten sam trening nagrany przy okazji zegarkiem skleja
+     * się z nim w jeden. MET 5,0 to środek między wysiłkiem umiarkowanym
+     * (3,5) a intensywnym (6,0) - konwencja: sama liczba serii nie mówi,
+     * jak ciężko było.
+     */
+    STRENGTH("Trening siłowy", "Trening siłowy", ActivityGroup.STRENGTH, gps = false, maxSpeedMs = 0.0, met = 5.0),
+
+    // Ukryte. Zostają, bo aktywność zaczęta w starszej wersji musi wstać.
+    TRAIL("Bieg w terenie", "Bieg w terenie", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 9.0, met = null),
+    NORDIC("Nordic walking", "Marsz nordic walking", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 3.5, met = 4.8),
+    MTB("Rower górski", "Rower górski", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 20.0, met = 8.5),
+    INLINE("Rolki", "Rolki", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 12.0, met = 7.5),
+    STAIRS("Schody", "Schody", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 9.0),
+    SWIM("Pływanie", "Pływanie", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 6.0),
+    HIIT("HIIT", "HIIT", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 8.0),
+    CROSSFIT("Crossfit", "Crossfit", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 8.0),
+    STRETCH("Rozciąganie", "Rozciąganie", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 2.5),
+    YOGA("Joga", "Joga", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 2.5),
+    PILATES("Pilates", "Pilates", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 3.0),
+    DANCE("Taniec", "Taniec", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.0),
+    BOXING("Boks", "Boks", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 7.8),
+    MARTIAL("Sztuki walki", "Sztuki walki", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.3),
+    CLIMB("Wspinaczka", "Wspinaczka", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.8),
+    FOOTBALL("Piłka nożna", "Piłka nożna", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 7.0),
+    BASKETBALL("Koszykówka", "Koszykówka", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 6.5),
+    VOLLEYBALL("Siatkówka", "Siatkówka", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 4.0),
+    TENNIS("Tenis", "Tenis", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 7.3),
+    PADEL("Padel", "Padel", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 6.0),
+    SQUASH("Squash", "Squash", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 7.3),
+    BADMINTON("Badminton", "Badminton", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.5),
+    TABLE_TENNIS("Tenis stołowy", "Tenis stołowy", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 4.0),
+    GOLF("Golf", "Golf", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 4.8),
+    XC_SKI("Narty biegowe", "Narty biegowe", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 10.0, met = 9.0),
+    SKI("Narty zjazdowe", "Narty zjazdowe", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.3),
+    SNOWBOARD("Snowboard", "Snowboard", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 5.3),
+    SKATE("Łyżwy", "Łyżwy", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = 7.0),
+    KAYAK("Kajak", "Kajak", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 4.0, met = 5.0),
+    SUP("Deska SUP", "Deska SUP", ActivityGroup.HIDDEN, gps = true, maxSpeedMs = 3.0, met = 6.0),
+
+    /** Dawny stoper „Inna aktywność". Zastąpił go [STRENGTH]. */
+    OTHER("Inna aktywność", "Trening dowolny", ActivityGroup.HIDDEN, gps = false, maxSpeedMs = 0.0, met = null);
+
+    /** Czy aktywność liczy serie i przerwy, a nie trasę. */
+    val sets: Boolean get() = this == STRENGTH
+
+    companion object {
+        /** Po nazwie typu z historii - do ikony. */
+        fun byType(type: String): PhoneActivity? = entries.firstOrNull { it.type == type }
+    }
+}
+
+/** Grupy na ekranie wyboru, w kolejności wyświetlania. */
+enum class ActivityGroup(val label: String) {
+    STRENGTH("Trening siłowy"),
+    OUTDOOR("Z trasą"),
+    INDOOR("W pomieszczeniu"),
+    HIDDEN("")
 }
 
 /**
@@ -167,6 +242,118 @@ object TrackMath {
     }
 
     /**
+     * Miejsca, w których kończy się każdy pełny kilometr - do cyferek na mapie.
+     * Położenie wyliczone z proporcji między dwoma punktami, tak samo jak
+     * czas przekroczenia w [splits], więc cyferka stoi tam, gdzie zaczyna
+     * się następny wiersz tabeli kilometrów.
+     */
+    fun kmMarks(points: List<Fix>): List<Fix> {
+        val out = mutableListOf<Fix>()
+        var acc = 0.0
+        for ((a, b) in points.zipWithNext()) {
+            if (a.seg != b.seg) continue
+            val d = meters(a, b)
+            if (d <= 0) continue
+            var next = (out.size + 1) * 1000.0
+            while (acc + d >= next) {
+                val f = (next - acc) / d
+                out += Fix(
+                    at = a.at + ((b.at - a.at) * f).toLong(),
+                    lat = a.lat + (b.lat - a.lat) * f,
+                    lon = a.lon + (b.lon - a.lon) * f,
+                    accuracyM = 0f,
+                    seg = a.seg
+                )
+                next += 1000.0
+            }
+            acc += d
+        }
+        return out
+    }
+
+    /**
+     * Kawałek trasy i jego prędkość względem średniej całej aktywności:
+     * 1,1 to dziesięć procent szybciej niż zwykle w tym biegu.
+     */
+    data class PaceChunk(val points: List<Fix>, val ratio: Double)
+
+    /**
+     * Trasa pocięta na odcinki po około [chunkM] metrów, do kolorowania mapy
+     * tempem.
+     *
+     * Względem średniej z tej samej aktywności, nie sztywnych progów: przy
+     * progach typu „szybciej niż 5:00/km" spacer byłby cały czerwony, a bieg
+     * interwałowy cały zielony i mapa nie mówiłaby nic. Odcinek krótszy niż
+     * sto metrów to w GPS telefonu głównie szum - kolor skakałby co kilka kroków.
+     *
+     * Kolejny odcinek zaczyna się od ostatniego punktu poprzedniego, żeby linia
+     * na mapie nie miała dziur. Po pauzie - nowy odcinek bez łączenia.
+     */
+    fun paceChunks(points: List<Fix>, chunkM: Double = 100.0): List<PaceChunk> {
+        val raw = mutableListOf<Triple<List<Fix>, Double, Double>>() // punkty, metry, sekundy
+        var cur = mutableListOf<Fix>()
+        var d = 0.0
+        fun flush() {
+            if (cur.size >= 2) {
+                val s = (cur.last().at - cur.first().at) / 1000.0
+                if (s > 0) raw += Triple(cur.toList(), d, s)
+            }
+        }
+        for (p in points) {
+            val last = cur.lastOrNull()
+            if (last != null && last.seg != p.seg) {
+                flush(); cur = mutableListOf(p); d = 0.0
+                continue
+            }
+            if (last != null) d += meters(last, p)
+            cur += p
+            if (d >= chunkM) {
+                flush(); cur = mutableListOf(p); d = 0.0
+            }
+        }
+        flush()
+        val meters = raw.sumOf { it.second }
+        val seconds = raw.sumOf { it.third }
+        if (meters <= 0 || seconds <= 0) return emptyList()
+        val avg = meters / seconds
+        return raw.map { (pts, m, s) -> PaceChunk(pts, (m / s) / avg) }
+    }
+
+    /**
+     * Najkrótszy czas, w jakim aktywność pokonała [targetM] metrów, w ms -
+     * z dowolnego miejsca trasy, nie tylko od startu. Tak liczą rekordy
+     * Strava i Garmin: kilometr w 4:48 ze środka biegu na sześć to dalej
+     * kilometr w 4:48.
+     *
+     * Okno nie przechodzi przez pauzę - czasu pauzy nie da się przypisać do
+     * drogi. Czas przeskalowany z najkrótszego okna, które przekracza
+     * dystans, do równego dystansu; przy odczycie co sekundę różnica to
+     * ułamek sekundy. Null, gdy trasa była krótsza.
+     */
+    fun bestEffortMs(points: List<Fix>, targetM: Double): Long? {
+        var best: Long? = null
+        var from = 0
+        while (from < points.size) {
+            var to = from
+            while (to + 1 < points.size && points[to + 1].seg == points[from].seg) to++
+            val run = points.subList(from, to + 1)
+            val cum = DoubleArray(run.size)
+            for (k in 1 until run.size) cum[k] = cum[k - 1] + meters(run[k - 1], run[k])
+            var i = 0
+            for (j in run.indices) {
+                while (i + 1 < j && cum[j] - cum[i + 1] >= targetM) i++
+                val dist = cum[j] - cum[i]
+                if (dist >= targetM) {
+                    val t = ((run[j].at - run[i].at) * targetM / dist).toLong()
+                    if (best == null || t < best) best = t
+                }
+            }
+            from = to + 1
+        }
+        return best
+    }
+
+    /**
      * Tempo z ostatniego kawałka trasy, w minutach na kilometr.
      *
      * Średnia z całego biegu prawie nie drgnie w trzydziestej minucie, więc do
@@ -198,10 +385,10 @@ object TrackMath {
         val min = movingMs / 60_000.0
         if (min <= 0) return null
         val vo2 = when (kind) {
-            PhoneActivity.RUN, PhoneActivity.WALK -> {
+            PhoneActivity.RUN, PhoneActivity.TRAIL, PhoneActivity.WALK -> {
                 if (distanceM <= 0) return null
                 val v = distanceM / min
-                3.5 + (if (kind == PhoneActivity.RUN) 0.2 else 0.1) * v
+                3.5 + (if (kind == PhoneActivity.WALK) 0.1 else 0.2) * v
             }
             else -> (kind.met ?: return null) * 3.5
         }

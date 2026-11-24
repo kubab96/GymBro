@@ -98,6 +98,7 @@ import pl.gymbro.gym.Loading
 import pl.gymbro.gym.PlateCalculator
 import pl.gymbro.gym.ProgressionEngine
 import pl.gymbro.track.PhoneTracker
+import pl.gymbro.gym.PhoneActivity
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.collectAsState
 
@@ -137,7 +138,7 @@ fun WorkoutScreen() {
     var activeProgram by remember {
         mutableStateOf(Cache.peek<Program>(Cache.ACTIVE_PROGRAM))
     }
-    // Pozostałe plany z jednostkami - do „Rozpocznij inny trening".
+    // Pozostałe plany z jednostkami - do sekcji „Z innych planów".
     //
     // Zastępuje przełącznik planu pod tytułem: jednorazowy trening z innego
     // planu robi się teraz stamtąd, a Historia pokazuje wszystkie plany naraz,
@@ -164,7 +165,10 @@ fun WorkoutScreen() {
     }
     var exerciseId by rememberSaveable { mutableStateOf<Long?>(null) }
     var exerciseName by rememberSaveable { mutableStateOf("") }
-    var choosingOther by rememberSaveable { mutableStateOf(false) }
+    // Aktywność wybrana z kafelka, czekająca na ekranie przygotowania na „Start".
+    var preparing by rememberSaveable { mutableStateOf<PhoneActivity?>(null) }
+    // Lista jednostek z innych planów, otwarta kafelkiem „Z innych planów".
+    var pickingOtherPlan by rememberSaveable { mutableStateOf(false) }
     val pager = rememberPagerState(pageCount = { TRAINING_PAGES.size })
     val liveActivity by PhoneTracker.state.collectAsState()
 
@@ -248,7 +252,8 @@ fun WorkoutScreen() {
         detailOf = null
         ownDetail = null
         exerciseId = null
-        choosingOther = false
+        preparing = null
+        pickingOtherPlan = false
         scope.launch { pager.scrollToPage(0) }
     }
 
@@ -373,7 +378,7 @@ fun WorkoutScreen() {
         scope.launch {
             val id = withContext(Dispatchers.IO) { sessionRepo.start(plan.id) }
             val s = Session(id = id, planId = plan.id, startedAt = System.currentTimeMillis())
-            choosingOther = false
+            pickingOtherPlan = false
             session = s
             reload(s, inv)
         }
@@ -422,14 +427,26 @@ fun WorkoutScreen() {
         return
     }
 
-    if (choosingOther) {
+    // Start nie rusza od dotknięcia kafelka - najpierw ekran przygotowania,
+    // żeby GPS zdążył złapać sygnał, a stoper nie liczył sznurowania butów.
+    if (pickingOtherPlan) {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-            StartOtherScreen(
+            OtherPlansScreen(
                 programs = otherPrograms,
-                onBack = { choosingOther = false },
-                onStartUnit = { plan -> startPlan(plan) },
-                onStartActivity = { kind ->
-                    choosingOther = false
+                onBack = { pickingOtherPlan = false },
+                onStart = { plan -> startPlan(plan) }
+            )
+        }
+        return
+    }
+
+    preparing?.let { kind ->
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            ActivityPrepScreen(
+                kind = kind,
+                onBack = { preparing = null },
+                onStart = {
+                    preparing = null
                     PhoneTracker.start(context.applicationContext, kind)
                 }
             )
@@ -455,8 +472,10 @@ fun WorkoutScreen() {
                 program = activeProgram,
                 options = planOptions,
                 activities = activities,
+                otherPrograms = otherPrograms,
                 onStart = { plan -> startPlan(plan) },
-                onOther = { choosingOther = true },
+                onOtherPlans = { pickingOtherPlan = true },
+                onPrepare = { preparing = it },
                 onOpen = { picked ->
                     when (picked) {
                         is Activity.Watch -> detailOf = picked.session

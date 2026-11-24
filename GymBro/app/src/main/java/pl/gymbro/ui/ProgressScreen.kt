@@ -55,6 +55,8 @@ import kotlinx.coroutines.withContext
 import pl.gymbro.data.Cache
 import pl.gymbro.data.Activity
 import pl.gymbro.data.SessionRepository
+import pl.gymbro.data.TrackRepository
+import pl.gymbro.gym.RunRecords
 import pl.gymbro.data.SetEntry
 import pl.gymbro.data.VolumeLandmarks
 import pl.gymbro.gym.MuscleMap
@@ -88,6 +90,8 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
     val context = LocalContext.current
     val repo = remember { SessionRepository(context) }
     var data by remember { mutableStateOf<ProgresData?>(null) }
+    // Rekordy biegowe z tras w bazie - osobno od siły, bo czytają punkty GPS.
+    var runs by remember { mutableStateOf<Pair<RunRecords.Records, List<Pair<Long, Double>>>?>(null) }
     var periodIndex by rememberSaveable { mutableStateOf(0) }
     var metricIndex by rememberSaveable { mutableStateOf(0) }
     val period = ProgressStats.Period.entries[periodIndex]
@@ -107,6 +111,10 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
                 thisWeek = repo.workingSetsByMuscle(now - week, now),
                 lastWeek = repo.workingSetsByMuscle(now - 2 * week, now - week)
             )
+        }
+        runs = withContext(Dispatchers.IO) {
+            val (sessions, tracks) = TrackRepository(context).runHistory()
+            RunRecords.compute(sessions, tracks) to RunRecords.weeklyKm(sessions, 8, now)
         }
     }
 
@@ -180,6 +188,10 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
                     LiftRow(l) { onExercise(l.exerciseId, l.name) }
                 }
             }
+        }
+
+        runs?.takeIf { !it.first.isEmpty }?.let { (records, weekly) ->
+            item { RunRecordsSection(records, weekly) }
         }
 
         // ---- Partie mięśniowe ----

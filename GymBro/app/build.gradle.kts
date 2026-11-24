@@ -67,6 +67,10 @@ dependencies {
     // CameraX plus ML Kit plus własny ekran podglądu.
     implementation(libs.play.services.code.scanner)
 
+    // Mapa trasy z OpenStreetMap. Bez klucza i bez konta Google, w przeciwieństwie
+    // do Map Google - i bez wtyczki Gradle'a, zwykła biblioteka z widokiem.
+    implementation(libs.osmdroid)
+
     debugImplementation(libs.androidx.ui.tooling)
 
     // Testy czystej logiki - uruchamiane na JVM, bez telefonu i emulatora.

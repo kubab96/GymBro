@@ -43,13 +43,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import pl.gymbro.data.ExternalSession
+import pl.gymbro.data.HealthRepository
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.gym.RunAnalysis
 import pl.gymbro.gym.Timeline
 import pl.gymbro.health.ActivityDetail
 import pl.gymbro.data.TrackRepository
 import pl.gymbro.gym.TrackMath
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material3.Icon
+import pl.gymbro.data.PhoneSet
+import pl.gymbro.data.restsMs
+import pl.gymbro.gym.RunRecords
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.StrokeCap
@@ -122,6 +129,9 @@ fun ActivityDetailScreen(
 
     var series by remember { mutableStateOf<ActivityDetail.Series?>(null) }
     var track by remember { mutableStateOf<List<TrackMath.Fix>>(emptyList()) }
+    var sets by remember { mutableStateOf<List<PhoneSet>>(emptyList()) }
+    var records by remember { mutableStateOf<List<RunRecords.DistanceRecord>>(emptyList()) }
+    var mapOpen by remember { mutableStateOf(false) }
     var maxHr by remember { mutableStateOf(190.0) }
     var loading by remember { mutableStateOf(true) }
     var deleting by remember { mutableStateOf(false) }
@@ -134,28 +144,63 @@ fun ActivityDetailScreen(
         // Trasa z telefonu leży u nas - kilometry liczymy z niej, tak jak
         // zegarek liczy swoje okrążenia.
         if (session.fromPhone) {
-            track = withContext(Dispatchers.IO) { trackRepo.points(session.externalId) }
+            val (t, s, r) = withContext(Dispatchers.IO) {
+                val t = trackRepo.points(session.externalId)
+                // Rekordy z całej historii, żeby wiedzieć, czy ten bieg któryś
+                // pobił. Liczone tylko dla biegu z trasą - inaczej nie ma czego.
+                val r = if (t.size >= 2 && session.type in RunRecords.RUN_TYPES) {
+                    val (all, tracks) = trackRepo.runHistory()
+                    RunRecords.compute(all, tracks).heldBy(session.externalId)
+                } else emptyList()
+                Triple(t, trackRepo.sets(session.externalId), r)
+            }
+            track = t
+            sets = s
+            records = r
         }
         series = reader.load(session.startedAt, session.endedAt)
         loading = false
     }
 
     if (deleting) {
-        AlertDialog(
-            onDismissRequest = { deleting = false },
-            title = { Text("Usunąć tę aktywność?") },
-            text = { Text("Zniknie z historii razem z trasą. Tego nie da się cofnąć.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    deleting = false
-                    scope.launch {
-                        withContext(Dispatchers.IO) { trackRepo.delete(session.externalId) }
-                        onDeleted()
-                    }
-                }) { Text("Usuń", color = MaterialTheme.colorScheme.error) }
+        ActionSheet(
+            onDismiss = { deleting = false },
+            icon = Icons.Filled.DeleteOutline,
+            tone = MaterialTheme.colorScheme.error,
+            title = "Usunąć tę aktywność?",
+            text = when {
+                track.isNotEmpty() -> "Zniknie z historii razem z trasą. Tego nie da się cofnąć."
+                sets.isNotEmpty() -> "Zniknie z historii razem z seriami. Tego nie da się cofnąć."
+                session.fromPhone -> "Zniknie z historii. Tego nie da się cofnąć."
+                else -> "Zniknie z historii i nie wróci przy synchronizacji z zegarkiem. " +
+                    "W aplikacji zegarka trening zostaje."
             },
-            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Wróć") } }
+            primary = SheetAction("Usuń", danger = true) {
+                deleting = false
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        if (session.fromPhone) trackRepo.delete(session.externalId)
+                        else HealthRepository(context).hide(session.externalId)
+                    }
+                    onDeleted()
+                }
+            },
+            secondary = SheetAction("Wróć") { deleting = false }
         )
+    }
+
+    // Mapa na pełnym ekranie - tu da się ją przesuwać i przybliżać. W ekranie
+    // szczegółów palec na mapie przewijałby mapę zamiast listy.
+    if (mapOpen) {
+        ScreenBackHandler { mapOpen = false }
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            SubScreenHeader("Trasa", onBack = { mapOpen = false })
+            RouteMap(track, Modifier.fillMaxWidth().weight(1f), interactive = true)
+            Spacer(Modifier.height(10.dp))
+            PaceLegend()
+            Spacer(Modifier.height(16.dp))
+        }
+        return
     }
 
     Column(
@@ -182,6 +227,23 @@ fun ActivityDetailScreen(
         Spacer(Modifier.height(18.dp))
         KeyStats(session, series?.steps)
 
+        records.forEach { r ->
+            Spacer(Modifier.height(10.dp))
+            RecordBadge("Rekord: ${r.label} w ${clockText(r.best.ms)}")
+        }
+
+        if (sets.isNotEmpty()) {
+            Section("Serie", "Czas każdej serii i przerwa przed następną. Dotknij serii, żeby ją usunąć.")
+            PhoneSetTable(sets) { i ->
+                scope.launch {
+                    sets = withContext(Dispatchers.IO) {
+                        trackRepo.deleteSet(session.externalId, i)
+                        trackRepo.sets(session.externalId)
+                    }
+                }
+            }
+        }
+
         if (loading) {
             Spacer(Modifier.height(28.dp))
             Text("Wczytuję szczegóły z zegarka…", style = MaterialTheme.typography.bodyMedium)
@@ -196,8 +258,10 @@ fun ActivityDetailScreen(
         val zones = RunAnalysis.timeInZones(data?.heartRate ?: emptyList(), maxHr)
 
         if (track.size >= 2) {
-            Section("Trasa", "Z GPS telefonu, bez mapy pod spodem.")
-            RouteSketch(track)
+            Section("Trasa", "Kolor to tempo względem średniej z tego biegu. Dotknij, żeby powiększyć.")
+            RouteMap(track, Modifier.fillMaxWidth().height(260.dp), onOpen = { mapOpen = true })
+            Spacer(Modifier.height(8.dp))
+            PaceLegend()
         }
 
         if (laps.isNotEmpty() && Timeline.isCardio(session)) {
@@ -236,68 +300,102 @@ fun ActivityDetailScreen(
             )
         }
 
-        // Kasować da się tylko to, co nagrał telefon. Aktywność z zegarka
-        // wróciłaby przy następnej synchronizacji z Health Connect.
-        if (session.fromPhone) {
-            Spacer(Modifier.height(28.dp))
-            TextButton(onClick = { deleting = true }) {
-                Text("Usuń aktywność", color = MaterialTheme.colorScheme.error)
-            }
+        // Usunąć da się każdą aktywność. Tę z zegarka import przynosił z
+        // powrotem przy każdej synchronizacji, więc trafia na listę ukrytych
+        // (HealthRepository.hide) zamiast znikać tylko na chwilę.
+        Spacer(Modifier.height(28.dp))
+        TextButton(onClick = { deleting = true }) {
+            Text("Usuń aktywność", color = MaterialTheme.colorScheme.error)
         }
 
         Spacer(Modifier.height(36.dp))
     }
 }
 
-/**
- * Szkic trasy bez mapy.
- *
- * Mapa wymagałaby klucza do usługi map albo kafelków z sieci, a aplikacja
- * niczego poza Open Food Facts z telefonu nie wysyła. Kształt trasy
- * wystarcza, żeby rozpoznać, którędy się biegło.
- */
+/** Legenda kolorów trasy - te same progi co na mapie ([PaceColors]). */
 @Composable
-private fun RouteSketch(points: List<TrackMath.Fix>) {
-    val line = MaterialTheme.colorScheme.secondary
-    val start = MaterialTheme.colorScheme.primary
-    val end = MaterialTheme.colorScheme.tertiary
-    Box(
+internal fun PaceLegend() {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        listOf(PaceColors.fast to "szybciej", PaceColors.even to "równo", PaceColors.slow to "wolniej")
+            .forEach { (c, label) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.width(16.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c))
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
+            }
+    }
+}
+
+/** Plakietka rekordu. Bursztyn, nie zieleń - zieleń na tym ekranie to tempo. */
+@Composable
+private fun RecordBadge(text: String) {
+    Row(
         Modifier
             .fillMaxWidth()
-            .height(220.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Canvas(Modifier.fillMaxSize().padding(18.dp)) {
-            // Rzut równoodległościowy: przy kilku kilometrach krzywizna Ziemi
-            // nic nie zmienia, wystarczy poprawić długość o cosinus szerokości.
-            val lat0 = points.map { it.lat }.average()
-            val k = kotlin.math.cos(Math.toRadians(lat0))
-            val xs = points.map { it.lon * k }
-            val ys = points.map { it.lat }
-            val minX = xs.min(); val maxX = xs.max()
-            val minY = ys.min(); val maxY = ys.max()
-            val span = maxOf(maxX - minX, maxY - minY).takeIf { it > 0 } ?: 1e-6
-            val scale = minOf(size.width, size.height) / span
-            val offX = (size.width - (maxX - minX) * scale) / 2
-            val offY = (size.height - (maxY - minY) * scale) / 2
-            fun at(i: Int) = Offset(
-                (offX + (xs[i] - minX) * scale).toFloat(),
-                (size.height - offY - (ys[i] - minY) * scale).toFloat()
-            )
-            var path = Path()
-            for (i in points.indices) {
-                // Po pauzie nowy odcinek - bez kreski przez miejsce, w którym
-                // telefon nie nagrywał.
-                if (i == 0 || points[i].seg != points[i - 1].seg) {
-                    if (i > 0) drawPath(path, line, style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-                    path = Path().apply { moveTo(at(i).x, at(i).y) }
-                } else path.lineTo(at(i).x, at(i).y)
-            }
-            drawPath(path, line, style = Stroke(width = 4f, cap = StrokeCap.Round, join = StrokeJoin.Round))
-            drawCircle(start, radius = 7f, center = at(0))
-            drawCircle(end, radius = 7f, center = at(points.lastIndex))
+        Icon(
+            Icons.Filled.EmojiEvents, contentDescription = null,
+            tint = MaterialTheme.colorScheme.tertiary
+        )
+        Text(
+            text,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier.padding(start = 10.dp)
+        )
+    }
+}
+
+/**
+ * Serie treningu siłowego z telefonu: czas serii i przerwa po niej.
+ *
+ * Bez ćwiczeń i ciężarów - tyle wie telefon. Za to widać rytm treningu:
+ * przerwy, które rosły pod koniec, mówią o zmęczeniu więcej niż suma czasu.
+ */
+@Composable
+private fun PhoneSetTable(sets: List<PhoneSet>, onRemove: (Int) -> Unit) {
+    var removing by remember { mutableStateOf<Int?>(null) }
+    removing?.let { i ->
+        RemoveSetSheet(i + 1, sets.getOrNull(i)?.ms ?: 0, onDismiss = { removing = null }) {
+            removing = null
+            onRemove(i)
         }
+    }
+    val rests = restsMs(sets)
+    Row(Modifier.fillMaxWidth().padding(bottom = 10.dp)) {
+        listOf(
+            "${sets.size}" to "serie",
+            clockText(sets.sumOf { it.ms }) to "w seriach",
+            (if (rests.isEmpty()) "-" else clockText(rests.average().toLong())) to "śr. przerwa"
+        ).forEach { (value, label) ->
+            Column(Modifier.weight(1f)) {
+                Text(value, fontSize = 19.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace)
+                Text(
+                    label, style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+    val longest = sets.maxOf { it.ms }.coerceAtLeast(1)
+    sets.forEachIndexed { i, s ->
+        PhoneSetRow(
+            number = i + 1,
+            setMs = s.ms,
+            restMs = rests.getOrNull(i),
+            restRunning = false,
+            fraction = s.ms.toFloat() / longest,
+            onClick = { removing = i }
+        )
     }
 }
 
@@ -480,6 +578,17 @@ private fun LapTable(laps: List<RunAnalysis.Lap>, maxHr: Double) {
                     color = Color.Black.copy(alpha = 0.85f),
                     modifier = Modifier.align(Alignment.CenterStart).padding(start = 10.dp)
                 )
+                // Najszybszy kilometr nazwany wprost - przy podobnych słupkach
+                // trzeba by go szukać po liczbach.
+                if (lap.isFull && pace == fastest && full.size >= 2) {
+                    Text(
+                        "najszybszy",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)
+                    )
+                }
                 if (!lap.isFull) {
                     Text(
                         String.format(Locale.getDefault(), "%.0f m", lap.meters),

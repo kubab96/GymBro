@@ -14,3 +14,7 @@
 # kolumny w bazie zakładamy ręcznie i porównywanie jednego z drugim przy
 # diagnozowaniu migracji jest wtedy możliwe.
 -keepclassmembernames class pl.gymbro.data.** { <fields>; }
+
+# osmdroid odwołuje się do klas, których na Androidzie 10+ nie ma
+# (stare API pamięci zewnętrznej) - ostrzeżenia R8 bez znaczenia.
+-dontwarn org.osmdroid.**

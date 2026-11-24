@@ -37,7 +37,11 @@ object PhoneTracker {
         /** Dokładność ostatniego odczytu GPS, także odrzuconego - do paska sygnału. */
         val accuracyM: Float? = null,
         val lastFixAt: Long? = null,
-        val recentPaceMinPerKm: Double? = null
+        val recentPaceMinPerKm: Double? = null,
+        /** Ile punktów ma trasa - mapa dociąga tylko nowe, przez [routeFrom]. */
+        val routeSize: Int = 0,
+        /** Ostatni odczyt, także odrzucony: kropka „tu jestem" na mapie. */
+        val here: TrackMath.Fix? = null
     )
 
     private val _state = MutableStateFlow<Snapshot?>(null)
@@ -46,6 +50,12 @@ object PhoneTracker {
     private var accumulator: TrackMath.Accumulator? = null
     /** Ostatnie punkty trasy, do tempa „teraz" - bez czytania bazy co sekundę. */
     private val recent = ArrayDeque<TrackMath.Fix>()
+    /**
+     * Cała trasa w pamięci, do mapy na żywo. Mapa pyta o same nowe punkty,
+     * a nie o kopię całości co sekundę - po godzinie biegu to trzy i pół
+     * tysiąca punktów przy każdym odczycie.
+     */
+    private val route = ArrayList<TrackMath.Fix>()
     private var restored = false
 
     fun hasLocationPermission(context: Context): Boolean =
@@ -68,9 +78,11 @@ object PhoneTracker {
             acc.restore(pts)
             recent.clear()
             recent.addAll(pts.takeLast(60))
+            route.clear()
+            route.addAll(pts)
         }
         accumulator = acc
-        _state.value = Snapshot(live, distanceM = acc.distanceM)
+        _state.value = Snapshot(live, distanceM = acc.distanceM, routeSize = route.size, here = route.lastOrNull())
         if (live.kind.gps && !live.paused) TrackService.start(context)
     }
 
@@ -85,6 +97,7 @@ object PhoneTracker {
         TrackRepository(context).saveLive(live)
         accumulator = TrackMath.Accumulator(kind.maxSpeedMs)
         recent.clear()
+        route.clear()
         _state.value = Snapshot(live)
         if (kind.gps) TrackService.start(context)
     }
@@ -109,6 +122,37 @@ object PhoneTracker {
         if (live.kind.gps) TrackService.start(context)
     }
 
+    /** Punkty trasy od [from] do końca - mapa dorysowuje tylko to, czego jeszcze nie ma. */
+    @Synchronized
+    fun routeFrom(from: Int): List<TrackMath.Fix> =
+        if (from >= route.size) emptyList() else route.subList(from.coerceAtLeast(0), route.size).toList()
+
+    // ---- Trening siłowy: serie i przerwy ----------------------------------
+
+    @Synchronized
+    fun startSet(context: Context) = change(context) { it.startSet(System.currentTimeMillis()) }
+
+    @Synchronized
+    fun endSet(context: Context) = change(context) { it.endSet(System.currentTimeMillis()) }
+
+    @Synchronized
+    fun dropSet(context: Context) = change(context) { it.dropSet() }
+
+    @Synchronized
+    fun dropSetAt(context: Context, index: Int) = change(context) { it.dropSetAt(index) }
+
+    @Synchronized
+    fun setRest(context: Context, sec: Int) = change(context) { it.copy(restSec = sec.coerceIn(15, 600)) }
+
+    /** Zmiana stanu: od razu do bazy, potem na ekran - jak pauza. */
+    private fun change(context: Context, f: (LiveActivity) -> LiveActivity) {
+        val s = _state.value ?: return
+        val live = f(s.live)
+        if (live == s.live) return
+        TrackRepository(context).saveLive(live)
+        _state.value = s.copy(live = live)
+    }
+
     /** Odczyt z GPS. Woła go usługa z własnego wątku. */
     @Synchronized
     fun onLocation(context: Context, loc: Location) {
@@ -126,6 +170,7 @@ object PhoneTracker {
             runCatching { TrackRepository(context).add(s.live.key, fix) }
                 .onFailure { CrashLog.note(context, "zapis punktu trasy", it) }
             recent.addLast(fix)
+            route.add(fix)
             while (recent.size > 60) recent.removeFirst()
         }
         val now = System.currentTimeMillis()
@@ -133,7 +178,9 @@ object PhoneTracker {
             distanceM = acc.distanceM,
             accuracyM = fix.accuracyM,
             lastFixAt = now,
-            recentPaceMinPerKm = TrackMath.recentPace(recent.toList(), fix.at)
+            recentPaceMinPerKm = TrackMath.recentPace(recent.toList(), fix.at),
+            routeSize = route.size,
+            here = fix
         )
     }
 
@@ -152,7 +199,9 @@ object PhoneTracker {
             snap to (snap.live.pausedAt ?: System.currentTimeMillis())
         }
         TrackService.stop(context)
-        val live = s.live
+        // Seria, która jeszcze trwa przy „Zakończ", to ostatnia seria
+        // treningu - kończy się razem z nim, a nie przepada.
+        val live = s.live.endSet(end)
         val weight = runCatching { BodyRepository(context).latest()?.weightKg }.getOrNull()
         val hr = runCatching {
             ActivityDetail(context).load(live.startedAt, end).heartRate.map { it.value }
@@ -168,11 +217,12 @@ object PhoneTracker {
             hrAvg = hr.takeIf { it.isNotEmpty() }?.average(),
             hrMax = hr.maxOrNull()
         )
-        TrackRepository(context).finish(session)
+        TrackRepository(context).finish(session, live.sets)
         synchronized(this) {
             _state.value = null
             accumulator = null
             recent.clear()
+            route.clear()
         }
         return session
     }
@@ -188,6 +238,7 @@ object PhoneTracker {
         _state.value = null
         accumulator = null
         recent.clear()
+        route.clear()
     }
 
     internal fun openAppIntent(context: Context): Intent =

@@ -266,12 +266,17 @@ class HealthImporter(private val context: Context) {
                 Log.i(TAG, "Co przysyła zegarek:\n" + histogram.joinToString("\n"))
             }
             val known = repo.allByExternalId()
+            // Usunięte z historii nie wracają - bez tego każda synchronizacja
+            // przynosiła je od nowa. Odsiane przed agregacją, żeby nie
+            // wydawać na nie przydziału Health Connect.
+            val hidden = repo.hiddenIds()
             var budget = AGGREGATE_BUDGET
 
             // Od najnowszych, bo przydział może się skończyć w połowie listy.
             // Tętno sprzed trzech miesięcy nie jest nic warte, tętno z wczoraj
             // owszem - więc jeśli coś ma przepaść, niech to będzie stare.
-            sessions.sortedByDescending { it.startTime }.forEach { s ->
+            sessions.filterNot { it.metadata.id in hidden }
+                .sortedByDescending { it.startTime }.forEach { s ->
                 val existing = known[s.metadata.id]
 
                 // Sesji, która ma już dane, nie pytamy drugi raz. To jest
