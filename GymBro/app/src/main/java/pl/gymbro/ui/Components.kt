@@ -1,6 +1,7 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -72,16 +74,16 @@ internal fun Stepper(
             if (onLabelClick == null) {
                 Text(label, fontSize = 22.sp)
             } else {
-                // Podkreślenie, bo inaczej nic nie mówi, że w liczbę da się
-                // dotknąć. Pole tekstowe zamiast tego zabierałoby miejsce
+                // Lekkie tło, jak przy każdej liczbie do wpisania - mówi, że
+                // w nią da się dotknąć. Pole tekstowe zabierałoby miejsce
                 // przyciskom i przy wejściu w ekran wyskakiwałaby klawiatura.
                 Text(
                     label,
                     fontSize = 22.sp,
-                    textDecoration = TextDecoration.Underline,
                     modifier = Modifier
-                        .tap(RoundedCornerShape(8.dp), onClick = onLabelClick)
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .tap(RoundedCornerShape(10.dp), onClick = onLabelClick)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
                 )
             }
         }
@@ -92,48 +94,4 @@ internal fun Stepper(
             contentPadding = PaddingValues(0.dp)
         ) { Text("+", fontSize = 22.sp) }
     }
-}
-
-/**
- * Wpisanie ciężaru wprost, z klawiatury.
- *
- * Istnieje dla sprzętu, którego aplikacja nie składa z talerzy: tam liczba
- * na tabliczce bywa dowolna i żaden stały krok jej nie trafia. Przy sztandze
- * tego okna nie ma i nie ma go celowo - ciężar, którego nie da się nałożyć,
- * nie jest ciężarem, tylko życzeniem.
- *
- * Przecinek i kropka znaczą to samo, bo klawiatura numeryczna daje raz jedno,
- * raz drugie, zależnie od ustawień telefonu.
- */
-@Composable
-internal fun WeightDialog(
-    initialKg: Double,
-    title: String = "Ciężar",
-    onDismiss: () -> Unit,
-    onPick: (Double) -> Unit
-) {
-    var text by remember { mutableStateOf(Loading.fmt(initialKg)) }
-    val parsed = text.trim().replace(',', '.').toDoubleOrNull()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("kg") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { parsed?.let { onPick(roundKg(it.coerceAtLeast(0.0))) } },
-                enabled = parsed != null && parsed >= 0.0
-            ) { Text("Ustaw") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } }
-    )
 }

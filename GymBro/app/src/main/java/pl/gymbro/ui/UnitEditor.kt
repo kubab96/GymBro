@@ -289,15 +289,45 @@ private fun ExerciseCard(
     onDelete: () -> Unit,
     onAdvice: (accept: Boolean) -> Unit
 ) {
-    var typingWeight by remember { mutableStateOf(false) }
     val mode = LoadMode.of(item.equipment, inventory)
-
-    if (typingWeight) {
-        WeightDialog(
-            initialKg = item.targetKg,
-            title = item.exerciseName,
-            onDismiss = { typingWeight = false },
-            onPick = { onChange(item.copy(targetKg = it)); typingWeight = false }
+    // Które pole się wpisuje: serie, powtórzenia od/do, ciężar, przerwa.
+    var typing by remember { mutableStateOf<String?>(null) }
+    val close = { typing = null }
+    when (typing) {
+        "sets" -> NumberEntrySheet(
+            title = item.exerciseName + " - serie", initial = item.sets.toDouble(),
+            kind = NumberKind.COUNT, max = 10.0, onDismiss = close,
+            onPick = { onChange(item.copy(sets = it.toInt())); close() }
+        )
+        "from" -> NumberEntrySheet(
+            title = item.exerciseName + " - powtórzenia od", initial = item.repsFrom.toDouble(),
+            kind = NumberKind.COUNT, max = 50.0, onDismiss = close,
+            // Jak przy plusie: dolna granica pcha górną, zakres się nie odwraca.
+            onPick = { v ->
+                val od = v.toInt()
+                onChange(item.copy(repsFrom = od, repsTo = maxOf(item.repsTo, od)))
+                close()
+            }
+        )
+        "to" -> NumberEntrySheet(
+            title = item.exerciseName + " - powtórzenia do", initial = item.repsTo.toDouble(),
+            kind = NumberKind.COUNT, max = 50.0, onDismiss = close,
+            onPick = { v ->
+                val doo = v.toInt()
+                onChange(item.copy(repsTo = doo, repsFrom = minOf(item.repsFrom, doo)))
+                close()
+            }
+        )
+        "kg" -> NumberEntrySheet(
+            title = item.exerciseName + " - ciężar", initial = item.targetKg,
+            kind = NumberKind.WEIGHT, unit = item.equipment.weightUnitLabel,
+            values = weightValues(mode, inventory, item.step), onDismiss = close,
+            onPick = { onChange(item.copy(targetKg = it)); close() }
+        )
+        "rest" -> NumberEntrySheet(
+            title = item.exerciseName + " - przerwa", initial = item.restSec.toDouble(),
+            kind = NumberKind.TIME, onDismiss = close,
+            onPick = { onChange(item.copy(restSec = it.toInt())); close() }
         )
     }
 
@@ -342,18 +372,6 @@ private fun ExerciseCard(
                     ) {
                         summaryPills(item, inventory).forEach { Pill(it) }
                     }
-                    if (item.hasTargetWeight && mode != null) {
-                        PlateCalculator.resolve(item.targetKg, item.equipment, inventory)
-                            .loading?.let {
-                                Text(
-                                    it.describe(mode, inventory),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(top = 6.dp)
-                                )
-                            }
-                    }
                 }
                 Icon(
                     if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
@@ -383,7 +401,8 @@ private fun ExerciseCard(
                 MiniStepper(
                     value = "${item.sets}",
                     onMinus = { if (item.sets > 1) onChange(item.copy(sets = item.sets - 1)) },
-                    onPlus = { if (item.sets < 10) onChange(item.copy(sets = item.sets + 1)) }
+                    onPlus = { if (item.sets < 10) onChange(item.copy(sets = item.sets + 1)) },
+                    onValueClick = { typing = "sets" }
                 )
             }
 
@@ -405,7 +424,8 @@ private fun ExerciseCard(
                         onPlus = {
                             val od = item.repsFrom + 1
                             onChange(item.copy(repsFrom = od, repsTo = maxOf(item.repsTo, od)))
-                        }
+                        },
+                        onValueClick = { typing = "from" }
                     )
                     Text("do", style = MaterialTheme.typography.bodyMedium)
                     MiniStepper(
@@ -418,7 +438,8 @@ private fun ExerciseCard(
                         },
                         onPlus = {
                             if (item.repsTo < 50) onChange(item.copy(repsTo = item.repsTo + 1))
-                        }
+                        },
+                        onValueClick = { typing = "to" }
                     )
                 }
                 // Tylko tam, gdzie to prawda: przy ciężarze, który ma stać,
@@ -456,9 +477,9 @@ private fun ExerciseCard(
                         } else roundKg(item.targetKg + item.step)
                         onChange(item.copy(targetKg = w))
                     },
-                    // Przy talerzach wpisywania nie ma i nie ma go celowo:
-                    // ciężar, którego nie da się nałożyć, nie jest ciężarem.
-                    onLabelClick = if (mode == null) ({ typingWeight = true }) else null
+                    // Wpisany ciężar dociąga się do tego, co da się złożyć
+                    // z talerzy - ciężar, którego nie da się nałożyć, nie jest ciężarem.
+                    onLabelClick = { typing = "kg" }
                 )
                 TextButton(onClick = { onChange(item.copy(targetKg = 0.0)) }) {
                     Text("Bez zadanego ciężaru")
@@ -485,10 +506,11 @@ private fun ExerciseCard(
             val przerwy = listOf(0 to "brak", 60 to "1:00", 90 to "1:30", 120 to "2:00", 180 to "3:00")
             val wlasna = item.restSec.takeIf { r -> przerwy.none { it.first == r } }
                 ?.let { listOf(it to "${it / 60}:%02d".format(it % 60)) }.orEmpty()
+            // Ostatni przycisk otwiera wpisywanie - przerwa bywa i 45 s, i 2:30.
             ChipRow(
-                options = przerwy + wlasna,
+                options = przerwy + wlasna + listOf(-1 to "wpisz..."),
                 selected = item.restSec,
-                onSelect = { onChange(item.copy(restSec = it ?: 0)) },
+                onSelect = { if (it == -1) typing = "rest" else onChange(item.copy(restSec = it ?: 0)) },
                 allowNone = false
             )
 

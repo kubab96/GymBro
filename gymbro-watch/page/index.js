@@ -12,7 +12,7 @@ import {
 import { LocalStorage } from '@zos/storage'
 import {
   HeartRate, Calorie, Vibrator,
-  VIBRATOR_SCENE_DURATION_LONG
+  VIBRATOR_SCENE_DURATION_LONG, VIBRATOR_SCENE_DURATION
 } from '@zos/sensor'
 import { DEVICE_WIDTH, DEVICE_HEIGHT } from '../utils/config/device'
 
@@ -248,6 +248,12 @@ const SIDE_COLOR = 0x1c2024
 // Tło kafelka podsumowania: ciemniejsze od przycisku powrotu, żeby
 // kafelek nie wyglądał na coś do naciśnięcia.
 const DONE_TILE = 0x14181b
+// Łuk przerwy ubywa krokami po ćwierć stopnia. Krok co stopień (4 px na
+// krawędzi tarczy, trzy razy na sekundę) wciąż było widać jako ucinanie.
+const LUK_KROK_DEG = 0.25
+// Najkrótszy odstęp kroków: ok. 15 na sekundę. Częściej oko nie rozróżni,
+// a każdy krok to zapis do widgetu w wątku, którego potrzebują przyciski.
+const LUK_MIN_MS = 66
 
 // Rząd przycisków zapasu powtórzeń. Mieści się w okręgu na tej wysokości.
 const RIR_X0 = 88
@@ -260,6 +266,13 @@ const RIR_GAP = 8
 const BURN_MAX_GAP_MS = 30000
 
 const BUZZ_GUARD_MS = 1200
+// Para impulsów zapisu serii: każdy trwa tyle, a między nimi przerwa -
+// dość długa, żeby się nie zlały, i dość krótka, żeby czuć je jako parę.
+// Krótkie stuknięcia (SHORT_STRONG) były za delikatne w dłoni; ciągły
+// tryb ucięty po 300 ms czuć wyraźniej. Mocy wprost ustawić się nie da -
+// Zepp OS daje tylko gotowe tryby - więc mocniej znaczy tu dłużej.
+const BUZZ_PULS_MS = 300
+const BUZZ_PARA_MS = 180
 
 /**
  * Pilot treningu.
@@ -833,9 +846,11 @@ Page({
   },
 
   /**
-   * Jedyna wibracja w całej aplikacji: jedno ciągłe szarpnięcie.
+   * Wibracja zdarzeń: jedno ciągłe szarpnięcie. Zapis serii ma swoją,
+   * podwójną ([buzzPara]) - to najczęstsze zdarzenie i ma się dać odróżnić
+   * od końca przerwy bez patrzenia na ekran.
    *
-   * Ma tylko potwierdzić, że zapis wszedł, przy sztandze w rękach i ekranie
+   * Ma tylko potwierdzić, że coś weszło, przy sztandze w rękach i ekranie
    * poza polem widzenia. Lekkie potwierdzenia pod każdym przyciskiem
    * odpadły: kilka naciśnięć pod rząd zlewało się w serię impulsów i cały
    * sygnał przestawał cokolwiek znaczyć.
@@ -856,6 +871,42 @@ Page({
     }
   },
 
+  /**
+   * Zapis serii i jej start z przerwy: dwa wyraźne impulsy po 300 ms.
+   *
+   * Ta sama blokada co [buzz] - para liczy się jako jedno zdarzenie, więc
+   * zapas wybrany zaraz po serii nie dokłada trzeciego impulsu.
+   */
+  buzzPara() {
+    if (!this.vibrator) return
+    const now = Date.now()
+    if (this.lastBuzz && now - this.lastBuzz < BUZZ_GUARD_MS) return
+    this.lastBuzz = now
+    if (this.paraTimer) clearTimeout(this.paraTimer)
+    // Cztery kroki: drży, cisza, drży, cisza - każdy na swoim zegarze.
+    const kroki = [
+      [BUZZ_PULS_MS, () => this.vibrator.start({ mode: VIBRATOR_SCENE_DURATION })],
+      [BUZZ_PARA_MS, () => this.vibrator.stop()],
+      [BUZZ_PULS_MS, () => this.vibrator.start({ mode: VIBRATOR_SCENE_DURATION })],
+      [0, () => this.vibrator.stop()]
+    ]
+    const krok = (i) => {
+      if (!this.vibrator) return
+      try {
+        kroki[i][1]()
+      } catch (e) {
+        this.vibrator = null
+        return
+      }
+      if (i + 1 >= kroki.length) return
+      this.paraTimer = setTimeout(() => {
+        this.paraTimer = null
+        krok(i + 1)
+      }, kroki[i][0])
+    }
+    krok(0)
+  },
+
   build() {
     // To, co nie dojechalo przed zgasnieciem ekranu, czeka w pamieci.
     this.restoreOutbox()
@@ -868,6 +919,11 @@ Page({
     // dotyku, na których palec zaczął ruch (patrz [sledzPalec]).
     this.gest = (event) => {
         this.dotyk()
+        // Pytanie o wznowienie znika z każdym gestem - machnięcie to "nie".
+        if (this.state.pauseAsk) {
+          this.zapytajOWznowienie(false)
+          return true
+        }
         const view = this.state.view
         const col = COLUMN.indexOf(view)
 
@@ -1032,6 +1088,8 @@ Page({
     if (this.nameTimer) clearTimeout(this.nameTimer)
     if (this.koniecTimer) clearTimeout(this.koniecTimer)
     if (this.flashTimer) clearTimeout(this.flashTimer)
+    if (this.paraTimer) clearTimeout(this.paraTimer)
+    if (this.lukTimer) clearTimeout(this.lukTimer)
     this.nameRun = -1
     if (this.heart && this.onHeart) this.heart.offCurrentChange(this.onHeart)
     if (this.calorie && this.onCalorie) this.calorie.offChange(this.onCalorie)
@@ -1491,6 +1549,7 @@ Page({
     const w = this.w
     if (!w) return []
     if (this.state.message) return [w.retry]
+    if (this.state.pauseAsk) return [w.pauseGo, w.pauseBack]
     switch (this.state.view) {
       // W przerwie licznik ustępuje odliczaniu, a strzałki zostają na bokach.
       case VIEW_SETS: return this.resting()
@@ -1529,6 +1588,21 @@ Page({
     }
 
     w.message = this.text(60, 170, 360, 140, 30, DIM)
+
+    // ---- Pytanie o wznowienie ----
+    // Wstrzymany trening dalej przyjmował serie: czas stał, a serie szły
+    // do dziennika, jakby nic się nie stało. Seria we wstrzymanym treningu
+    // to prawie zawsze zapomniane wznowienie, więc zamiast niej pada pytanie.
+    w.pauseTitle = this.text(90, 110, 300, 40, 30, AMBER, hmUI.text_style.NONE)
+    w.pauseSub = this.text(90, 152, 300, 60, 20, DIM)
+    w.pauseGo = this.button(110, 230, 260, 84, 28, 'WZNÓW', GREEN, () => this.zapytajOWznowienie(true))
+    // Wyjście bez wznawiania - przycisk drugorzędny, w kolorze bocznych,
+    // żeby wzrok trafiał najpierw w WZNÓW.
+    w.pauseBack = this.button(150, 326, 180, 60, 22, 'Wróć', SIDE_COLOR, () => this.zapytajOWznowienie(false))
+    ;[w.pauseTitle, w.pauseSub, w.pauseGo, w.pauseBack].forEach((x) => {
+      x.setProperty(hmUI.prop.VISIBLE, false)
+      x.widoczny = false
+    })
     w.retry = this.button(140, 330, 200, 72, 26, 'Odśwież', GREY, () => {
       this.setMessage('Łączę...')
       this.send('STATE', {}, true)
@@ -1982,22 +2056,26 @@ Page({
     const w = this.w
     if (!w) return
     const msg = !!this.state.message
+    // Pytanie o wznowienie zasłania każdy ekran, tak jak komunikat.
+    const ask = !msg && !!this.state.pauseAsk
+    const hide = msg || ask
     const view = this.state.view
-    const sets = !msg && view === VIEW_SETS
-    const edit = !msg && view === VIEW_EDIT
-    const done = !msg && view === VIEW_DONE
-    const ctrl = !msg && view === VIEW_CONTROL
-    const start = !msg && view === VIEW_START
-    const stats = !msg && view === VIEW_STATS
-    const heart = !msg && view === VIEW_HEART
-    const tons = !msg && view === VIEW_TONS
+    const sets = !hide && view === VIEW_SETS
+    const edit = !hide && view === VIEW_EDIT
+    const done = !hide && view === VIEW_DONE
+    const ctrl = !hide && view === VIEW_CONTROL
+    const start = !hide && view === VIEW_START
+    const stats = !hide && view === VIEW_STATS
+    const heart = !hide && view === VIEW_HEART
+    const tons = !hide && view === VIEW_TONS
     const column = COLUMN.indexOf(view)
 
     this.setVisible(w.message, msg)
     this.setVisible(w.retry, msg)
 
-    this.setVisible(w.clock, !msg && column >= 0)
-    if (!msg && column >= 0) this.paintWallClock()
+    this.setVisible(w.clock, !hide && column >= 0)
+    if (!hide && column >= 0) this.paintWallClock()
+    ;[w.pauseTitle, w.pauseSub, w.pauseGo, w.pauseBack].forEach((x) => this.setVisible(x, ask))
 
     // Na serii licznik i czas serii, w przerwie - odliczanie na środku.
     // Strzałki stoją na bokach w obu fazach: pytanie o zapas zajmuje dół
@@ -2031,9 +2109,9 @@ Page({
     ;[w.doneTitle, w.doneTime, w.doneTimeL, w.doneSets, w.doneSetsL, w.doneTon,
       w.doneTonL, w.doneKcal, w.doneKcalL, w.doneSkip, w.doneBtn, w.doneBack,
       w.doneHint, w.doneNext].concat(w.doneTiles).forEach((x) => this.setVisible(x, done))
-    const gaps = !msg && view === VIEW_GAPS
-    const log = !msg && view === VIEW_LOG
-    const fix = !msg && view === VIEW_FIX
+    const gaps = !hide && view === VIEW_GAPS
+    const log = !hide && view === VIEW_LOG
+    const fix = !hide && view === VIEW_FIX
     ;[w.logTitle, w.logSub, w.logHint].concat(w.logHead).forEach((x) => this.setVisible(x, log))
     const wiersze = this.logRows()
     const odWiersza = this.logFrom()
@@ -2338,8 +2416,10 @@ Page({
 
   /** Łuk - tylko gdy coś się zmienia, jak każdy inny zapis do widgetu. */
   luk(arc, start, end, color) {
-    const s = Math.round(start)
-    const e = Math.round(end)
+    // Ćwierć stopnia, nie cały: przy całych stopniach łuk przerwy szedł
+    // widocznymi skokami. Porównanie niżej dalej odcina zapisy bez zmiany.
+    const s = Math.round(start / LUK_KROK_DEG) * LUK_KROK_DEG
+    const e = Math.round(end / LUK_KROK_DEG) * LUK_KROK_DEG
     const l = arc.luk
     if (l.start_angle === s && l.end_angle === e && l.color === color) return
     arc.luk = { start_angle: s, end_angle: e, color: color }
@@ -2347,6 +2427,26 @@ Page({
       x: px(RING_XY), y: px(RING_XY), w: px(RING_WH), h: px(RING_WH),
       start_angle: s, end_angle: e, color: color, line_width: px(RING_LINE)
     })
+  },
+
+  /**
+   * Następny krok łuku przerwy - tak, żeby jeden krok był ćwiercią stopnia.
+   *
+   * Przy dwóch minutach to co 83 ms, przy minucie co 66 ms. Zapis jest
+   * jeden i tylko wtedy, gdy kąt naprawdę się zmienił ([luk]). Pod palcem
+   * krok przepada: przez chwilę po dotyku łuk stoi, a wątek należy do
+   * przycisku - lagi przycisków brały się właśnie z pracy w tle w tej chwili.
+   */
+  planujLuk(total) {
+    if (this.lukTimer || !(total > 0)) return
+    const ms = Math.max(LUK_MIN_MS, Math.min(1000, Math.round((total * 1000 * LUK_KROK_DEG) / 360)))
+    this.lukTimer = setTimeout(() => {
+      this.lukTimer = null
+      if (!this.w || this.state.message || this.state.pauseAsk ||
+        this.state.view !== VIEW_SETS || !this.resting()) return
+      if (this.zajeteRysowaniem()) this.planujLuk(total)
+      else this.paintRing()
+    }, ms)
   },
 
   /**
@@ -2362,10 +2462,10 @@ Page({
     if (!w || !w.ring || this.state.view !== VIEW_SETS) return
     const ex = this.current()
     if (this.resting()) {
-      // Łuk przesuwa się z każdym tyknięciem zegara. Skok co pięć sekund
-      // oszczędzał zapis, ale przy dwóch minutach przerwy dawał cięcia po
-      // 15 stopni - wyglądało to jak szarpanie, nie jak ubywający czas.
-      // Teraz krok to 3 stopnie, jeden zapis na tyk, obok odliczania.
+      // Łuk ubywa po jednym stopniu, na własnym zegarze (patrz [planujLuk]).
+      // Skok co pięć sekund dawał cięcia po 15 stopni, a co sekundę -
+      // po 3, wciąż widoczne jako ucinanie. Stopień to kilka pikseli na
+      // krawędzi tarczy i oko bierze to już za ruch ciągły.
       const since = (Date.now() - this.state.phaseSince) / 1000
       const total = ex && ex.restSec > 0 ? ex.restSec : 0
       // Bez zaplanowanej przerwy łuk stoi pełny - nie ma czego odliczać.
@@ -2376,6 +2476,7 @@ Page({
       // Ubywa od góry zgodnie ze wskazówkami zegara: koniec stoi na
       // dwunastej, a początek goni go jak wskazówka.
       this.luk(w.ring[1], -90 + 360 * (1 - zostalo), 270, AMBER)
+      if (zostalo > 0) this.planujLuk(total)
       return
     }
     if (!ex) return
@@ -2571,10 +2672,10 @@ Page({
     const n = this.czeka()
     const bylo = this.state.syncWas || 0
     this.state.syncWas = n
-    if (bylo && !n) {
-      this.state.syncDone = true
-      this.buzz()
-    }
+    // Bez wibracji: wysyłka do telefonu dzieje się w tle i nie jest
+    // zdarzeniem na treningu. Wibracja "dojechało" trafiała w środek
+    // przerwy po każdej serii, a stan kolejki i tak widać na ekranie.
+    if (bylo && !n) this.state.syncDone = true
     if (n) this.state.syncDone = false
     const view = this.state.view
     if (this.state.built && !this.state.message) {
@@ -3552,6 +3653,12 @@ Page({
    * jednostki nie robi nic, bo trening trzeba wskazać świadomie.
    */
   sideButton() {
+    // Przycisk z boku na pytaniu znaczy "tak" - ten sam, którym chciałeś
+    // zacząć serię, więc drugie naciśnięcie wznawia bez szukania ekranu.
+    if (this.state.pauseAsk && !this.state.message) {
+      this.zapytajOWznowienie(true)
+      return
+    }
     if (this.state.message) {
       this.setMessage('Łączę...')
       this.send('STATE', {}, true)
@@ -3591,6 +3698,12 @@ Page({
    */
   press() {
     const view = this.state.view
+    // Ani zapis, ani start serii we wstrzymanym treningu - najpierw pytanie.
+    // Poprawka, zapas i przeglądanie zostają, bo nie zaczynają niczego nowego.
+    if (this.paused()) {
+      this.zapytajOWznowienie()
+      return
+    }
     if (view === VIEW_EDIT) {
       // Z edycji zawsze zapis, nawet w trakcie przerwy. Po to się tam wchodzi:
       // ustawić ciężar i powtórzenia serii, która właśnie idzie do dziennika.
@@ -3608,9 +3721,9 @@ Page({
       return
     }
     if (this.state.phase === PHASE_REST) {
-      // Start serii też szarpie: to sygnał "bierz sztangę", tak samo
-      // potrzebny bez patrzenia na ekran jak potwierdzenie zapisu.
-      this.buzz()
+      // Start serii czuć tak samo jak zapis - para impulsów. To dwa końce
+      // tej samej serii i oba potwierdza się bez patrzenia na ekran.
+      this.buzzPara()
       this.flash(FLASH_REST, FLASH_REST_MS)
       this.state.phase = PHASE_SET
       this.state.phaseSince = Date.now()
@@ -3634,9 +3747,9 @@ Page({
     // i cofa się ją jednym naciśnięciem; naciśnięcie, które nic nie robi,
     // jest gorsze, bo nie wiadomo, czy w ogóle weszło.
     const now = Date.now()
-    // Jeden ciągły impuls, nie seria krótkich: przy sztandze w rękach
-    // kilka szarpnięć zlewa się w szum, a jedno długie czuć na pewno.
-    this.buzz()
+    // Para krótkich impulsów: zapis czuć inaczej niż koniec przerwy, który
+    // dalej szarpie jednym długim.
+    this.buzzPara()
     this.restRang = false
 
     const id = ex.id
@@ -3894,6 +4007,30 @@ Page({
     }
     const nazwa = this.state.data && this.state.data.plan
     return nazwa ? units.filter((x) => x.name === nazwa)[0] || null : null
+  },
+
+  /**
+   * Pytanie "Trening wstrzymany - wznowić?".
+   *
+   * Bez argumentu - pokazuje. [tak] wznawia i wraca na serie, [false]
+   * chowa pytanie bez zmian. Seria, która to pytanie wywołała, nie zapisuje
+   * się po wznowieniu sama: czas stał, więc trudno powiedzieć, czy to ta
+   * sama seria, a jedno naciśnięcie więcej kosztuje mniej niż zła seria.
+   */
+  zapytajOWznowienie(tak) {
+    if (tak === undefined) {
+      this.state.pauseAsk = true
+      this.buzz()
+      this.setText(this.w.pauseTitle, 'Wstrzymany')
+      this.setText(this.w.pauseSub, 'Czy chcesz wznowić trening?')
+      this.applyVisibility()
+      return
+    }
+    this.state.pauseAsk = false
+    if (tak && this.paused()) this.togglePause()
+    if (tak && this.state.view !== VIEW_SETS) this.showView(VIEW_SETS)
+    else this.applyVisibility()
+    if (tak) this.paint()
   },
 
   togglePause() {
@@ -4361,6 +4498,8 @@ Page({
       if (bylo !== this.paused() && this.state.view === VIEW_CONTROL && !this.state.message) {
         this.paintControl()
       }
+      // Wznowiony na telefonie - pytanie na zegarku straciło sens.
+      if (this.state.pauseAsk && !this.paused()) this.zapytajOWznowienie(false)
     }
     // Suma kontrolna: telefon zna serie, ktorych zegarek nie zna - dopisane
     // albo poprawione na telefonie w trakcie treningu. Wtedy raz pelny stan.

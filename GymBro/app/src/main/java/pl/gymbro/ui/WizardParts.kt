@@ -166,7 +166,8 @@ internal fun MiniStepper(
     value: String,
     onMinus: () -> Unit,
     onPlus: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onValueClick: (() -> Unit)? = null
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         OutlinedButton(
@@ -174,11 +175,22 @@ internal fun MiniStepper(
             modifier = Modifier.size(44.dp),
             contentPadding = PaddingValues(0.dp)
         ) { Text("−", fontSize = 20.sp) }
+        // Dotknięcie liczby otwiera wpisywanie - przy dwunastu powtórzeniach
+        // od zera to dwanaście naciśnięć plusa.
         Text(
             value,
             fontSize = 20.sp,
             textAlign = TextAlign.Center,
-            modifier = Modifier.width(52.dp)
+            modifier = Modifier
+                .padding(horizontal = 4.dp)
+                .width(48.dp)
+                .then(
+                    if (onValueClick != null) Modifier
+                        .tap(androidx.compose.foundation.shape.RoundedCornerShape(10.dp), onClick = onValueClick)
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                        .padding(vertical = 8.dp)
+                    else Modifier
+                )
         )
         OutlinedButton(
             onClick = onPlus,

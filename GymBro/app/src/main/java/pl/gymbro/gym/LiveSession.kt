@@ -103,4 +103,48 @@ object LiveSession {
         val i = states.indexOfFirst { !it.complete }
         return if (i >= 0) i else states.lastIndex.coerceAtLeast(0)
     }
+
+    /**
+     * Które ćwiczenie pokazać po przeładowaniu stanu - ekran idzie tam,
+     * gdzie wylądowała najnowsza seria.
+     *
+     * Seria mogła przyjść z telefonu albo z zegarka, a trening prowadzi
+     * zegarek. Zasada "zostań na bieżącym, dopóki nie jest domknięte"
+     * trzymała telefon na ćwiczeniu, którego nikt nie robił - do tego
+     * z numerem zostawionym przez poprzedni trening - i ekran ruszał się
+     * dopiero po naciśnięciu "Następne". Teraz:
+     *  - nowy trening: pierwsze niedokończone,
+     *  - nowa seria w ćwiczeniu niedokończonym: to ćwiczenie,
+     *  - nowa seria domknęła ćwiczenie: następne niedokończone za nim
+     *    (jak [advance] na zegarku), a gdy za nim nic - od początku,
+     *  - bez nowej serii (poprawka, kasowanie, pauza): zostajemy.
+     *
+     * @param complete czy ćwiczenie ma komplet serii, po kolei
+     * @param newest ćwiczenie z serią nowszą niż przed przeładowaniem, albo null
+     */
+    fun follow(complete: List<Boolean>, newest: Int?, current: Int, fresh: Boolean): Int {
+        if (complete.isEmpty()) return 0
+        fun firstOpen() = complete.indexOfFirst { !it }.takeIf { it >= 0 } ?: complete.lastIndex
+        if (fresh) return firstOpen()
+        if (newest == null || newest !in complete.indices) return current.coerceIn(0, complete.lastIndex)
+        if (!complete[newest]) return newest
+        val after = (newest + 1 until complete.size).firstOrNull { !complete[it] }
+        if (after != null) return after
+        return complete.indexOfFirst { !it }.takeIf { it >= 0 } ?: newest
+    }
+
+    /** Ćwiczenie z serią zapisaną później niż [since], albo null. */
+    fun newestAfter(states: List<ExerciseState>, since: Long): Int? {
+        var best: Int? = null
+        var at = since
+        states.forEachIndexed { i, st ->
+            st.doneSets.forEach { set ->
+                if (set.doneAt > at) {
+                    at = set.doneAt
+                    best = i
+                }
+            }
+        }
+        return best
+    }
 }

@@ -836,6 +836,10 @@ function ekranCzysty(page) {
   })
   tylkoNa(w.statIcons, 5, 'ikona czasu')
   tylkoNa(w.doneTiles, 2, 'kafelek podsumowania')
+  // Pytanie o wznowienie stoi tylko wtedy, gdy o nie zapytano.
+  ;[w.pauseTitle, w.pauseSub, w.pauseGo, w.pauseBack].forEach((x, i) => {
+    if (x && x.visible !== !!page.state.pauseAsk) bledy.push('pytanie o wznowienie ' + i + ' rozjechane')
+  })
   // Wiersze cwiczen stoja tylko na swoim ekranie - ile, zalezy od planu.
   if (widok !== 10) {
     ;(w.tonVals || []).concat(...(w.tonDots || [])).forEach((x, i) => {
@@ -1256,6 +1260,33 @@ async function main() {
       page.paintClock()
       ok('luk przerwy rusza sie co sekunde', page.w.ring[1].attrs.start_angle > poSekundzie,
         poSekundzie + ' -> ' + page.w.ring[1].attrs.start_angle)
+      // Miedzy tyknieciami luk ubywa sam, po cwierc stopnia - co sekunde
+      // bylo widac ucinanie o 3 stopnie, a co stopien wciaz skoki.
+      {
+        const ex = page.current()
+        const krokMs = Math.max(66, Math.min(1000, Math.round(ex.restSec * 1000 * 0.25 / 360)))
+        const zegar = handlers.zegary.filter((z) => z.zywy && z.ms === krokMs)
+        ok('luk ma wlasny zegar na cwierc stopnia', zegar.length === 1,
+          'krok ' + krokMs + ' ms, zegarow ' + zegar.length)
+        page.ostatniDotyk = 0
+        const przedKrokiem = page.w.ring[1].attrs.start_angle
+        const zapisy0 = page.w.ring[1].writes || 0
+        jump(krokMs)
+        zegar.forEach((z) => { z.zywy = false; z.fn() })
+        const o = page.w.ring[1].attrs.start_angle - przedKrokiem
+        ok('krok luku to cwierc stopnia', o > 0 && o <= 0.5, przedKrokiem + ' -> ' + page.w.ring[1].attrs.start_angle)
+        ok('jeden krok - jeden zapis', (page.w.ring[1].writes || 0) - zapisy0 === 1,
+          String((page.w.ring[1].writes || 0) - zapisy0))
+        // Pod palcem krok przepada, a zegar czeka na nastepny.
+        page.dotyk()
+        const pod = handlers.zegary.filter((z) => z.zywy && z.ms === krokMs)
+        const zapisy1 = page.w.ring[1].writes || 0
+        jump(krokMs)
+        pod.forEach((z) => { z.zywy = false; z.fn() })
+        ok('pod palcem luk nie pisze', (page.w.ring[1].writes || 0) === zapisy1)
+        ok('i czeka na nastepny krok', handlers.zegary.some((z) => z.zywy && z.ms === krokMs))
+        page.ostatniDotyk = 0
+      }
       ok('napis pod odliczaniem bez "dalej"', /^seria \d+ z \d+$/.test(page.w.restNext.attrs.text),
         String(page.w.restNext.attrs.text))
     }
@@ -2380,8 +2411,11 @@ async function main() {
 
   section('Wibracje')
   ok('cos zawibrowalo przy zapisie', buzzes.length > 0, buzzes.length + ' razy')
-  const inne = buzzes.filter((b) => b !== VIBRATOR_SCENE_DURATION_LONG)
-  ok('w calej sesji wylacznie jeden ciagly tryb', inne.length === 0,
+  // Dwa tryby i ani jednego wiecej: ciagly uciety (para przy zapisie serii)
+  // i jeden dlugi na reszte zdarzen. Lekkie impulsy pod kazdym przyciskiem
+  // zlewaly sie kiedys w szum.
+  const inne = buzzes.filter((b) => b !== VIBRATOR_SCENE_DURATION_LONG && b !== VIBRATOR_SCENE_DURATION)
+  ok('w calej sesji tylko para impulsow i jeden dlugi', inne.length === 0,
     'obce tryby: ' + inne.join(','))
 
   section('Blokada wibracji')
@@ -2395,6 +2429,62 @@ async function main() {
   jump(BUZZ_GUARD + 100)
   page.buzz()
   ok('po blokadzie znowu mozna', buzzes.length === 2, buzzes.length + ' razy')
+
+  section('Zapis serii to dwa wyrazne impulsy, a dojechanie zwyklej serii jest ciche')
+  {
+    page.state.message = null
+    page.state.pausedLocal = null
+    page.state.pauseAsk = false
+    page.state.view = VIEW.SETS
+    page.state.phase = 'set'
+    page.state.index = 0
+    page.applyVisibility()
+    page.setOffline(false)
+    page.state.outbox = []
+    page.state.syncWas = 0
+    buzzes.length = 0
+    jump(BUZZ_GUARD + 100)
+    page.press()
+    ok('pierwszy impuls od razu, ciagly', buzzes.length === 1 && buzzes[0] === VIBRATOR_SCENE_DURATION,
+      buzzes.join(','))
+    // Kroki pary: 300 ms drgania, 180 ms ciszy, 300 ms drgania, koniec.
+    const odstepy = []
+    for (let i = 0; i < 5 && page.paraTimer; i++) {
+      const z = handlers.zegary[page.paraTimer - 1]
+      odstepy.push(z.ms)
+      z.zywy = false
+      z.fn()
+    }
+    ok('drugi impuls po krotkiej ciszy', buzzes.length === 2 && buzzes[1] === VIBRATOR_SCENE_DURATION,
+      buzzes.join(','))
+    ok('impulsy po 300 ms z cisza 180 ms', odstepy.join(',') === '300,180,300', odstepy.join(','))
+    ok('cala para krotsza niz blokada wibracji', 300 + 180 + 300 < BUZZ_GUARD)
+    // Start serii z przerwy - ta sama para.
+    page.state.phase = 'rest'
+    page.applyVisibility()
+    jump(BUZZ_GUARD + 100)
+    const przedStartem = buzzes.length
+    page.press()
+    for (let i = 0; i < 5 && page.paraTimer; i++) {
+      const z = handlers.zegary[page.paraTimer - 1]
+      z.zywy = false
+      z.fn()
+    }
+    ok('start serii to ta sama para', page.state.phase === 'set' &&
+      buzzes.slice(przedStartem).join(',') === [VIBRATOR_SCENE_DURATION, VIBRATOR_SCENE_DURATION].join(','),
+      buzzes.slice(przedStartem).join(','))
+    page.state.phase = 'set'
+    // Seria idzie do telefonu po ciszy i wraca potwierdzona - w srodku
+    // przerwy nie ma za co wibrowac. Zegar za blokade wibracji, zeby
+    // cisze dalo sie przypisac regule, a nie blokadzie.
+    const przedWysylka = buzzes.length
+    jump(WYSYLKA)
+    await puscWysylke(page, handlers)
+    await flush(); await flush()
+    ok('seria dojechala', page.czeka() === 0, String(page.czeka()))
+    ok('jej dojechanie nie wibruje', buzzes.length === przedWysylka, buzzes.join(','))
+    page.state.phase = 'set'
+  }
 
   section('Koniec zaplanowanej przerwy')
   // Po zakonczeniu nie ma planu, a przerwa bierze swoj czas z cwiczenia.
@@ -2579,6 +2669,58 @@ async function main() {
   handlers.gesture(GESTURE_DOWN)
   page.state.view = VIEW.SETS
   page.applyVisibility()
+
+  section('Wstrzymany trening nie przyjmuje serii, tylko pyta o wznowienie')
+  {
+    page.state.message = null
+    page.state.pausedLocal = true
+    page.state.phase = 'set'
+    page.state.view = VIEW.SETS
+    page.applyVisibility()
+    const ex = page.current()
+    const serie0 = page.shownDone(ex)
+    const kolejka0 = (page.state.outbox || []).length
+    page.press()
+    ok('licznik serii pyta, zamiast zapisac', page.state.pauseAsk === true &&
+      page.shownDone(ex) === serie0 && (page.state.outbox || []).length === kolejka0,
+      'pytanie ' + page.state.pauseAsk + ', serie ' + serie0 + ' -> ' + page.shownDone(ex))
+    ok('pytanie zaslania ekran serii', page.w.pauseGo.visible === true && page.w.count.visible === false)
+    ok('przyciski to WZNOW i Wroc', page.visibleButtons().length === 2 &&
+      page.visibleButtons()[0] === page.w.pauseGo && page.visibleButtons()[1] === page.w.pauseBack)
+    ok('pytanie wprost o wznowienie', page.w.pauseSub.attrs.text === 'Czy chcesz wznowić trening?',
+      page.w.pauseSub.attrs.text)
+    ok('Wroc drugorzedny, nie zielony', page.w.pauseBack.props.normal_color !== page.w.pauseGo.props.normal_color)
+    page.w.pauseBack.onClick()
+    ok('Wroc chowa pytanie bez wznawiania', page.state.pauseAsk === false && page.paused() === true)
+    page.press()
+    handlers.gesture(GESTURE_LEFT)
+    ok('gest chowa pytanie bez wznawiania', page.state.pauseAsk === false && page.paused() === true &&
+      page.state.view === VIEW.SETS, 'widok ' + nazwa(page.state.view))
+    ok('po schowaniu ekran czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+
+    // Przycisk z boku: pierwsze naciśnięcie pyta, drugie wznawia.
+    handlers.key(KEY_SHORTCUT, KEY_EVENT_CLICK)
+    ok('przycisk z boku tez pyta', page.state.pauseAsk === true && page.shownDone(ex) === serie0)
+    handlers.key(KEY_SHORTCUT, KEY_EVENT_CLICK)
+    ok('drugie nacisniecie wznawia', page.paused() === false && page.state.pauseAsk === false)
+    ok('wznowienie nie zapisuje serii samo', page.shownDone(ex) === serie0,
+      serie0 + ' -> ' + page.shownDone(ex))
+    ok('po wznowieniu ekran czysty', ekranCzysty(page).length === 0, ekranCzysty(page).join('; '))
+
+    // W przerwie start serii tez pyta; WZNOW na ekranie wznawia.
+    page.state.pausedLocal = true
+    page.state.phase = 'rest'
+    page.applyVisibility()
+    page.press()
+    ok('start serii z przerwy tez pyta', page.state.pauseAsk === true && page.state.phase === 'rest',
+      page.state.phase)
+    page.w.pauseGo.onClick()
+    ok('WZNOW wznawia', page.paused() === false && page.state.pauseAsk === false)
+    page.state.phase = 'set'
+    page.state.pausedLocal = null
+    page.state.outbox = []
+    page.applyVisibility()
+  }
 
   section('Wstrzymanie dziala od razu i bez telefonu')
   page.state.message = null
@@ -3244,7 +3386,8 @@ async function main() {
     JSON.stringify(phone.starty))
   ok('razem z jego seria', phone.log.length === 1, String(phone.log.length))
   ok('i z godzina zakonczenia', phone.endedAt === dawno + 60000, String(phone.endedAt))
-  ok('wibracja mowi, ze wszystko dojechalo', buzzes.length > buzzPrzed,
+  // Wysylka do telefonu nigdy nie wibruje - nawet po dojechaniu zaleglosci.
+  ok('dojechanie zaleglosci nie wibruje', buzzes.length === buzzPrzed,
     buzzPrzed + ' -> ' + buzzes.length)
 
   // ---- Bledy zgloszone po treningu 09.11 ---------------------------------
