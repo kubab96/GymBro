@@ -166,6 +166,31 @@ class ProgressStatsTest {
     }
 
     @Test
+    fun `szczegoly treningu wskazuja cwiczenie i serie rekordu, zgodnie z karta`() {
+        fun s(ex: Long, session: Long, kg: Double, reps: Int, at: Long) =
+            SetEntry(sessionId = session, exerciseId = ex, setIndex = 1, weightKg = kg, reps = reps, doneAt = at)
+        val wioslowanie = listOf(s(1, 2, 60.0, 8, 2_500))
+        val przysiad = listOf(
+            s(2, 1, 100.0, 5, 1_000),
+            s(2, 2, 100.0, 5, 2_000), s(2, 2, 105.0, 5, 2_100), s(2, 2, 105.0, 3, 2_200),
+            s(2, 3, 100.0, 5, 3_000)
+        )
+        val druga = ProgressStats.recordsIn(2, mapOf(1L to wioslowanie, 2L to przysiad))
+        assertEquals(setOf(2L), druga.keys)
+        val r = druga.getValue(2)
+        assertEquals(105.0, r.bestSet.weightKg, 0.01)
+        assertEquals(5, r.bestSet.reps)
+        assertTrue(r.e1rm > r.previousBest)
+        // Ta sama liczba co odznaka na karcie w Historii.
+        val karta = ProgressStats.highlights(listOf(
+            Triple(1L, "Wiosłowanie", wioslowanie), Triple(2L, "Przysiad", przysiad)
+        ))
+        assertEquals(karta.getValue(2).records, druga.size)
+        // Trening słabszy od poprzedniego nie ma rekordu.
+        assertTrue(ProgressStats.recordsIn(3, mapOf(2L to przysiad)).isEmpty())
+    }
+
+    @Test
     fun `cwiczenie nieruszane w okresie znika z listy`() {
         val now = 100 * DAY
         val lifts = ProgressStats.lifts(

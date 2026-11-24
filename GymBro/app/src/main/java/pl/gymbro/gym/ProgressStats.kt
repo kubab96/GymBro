@@ -90,7 +90,9 @@ object ProgressStats {
         val volume: Double,
         val bestSet: SetEntry,
         val sets: Int,
-        val record: Boolean
+        val record: Boolean,
+        /** Najlepszy szacowany maks. sprzed tej sesji; 0 przy pierwszej. */
+        val previousBest: Double = 0.0
     )
 
     /** Serie robocze ćwiczenia zgrupowane po sesjach, od najstarszej. */
@@ -106,8 +108,10 @@ object ProgressStats {
                 // Pierwsza sesja to nie rekord - nie ma czego pobić, a złota
                 // kropka przy każdym nowym ćwiczeniu nic by nie znaczyła.
                 val record = best > 0 && top.estimated1RM > best + 1e-6
+                val before = best
                 best = maxOf(best, top.estimated1RM)
                 Point(
+                    previousBest = before,
                     at = s.first().doneAt,
                     e1rm = top.estimated1RM,
                     topKg = s.maxOf { it.weightKg },
@@ -150,6 +154,19 @@ object ProgressStats {
             Highlights(l.sortedBy { it.first }.map { it.second }, records[sid] ?: 0)
         }
     }
+
+    /**
+     * Rekordy jednego treningu, po numerze ćwiczenia.
+     *
+     * Ta sama reguła co odznaka na karcie w Historii ([highlights]) - karta
+     * mówiła „2 rekordy", a w szczegółach nie było śladu, przy czym padły.
+     * [exercises] to serie robocze każdego ćwiczenia z tego treningu, z całej
+     * historii: rekord to porównanie z tym, co było wcześniej.
+     */
+    fun recordsIn(sessionId: Long, exercises: Map<Long, List<SetEntry>>): Map<Long, Point> =
+        exercises.mapNotNull { (id, sets) ->
+            points(sets).firstOrNull { it.record && it.bestSet.sessionId == sessionId }?.let { id to it }
+        }.toMap()
 
     /** Najcięższy ciężar podniesiony na co najmniej [reps] powtórzeń. */
     data class RepRecord(val reps: Int, val kg: Double, val at: Long)

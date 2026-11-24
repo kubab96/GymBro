@@ -117,8 +117,11 @@ internal fun UnitEditorScreen(
             planRepo.items(draft.planId) to planRepo.planById(draft.planId)
         }
         if (plan != null) draft.load(items, plan)
-        // Zajrzenie w jednostkę gasi plakietkę, ale propozycje zostają do decyzji.
-        withContext(Dispatchers.IO) { planRepo.markAdviceSeen() }
+        // Zajrzenie w jednostkę gasi jej plakietkę, ale propozycje zostają
+        // do decyzji. Plakietka przelicza się od razu, nie dopiero po wyjściu
+        // z zakładki - inaczej świeciła nad ćwiczeniem, które właśnie oglądasz.
+        val zgaszone = withContext(Dispatchers.IO) { planRepo.markAdviceSeen(draft.planId) }
+        if (zgaszone > 0) AdviceBadge.bump()
     }
     // Skok z historii: do ćwiczenia z propozycją, gdy tylko lista jest gotowa.
     LaunchedEffect(highlight, draft.loaded) {

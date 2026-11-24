@@ -505,11 +505,17 @@ class PlanRepository(context: Context) {
             null
         ).mapAll { it.long("plan_id") to it.int("n") }.toMap()
 
-    /** Po zajrzeniu plakietka gaśnie, ale propozycje zostają do decyzji. */
-    fun markAdviceSeen(): Int =
+    /**
+     * Po zajrzeniu w jednostkę jej plakietka gaśnie, ale propozycje zostają
+     * do decyzji.
+     *
+     * Tylko ta jednostka: wejście w A gasiło dotąd także propozycje z B,
+     * których nikt jeszcze nie widział.
+     */
+    fun markAdviceSeen(planId: Long): Int =
         db.writable.update(
             "plan_item", ContentValues().apply { put("adv_seen", 1) },
-            "adv_kind IS NOT NULL", null
+            "adv_kind IS NOT NULL AND adv_seen = 0 AND plan_id = ?", arrayOf(planId.toString())
         )
 
     /** Pozycje z czekającą propozycją, z nazwami ćwiczeń. */
@@ -804,8 +810,29 @@ class SessionRepository(context: Context) {
      */
     fun deleteSession(id: Long): Int {
         val db2 = db.writable
-        db2.delete("set_entry", "session_id = ?", arrayOf(id.toString()))
-        return db2.delete("session", "id = ?", arrayOf(id.toString()))
+        db2.beginTransaction()
+        try {
+            db2.delete("set_entry", "session_id = ?", arrayOf(id.toString()))
+            // Propozycje wyliczone z tego treningu idą razem z nim. Zostawione
+            // podpowiadały progresję z serii, których już nie ma, a plakietka
+            // Planu świeciła po treningu skasowanym jako pomyłka.
+            db2.update(
+                "plan_item",
+                ContentValues().apply {
+                    listOf(
+                        "adv_kind", "adv_weight", "adv_reps_to", "adv_sets",
+                        "adv_reason", "adv_last", "adv_session"
+                    ).forEach { putNull(it) }
+                    put("adv_seen", 0)
+                },
+                "adv_session = ?", arrayOf(id.toString())
+            )
+            val n = db2.delete("session", "id = ?", arrayOf(id.toString()))
+            db2.setTransactionSuccessful()
+            return n
+        } finally {
+            db2.endTransaction()
+        }
     }
 
     fun setsFor(sessionId: Long): List<SetEntry> =

@@ -38,6 +38,23 @@ object Busy {
 }
 
 /**
+ * Sygnał „przelicz plakietkę na zakładce Plan".
+ *
+ * Plakietka liczyła się tylko przy zmianie zakładki, a propozycje gasną
+ * w środku Planu - po wejściu w jednostkę liczba dalej świeciła, dopóki nie
+ * wyszło się z zakładki i nie wróciło. Pełny [Refresh] przeładowałby przy tym
+ * wszystkie zakładki, więc plakietka ma własny, lekki licznik.
+ */
+object AdviceBadge {
+    var version by mutableIntStateOf(0)
+        private set
+
+    fun bump() {
+        version++
+    }
+}
+
+/**
  * Sygnał „dane się zmieniły, przeładuj".
  *
  * Potrzebny, odkąd zakładki żyją w tle i nie składają się od nowa przy każdym

@@ -15,14 +15,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FitnessCenter
-import androidx.compose.material.icons.automirrored.filled.ListAlt
-import androidx.compose.material.icons.filled.MonitorWeight
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -71,7 +64,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import pl.gymbro.health.AutoSync
 import kotlinx.coroutines.delay
+import pl.gymbro.ui.AdviceBadge
 import pl.gymbro.ui.Busy
+import pl.gymbro.ui.TabIcons
 import pl.gymbro.ui.FoodScreen
 import pl.gymbro.ui.PlanEditorScreen
 import pl.gymbro.ui.ProfileScreen
@@ -109,7 +104,7 @@ class MainActivity : ComponentActivity() {
 /** Jedna zakładka nawigacji. */
 private data class NavTab(
     val label: String,
-    val icon: ImageVector
+    val icon: TabIcons.Variants
 )
 
 // Zakładki opisują to, co robisz, nie urządzenia, z których pochodzą dane.
@@ -120,11 +115,11 @@ private data class NavTab(
 // na kilka dni. Przy pasku na dole blizej lewej krawedzi znaczy blizej kciuka.
 // Kolejnosc jest zszyta z PLAN_TAB w ui/TabHost.kt.
 private val navTabs = listOf(
-    NavTab("Trening", Icons.Filled.FitnessCenter),
-    NavTab("Kalorie", Icons.Filled.Restaurant),
-    NavTab("Waga", Icons.Filled.MonitorWeight),
-    NavTab("Plan", Icons.AutoMirrored.Filled.ListAlt),
-    NavTab("Profil", Icons.Filled.Person)
+    NavTab("Trening", TabIcons.training),
+    NavTab("Kalorie", TabIcons.food),
+    NavTab("Waga", TabIcons.weight),
+    NavTab("Plan", TabIcons.plan),
+    NavTab("Profil", TabIcons.profile)
 )
 
 @Composable
@@ -163,7 +158,9 @@ fun GymBroApp() {
         unseenAdvice = withContext(Dispatchers.IO) { planRepo.adviceCounts().second }
     }
 
-    LaunchedEffect(tab) {
+    // Refresh - bo skasowany trening zabiera swoje propozycje; AdviceBadge -
+    // bo wejście w jednostkę gasi plakietkę bez zmiany zakładki.
+    LaunchedEffect(tab, Refresh.version, AdviceBadge.version) {
         unseenAdvice = withContext(Dispatchers.IO) { planRepo.adviceCounts().second }
     }
     val busy = Busy.isBusy
@@ -310,12 +307,16 @@ fun GymBroApp() {
                             // zobaczysz. Propozycje zostaja do decyzji dluzej,
                             // ale kropka ma przypominac raz, a nie swiecic
                             // tygodniami - wtedy przestaje cokolwiek znaczyc.
+                            // Otwarta zakładka ma ikonę pełną, pozostałe obrys -
+                            // sam kolor przy wygaszonej pigułce był za słaby,
+                            // żeby rzucić się w oczy przy jasnym słońcu.
+                            val ikona = if (tab == i) t.icon.filled else t.icon.outline
                             if (i == PLAN_TAB && unseenAdvice > 0) {
                                 BadgedBox(badge = { Badge { Text("$unseenAdvice") } }) {
-                                    Icon(t.icon, contentDescription = t.label)
+                                    Icon(ikona, contentDescription = t.label)
                                 }
                             } else {
-                                Icon(t.icon, contentDescription = t.label)
+                                Icon(ikona, contentDescription = t.label)
                             }
                         },
                         label = { Text(t.label) },

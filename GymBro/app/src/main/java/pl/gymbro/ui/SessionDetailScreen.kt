@@ -56,6 +56,7 @@ import pl.gymbro.data.SessionRepository
 import pl.gymbro.data.SessionSummary
 import pl.gymbro.gym.Loading
 import pl.gymbro.gym.MuscleMap
+import pl.gymbro.gym.ProgressStats
 import pl.gymbro.gym.RunAnalysis
 import pl.gymbro.gym.StrengthAnalysis
 import pl.gymbro.health.ActivityDetail
@@ -160,6 +161,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
     var inventory by remember { mutableStateOf<Inventory?>(null) }
     var editingExercise by remember { mutableStateOf<Long?>(null) }
     var editingSet by remember { mutableStateOf<SetEntry?>(null) }
+    var records by remember { mutableStateOf<Map<Long, ProgressStats.Point>>(emptyMap()) }
 
     /**
      * Serie i wszystko, co z nich wynika. Wołane także po każdej poprawce.
@@ -171,8 +173,14 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         val loaded = withContext(Dispatchers.IO) {
             val sets = sessionRepo.setsFor(summary.sessionId)
             val all = exerciseRepo.all().associateBy { it.id }
-            Triple(sets, all, sessionRepo.setsByMuscleInSession(summary.sessionId))
-        }
+            // Rekordy z całej historii każdego ćwiczenia: po poprawce serii
+            // rekord może się pojawić albo zniknąć, więc liczą się tu, a nie raz.
+            val rec = ProgressStats.recordsIn(
+                summary.sessionId,
+                sets.map { it.exerciseId }.distinct().associateWith { sessionRepo.workingSetsOf(it) }
+            )
+            Triple(sets, all, sessionRepo.setsByMuscleInSession(summary.sessionId)) to rec
+        }.let { (t, rec) -> records = rec; t }
         exercises = loaded.second
         byMuscle = loaded.third
         blocks = StrengthAnalysis.blocks(
@@ -369,6 +377,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
                     block = b,
                     maxHr = maxHr,
                     hardest = b.hrAvg != null && b.hrAvg == hardest,
+                    record = records[b.exerciseId],
                     onClick = { editingExercise = b.exerciseId }
                 )
             }
@@ -655,6 +664,7 @@ private fun ExerciseBlockRow(
     block: StrengthAnalysis.Block,
     maxHr: Double,
     hardest: Boolean,
+    record: ProgressStats.Point?,
     onClick: () -> Unit
 ) {
     Card(
@@ -669,7 +679,28 @@ private fun ExerciseBlockRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(block.name, style = MaterialTheme.typography.titleSmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        block.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    // Ta sama złota plakietka co na karcie w Historii - tam
+                    // widać, ile rekordów padło, tu przy którym ćwiczeniu.
+                    if (record != null) {
+                        Text(
+                            "rekord",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier
+                                .padding(start = 8.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        )
+                    }
+                }
                 Text(
                     "${block.sets.size} × ${block.totalReps / block.sets.size} powt. · " +
                         "${Loading.fmt(block.topWeight)} kg · " +
@@ -677,6 +708,18 @@ private fun ExerciseBlockRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                // Która seria i o ile: rekord to szacowany maks. z najlepszej
+                // serii (jak na wykresie w Progresie), więc samo „rekord" bez
+                // serii kazało zgadywać, czy chodzi o ciężar, czy o powtórzenia.
+                if (record != null) {
+                    Text(
+                        "${Loading.fmt(record.bestSet.weightKg)} kg × ${record.bestSet.reps} - " +
+                            "szac. maks. ${Loading.fmt(record.e1rm)} kg " +
+                            "(było ${Loading.fmt(record.previousBest)})",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                }
                 if (hardest) {
                     Text(
                         "najwyższe tętno w tej sesji",
