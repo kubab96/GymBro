@@ -25,7 +25,7 @@
          socket() konczy sie EPERM. Serwer wiaze sie wylacznie z petla zwrotna,
          wiec aplikacja nadal niczego nie wysyla na zewnatrz. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- osmdroid sprawdza stan sieci, zanim pobierze kafelki mapy. -->
+    <!-- MapLibre sprawdza stan sieci, zanim pobierze kafelki mapy. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />

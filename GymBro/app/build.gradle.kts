@@ -14,6 +14,10 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+
+        // MapLibre to biblioteka natywna, osobna na każdy procesor. Telefon
+        // ma arm64, emulator x86_64 - pozostałe dwie tylko puchłyby w APK.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     buildTypes {
@@ -67,9 +71,11 @@ dependencies {
     // CameraX plus ML Kit plus własny ekran podglądu.
     implementation(libs.play.services.code.scanner)
 
-    // Mapa trasy z OpenStreetMap. Bez klucza i bez konta Google, w przeciwieństwie
-    // do Map Google - i bez wtyczki Gradle'a, zwykła biblioteka z widokiem.
-    implementation(libs.osmdroid)
+    // Mapa trasy: MapLibre rysuje wektorowe mapy OpenFreeMap. Bez klucza i bez
+    // konta Google, w przeciwieństwie do Map Google, i bez wtyczki Gradle'a.
+    // Wcześniej był tu osmdroid z kafelkami-obrazkami: rozmazanymi na tym
+    // ekranie, a ładniejsze style obrazkowe (CARTO, Stadia) chcą już klucza.
+    implementation(libs.maplibre)
 
     debugImplementation(libs.androidx.ui.tooling)
 

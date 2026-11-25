@@ -132,6 +132,10 @@ fun ActivityDetailScreen(
     var sets by remember { mutableStateOf<List<PhoneSet>>(emptyList()) }
     var records by remember { mutableStateOf<List<RunRecords.DistanceRecord>>(emptyList()) }
     var mapOpen by remember { mutableStateOf(false) }
+    // Przewinięcie trzymane nad mapą na pełnym ekranie: lista znika na czas
+    // jej oglądania i stan zapamiętany w środku ginął - po zamknięciu mapy
+    // ekran wracał na samą górę zamiast do trasy.
+    val scroll = rememberScrollState()
     var maxHr by remember { mutableStateOf(190.0) }
     var loading by remember { mutableStateOf(true) }
     var deleting by remember { mutableStateOf(false) }
@@ -206,7 +210,7 @@ fun ActivityDetailScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scroll)
             .padding(horizontal = 16.dp)
     ) {
         Row(
@@ -258,7 +262,7 @@ fun ActivityDetailScreen(
         val zones = RunAnalysis.timeInZones(data?.heartRate ?: emptyList(), maxHr)
 
         if (track.size >= 2) {
-            Section("Trasa", "Kolor to tempo względem średniej z tego biegu. Dotknij, żeby powiększyć.")
+            Section("Trasa", "Zielony to zwykłe tempo tej trasy, im cieplej, tym szybciej. Dotknij, żeby powiększyć.")
             RouteMap(track, Modifier.fillMaxWidth().height(260.dp), onOpen = { mapOpen = true })
             Spacer(Modifier.height(8.dp))
             PaceLegend()
@@ -315,19 +319,23 @@ fun ActivityDetailScreen(
 /** Legenda kolorów trasy - te same progi co na mapie ([PaceColors]). */
 @Composable
 internal fun PaceLegend() {
-    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-        listOf(PaceColors.fast to "szybciej", PaceColors.even to "równo", PaceColors.slow to "wolniej")
-            .forEach { (c, label) ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.width(16.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(c))
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 6.dp)
-                    )
-                }
+    // Pasek skali z podpisami na końcach, jak legenda mapy ciepła. Cztery
+    // kolory z czterema podpisami nie mieściły się w jednym wierszu.
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            PaceColors.scale.forEach { (c, _) ->
+                Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)).background(c))
             }
+        }
+        Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            listOf(PaceColors.scale.first().second, PaceColors.scale.last().second).forEach {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 

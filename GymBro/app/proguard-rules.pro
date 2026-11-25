@@ -15,6 +15,4 @@
 # diagnozowaniu migracji jest wtedy możliwe.
 -keepclassmembernames class pl.gymbro.data.** { <fields>; }
 
-# osmdroid odwołuje się do klas, których na Androidzie 10+ nie ma
-# (stare API pamięci zewnętrznej) - ostrzeżenia R8 bez znaczenia.
--dontwarn org.osmdroid.**
+# MapLibre dostarcza własne reguły R8 razem z biblioteką.
