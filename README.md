@@ -1,46 +1,45 @@
+<div align="center">
+
 # GymBro
 
-Dziennik treningu siłowego na Androida, sterowany z zegarka Amazfit Balance.
+**Dziennik treningu siłowego na Androida.**<br>
+Plan, serie, progresja, jedzenie i waga - w jednej aplikacji, na jednym telefonie.
 
-Trening prowadzi się **klikając tylko na zegarku**: seria, przerwa, zapas
-powtórzeń, zmiana ciężaru. Telefon może zostać w szatni. Po treningu aplikacja
-proponuje progresję - ciężar, powtórzenia albo serię - liczoną z tego, co
-faktycznie poszło, i z tego, co da się złożyć z posiadanych talerzy.
+<img src=".github/readme/telefon.png" alt="Ekrany aplikacji: start treningu, tętno i serie, progres, jednostka planu, waga">
 
-## Co jest w tym repozytorium
+</div>
 
-| Katalog | Co to | Czym budować |
+## Co potrafi
+
+- **Plan i trening.** Gotowe plany (FBW, PPL i ponad pięćdziesiąt innych) albo własne jednostki. Trening prowadzi się ćwiczenie po ćwiczeniu, z odliczaniem przerwy i pokrętłem do ciężaru.
+- **Progresja.** Po treningu aplikacja proponuje ciężar i powtórzenia na następny raz. Liczy je z tego, co faktycznie poszło, i z talerzy, które naprawdę leżą na siłowni.
+- **Historia i progres.** Tętno na tle serii, rekordy, szacowany maks. w głównych bojach, mapa partii mięśni. Bieg, spacer i rower nagrywa się z GPS-em.
+- **Jedzenie.** Dziennik kalorii z bazą produktów i własnymi daniami. Cel liczy się z fazy (redukcja, utrzymanie, masa) i z wydatku wyliczonego z ważeń.
+- **Waga.** Pomiar z wagi łazienkowej po Bluetooth, trend masy i obwody.
+
+## Dodatkowo: pilot na zegarku
+
+<img src=".github/readme/zegarek.png" width="240" align="right" alt="Trening na zegarku: seria, przerwa na pierścieniu, pytanie o zapas, czas treningu i dziennik serii">
+
+Na Amazfit Balance jest mini-aplikacja, która prowadzi trening bez wyjmowania telefonu: jedno kliknięcie na serię, przerwa odlicza się na pierścieniu, zapas powtórzeń to dwa dotknięcia.
+
+Zegarek nic nie liczy - wysyła polecenie do telefonu i rysuje odpowiedź. Bez zasięgu serie czekają w kolejce i dojeżdżają później.
+
+<sub>Ekrany po prawej są wyrenderowane z kodu mini-aplikacji.</sub>
+
+<br clear="right">
+
+## Budowanie
+
+| Katalog | Co | Technologie |
 |---|---|---|
-| [`GymBro/`](GymBro) | aplikacja na Androida: Kotlin, Jetpack Compose, SQLite bez ORM | Android Studio albo `GymBro/tools/gr.sh :app:assembleDebug` |
-| [`gymbro-watch/`](gymbro-watch) | mini-aplikacja na Zepp OS 3.0 dla Amazfit Balance | `zeus build` / `zeus preview` |
+| [`GymBro/`](GymBro) | aplikacja na Androida | Kotlin, Jetpack Compose, SQLite bez ORM |
+| [`gymbro-watch/`](gymbro-watch) | mini-aplikacja na zegarek | Zepp OS 3.0, JavaScript |
 
-Obie strony rozmawiają po lokalnym HTTP przez Side Service Zepp OS. Protokół
-jest jeden i wspólny, więc zmiana w `GymBro/app/src/main/java/pl/gymbro/net/WatchApi.kt`
-prawie zawsze pociąga zmianę w `gymbro-watch/page/index.js` - dlatego oba
-projekty leżą w jednym repozytorium.
-
-## Testy
-
-```
+```sh
+GymBro/tools/gr.sh :app:assembleDebug     # APK - w repozytorium nie ma gradlew
 GymBro/tools/gr.sh :app:testDebugUnitTest
-cd gymbro-watch && node tools/check.js
+cd gymbro-watch && node tools/check.js && zeus build
 ```
 
-Ten drugi ładuje prawdziwy ekran zegarka z atrapami `@zos/*` i atrapą telefonu,
-więc sprawdza zachowanie, nie tylko składnię.
-
-W repozytorium nie ma wrappera Gradle'a - `GymBro/tools/gr.sh` podstawia za
-niego JDK 21 i dystrybucję Gradle 8.9 z cache Android Studio.
-
-## Dokumentacja
-
-[`GymBro/docs/progresja.md`](GymBro/docs/progresja.md) - skąd się biorą
-propozycje progresji: źródła z literatury, próg 3%, reguła dwóch ruchów przy
-doborze talerzy, i wyraźnie oznaczone miejsca, gdzie liczba jest moją
-konwencją, a nie wynikiem badania.
-
-[`GymBro/README.md`](GymBro/README.md) - aplikacja na Androida z bliska:
-budowanie, układ pakietów, baza i migracje, waga po BLE, Health Connect.
-
-[`CLAUDE.md`](CLAUDE.md) - to samo pod kątem pracy nad kodem: polecenia wraz
-z pułapkami, architektura obu stron, konwencje i rzeczy, które łatwo zepsuć.
+Więcej: [progresja.md](GymBro/docs/progresja.md), [kalorie.md](GymBro/docs/kalorie.md), [sklad-ciala.md](GymBro/docs/sklad-ciala.md), [GymBro/README.md](GymBro/README.md), [CLAUDE.md](CLAUDE.md).

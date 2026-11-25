@@ -4403,7 +4403,13 @@ async function main() {
   process.exit(failures === 0 ? 0 : 1)
 }
 
-main().catch((e) => {
-  console.error('\nHarness wywalil sie: ' + (e && e.stack ? e.stack : e))
-  process.exit(2)
-})
+// Wczytany przez require (tools/zrzuty.js) oddaje zaslepki zamiast puszczac
+// scenariusze - obrazki do README rysuja sie z tej samej strony co testy.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error('\nHarness wywalil sie: ' + (e && e.stack ? e.stack : e))
+    process.exit(2)
+  })
+}
+
+module.exports = { hmUI, makePhone, loadPage, flush, jump, puscWysylke, VIEW, LocalStorage }
