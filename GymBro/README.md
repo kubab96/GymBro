@@ -43,7 +43,8 @@ lokalnie bez własnego keystore'a. To nie jest jeszcze wersja do publikacji -
 służy do pomiarów. Compose w buildzie debug działa kilkukrotnie wolniej, bo
 kompilator pracuje w trybie diagnostycznym, a ART nie optymalizuje kodu
 oznaczonego jako debuggable; wrażenia z debuga nic nie mówią o rzeczywistości.
-Po minifikacji wydanie waży niecałe 5 MB, debug prawie 70.
+Po minifikacji wydanie waży około 30 MB, debug prawie 100 - większość to
+natywna biblioteka map (MapLibre), osobno dla `arm64-v8a` i `x86_64`.
 
 [`tools/bench.sh`](tools/bench.sh) mierzy przełączanie zakładek przez
 `dumpsys gfxinfo` na podłączonym telefonie. Ma zaszyte pięć pozycji zakładek,
@@ -70,6 +71,8 @@ app/src/main/java/pl/gymbro/
 │                      zapytania do Open Food Facts
 ├── health/            Health Connect: import treningów i metryk dziennych
 ├── ble/               waga łazienkowa: skan, sterowniki rodzin wag, ustalanie wyniku
+├── track/             bieg, spacer i rower nagrywane telefonem: lokalizacja
+│                      w usłudze pierwszoplanowej, punkty trasy na bieżąco do bazy
 └── ui/                ekrany Compose i wspólne elementy
 ```
 
@@ -77,7 +80,7 @@ Testy jednostkowe leżą równolegle w `app/src/test/java/pl/gymbro/`.
 
 ## Baza
 
-`data/Schema.kt`, `SQLiteOpenHelper`, obecnie wersja 24, dwadzieścia jeden
+`data/Schema.kt`, `SQLiteOpenHelper`, obecnie wersja 32, dwadzieścia pięć
 tabel. Świadomie bez Room: Room wymaga procesora adnotacji KSP, czyli kolejnej
 wtyczki Gradle z własną macierzą zgodności wersji.
 
@@ -160,8 +163,14 @@ Jedyne gniazdo nasłuchujące w tej aplikacji stoi na **pętli zwrotnej telefonu
 (`127.0.0.1:48627`) i obsługuje wyłącznie zegarek - szczegóły w
 [README w korzeniu](../README.md).
 
-Do internetu wychodzi jedna rzecz: zapytanie o produkt po zeskanowaniu kodu
-kreskowego, do `world.openfoodfacts.org` (`net/OpenFoodFacts.kt`). Leci w nim
-sam kod kreskowy. Skaner kodów to moduł Google Play Services, dociągany przez
-system przy pierwszym użyciu. Trening, pomiary i dziennik jedzenia nie
-opuszczają telefonu.
+Do internetu wychodzą dwie rzeczy:
+
+- zapytanie o produkt po zeskanowaniu kodu kreskowego, do
+  `world.openfoodfacts.org` (`net/OpenFoodFacts.kt`). Leci w nim sam kod
+  kreskowy. Skaner kodów to moduł Google Play Services, dociągany przez system
+  przy pierwszym użyciu;
+- podkłady mapy trasy, z `tiles.openfreemap.org` (`ui/RouteMap.kt`) - bez klucza
+  i konta. Serwer map widzi, który obszar jest oglądany, bo o niego prosi
+  aplikacja; samej trasy nie dostaje - rysuje ją telefon.
+
+Trening, trasy, pomiary i dziennik jedzenia nie opuszczają telefonu.

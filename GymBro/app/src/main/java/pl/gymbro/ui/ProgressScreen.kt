@@ -249,9 +249,15 @@ private fun Tile(modifier: Modifier, label: String, value: String, change: Pair<
     }
 }
 
-/** Zmiana i to, czy jest w dobrą stronę. Zero to brak zmiany, nie porażka. */
+/**
+ * Zmiana i to, czy jest w dobrą stronę. Zero to brak zmiany, nie porażka.
+ *
+ * Sama liczba, jak w kafelkach czasu i serii obok: dopisek „wobec poprz."
+ * zawijał kafelek na dwie linie, a porównanie z poprzednim okresem i tak
+ * opisuje ekran.
+ */
 private fun diffText(d: Int): Pair<String, Boolean>? =
-    if (d == 0) "bez zmian" to true else (if (d > 0) "+$d" else "$d") + " wobec poprz." to (d > 0)
+    if (d == 0) "bez zmian" to true else (if (d > 0) "+$d" else "$d") to (d > 0)
 
 private fun hoursDiff(min: Long): Pair<String, Boolean>? =
     if (min == 0L) null else (if (min > 0) "+" else "-") + hoursShort(kotlin.math.abs(min)) to (min > 0)
