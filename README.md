@@ -5,7 +5,7 @@
 **Dziennik treningu siłowego na Androida.**<br>
 Plan, serie, progresja, jedzenie i waga - w jednej aplikacji, na jednym telefonie.
 
-<img src=".github/readme/telefon.png" alt="Ekrany aplikacji: start treningu, szczegóły treningu, progres, jednostka planu, waga">
+<img src=".github/readme/telefon.png" alt="Ekrany aplikacji: start treningu, trening na telefonie, szczegóły treningu, progres, jednostka planu, kalorie, waga">
 
 </div>
 
