@@ -1,7 +1,9 @@
 package pl.gymbro.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,10 +12,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -30,32 +38,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.foundation.background
-import androidx.compose.ui.draw.clip
 import pl.gymbro.data.Equipment
 import pl.gymbro.data.Exercise
-import pl.gymbro.data.GymRepository
-import pl.gymbro.data.Inventory
-import pl.gymbro.data.SetEntry
-import pl.gymbro.data.stepOrDefault
-import pl.gymbro.data.PlanItem
-import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ExerciseRepository
 import pl.gymbro.data.ExternalSession
+import pl.gymbro.data.GymRepository
+import pl.gymbro.data.Inventory
+import pl.gymbro.data.PlanItem
+import pl.gymbro.data.PlanRepository
 import pl.gymbro.data.ProfileRepository
 import pl.gymbro.data.SessionRepository
 import pl.gymbro.data.SessionSummary
+import pl.gymbro.data.SetEntry
+import pl.gymbro.data.stepOrDefault
 import pl.gymbro.gym.Loading
-import pl.gymbro.gym.MuscleMap
 import pl.gymbro.gym.ProgressStats
 import pl.gymbro.gym.RunAnalysis
 import pl.gymbro.gym.StrengthAnalysis
@@ -107,34 +109,52 @@ val SessionSummarySaver: Saver<SessionSummary?, Any> = listSaver(
     }
 )
 
+/** Serie treningu i wszystko, co z nich wynika - wczytywane razem, po każdej poprawce. */
+private class Loaded(
+    val sets: List<SetEntry>,
+    val exercises: Map<Long, Exercise>,
+    /** Serie robocze każdego ćwiczenia z tego treningu, z całej historii. */
+    val history: Map<Long, List<SetEntry>>,
+    val records: Map<Long, ProgressStats.Point>
+)
+
 /**
  * Szczegóły treningu siłowego: Twój zapis złożony z pomiarem zegarka.
  *
- * Osobno żadne z tych źródeł nie opisuje treningu. Zegarek widzi godzinę
- * podwyższonego tętna i nie wie, czy to były przysiady, czy rower. Aplikacja
- * zna każdy kilogram, ale nie wie, który z nich Cię zabolał. Spoiwem jest czas
- * zapisu każdej serii - i dopiero on pozwala powiedzieć, że przysiad podbił
- * tętno do 165, a uginanie ledwie do 120.
+ * Od góry to, co najczęściej chce się sprawdzić: liczby całości, propozycje
+ * progresji (jedyna rzecz, która czeka na decyzję) i ćwiczenia z każdą serią
+ * na wierzchu. Wiersz z „3 × 9 powt." był średnią zaokrągloną w dół
+ * i kazał otwierać okienko, żeby zobaczyć, że naprawdę było 10, 9 i 8.
  *
- * Wykres tętna z zaznaczonymi seriami pokazuje to samo od drugiej strony:
- * widać, jak wysoko wchodzisz przy pracy i jak nisko schodzisz w przerwie.
- * Zanikające spadki pod koniec sesji to najczytelniejszy znak, że masz dość.
+ * Dotknięcie ćwiczenia otwiera ten sam ekran co w podsumowaniu trwającego
+ * treningu ([ExerciseReview]) - tabela serii z godziną i odstępem,
+ * porównanie z poprzednim razem i poprawianie. Wcześniej historia miała
+ * na to osobne okienko i dwa miejsca pokazywały ten sam trening inaczej.
+ *
+ * Mapy mięśni tu nie ma. Partia ćwiczenia jest wolnym tekstem, więc własne
+ * ćwiczenia z „inne" albo „Klata" nie świeciły, a do tego zaniżały skalę
+ * pozostałym - rysunek bywał blady albo pusty mimo zrobionego treningu.
+ *
+ * Wykres tętna z zaznaczonymi seriami stoi na końcu: ciekawy, ale nie
+ * pierwszy, po co się tu wchodzi.
  */
 @Composable
 fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
-    // Systemowy wstecz robi to samo co „Wróć" - bez tego wychodził z aplikacji.
+    // Systemowy wstecz robi to samo co strzałka - bez tego wychodził z aplikacji.
     ScreenBackHandler(onBack = onBack)
     val context = LocalContext.current
     val sessionRepo = remember { SessionRepository(context) }
     val exerciseRepo = remember { ExerciseRepository(context) }
     val profileRepo = remember { ProfileRepository(context) }
-    val reader = remember { ActivityDetail(context) }
-
+    val gymRepo = remember { GymRepository(context) }
     val planRepo = remember { PlanRepository(context) }
+    val reader = remember { ActivityDetail(context) }
     val goToTab = LocalGoToTab.current
-    // Propozycje z tego wlasnie treningu. Trafia sie na nie tutaj, patrzac
-    // co sie zrobilo - i stad ma byc jedno klikniecie do planu, a nie
-    // szukanie po zakladkach.
+    val scope = rememberCoroutineScope()
+
+    // Propozycje z tego właśnie treningu. Trafia się na nie tutaj, patrząc,
+    // co się zrobiło - i stąd ma być jedno kliknięcie do planu, a nie
+    // szukanie po zakładkach.
     var fromHere by remember { mutableStateOf<List<PlanItem>>(emptyList()) }
     // Klucz na Refresh: propozycja zastosowana w Planie ma stąd zniknąć,
     // a nie wisieć do ponownego otwarcia treningu.
@@ -145,23 +165,19 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
     }
 
     var blocks by remember { mutableStateOf<List<StrengthAnalysis.Block>>(emptyList()) }
-    var byMuscle by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var hr by remember { mutableStateOf<List<RunAnalysis.Sample>>(emptyList()) }
     var setTimes by remember { mutableStateOf<List<Long>>(emptyList()) }
     var maxHr by remember { mutableStateOf(190.0) }
     var loading by remember { mutableStateOf(true) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    // Poprawianie po fakcie: ćwiczenie, którego serie są otwarte, i seria
-    // w trakcie zmiany. Numery, nie obiekty - po każdym zapisie bloki
-    // wczytują się od nowa i trzymany obiekt pokazywałby stan sprzed zmiany.
-    val gymRepo = remember { GymRepository(context) }
+    var menu by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
     var exercises by remember { mutableStateOf<Map<Long, Exercise>>(emptyMap()) }
-    var inventory by remember { mutableStateOf<Inventory?>(null) }
-    var editingExercise by remember { mutableStateOf<Long?>(null) }
-    var editingSet by remember { mutableStateOf<SetEntry?>(null) }
+    var history by remember { mutableStateOf<Map<Long, List<SetEntry>>>(emptyMap()) }
     var records by remember { mutableStateOf<Map<Long, ProgressStats.Point>>(emptyMap()) }
+    var inventory by remember { mutableStateOf<Inventory?>(null) }
+    // Numer, nie blok: po każdej poprawce bloki wczytują się od nowa
+    // i trzymany obiekt pokazywałby serie sprzed zmiany.
+    var openExercise by remember { mutableStateOf<Long?>(null) }
 
     /**
      * Serie i wszystko, co z nich wynika. Wołane także po każdej poprawce.
@@ -172,21 +188,16 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
     suspend fun reloadSets(samples: List<RunAnalysis.Sample>) {
         val loaded = withContext(Dispatchers.IO) {
             val sets = sessionRepo.setsFor(summary.sessionId)
-            val all = exerciseRepo.all().associateBy { it.id }
-            // Rekordy z całej historii każdego ćwiczenia: po poprawce serii
-            // rekord może się pojawić albo zniknąć, więc liczą się tu, a nie raz.
-            val rec = ProgressStats.recordsIn(
-                summary.sessionId,
-                sets.map { it.exerciseId }.distinct().associateWith { sessionRepo.workingSetsOf(it) }
-            )
-            Triple(sets, all, sessionRepo.setsByMuscleInSession(summary.sessionId)) to rec
-        }.let { (t, rec) -> records = rec; t }
-        exercises = loaded.second
-        byMuscle = loaded.third
-        blocks = StrengthAnalysis.blocks(
-            loaded.first, loaded.second.mapValues { it.value.name }, samples
-        )
-        setTimes = loaded.first.map { it.doneAt }
+            // Historia każdego ćwiczenia: z niej rekord (po poprawce serii może
+            // się pojawić albo zniknąć) i poprzedni raz do porównania.
+            val hist = sets.map { it.exerciseId }.distinct().associateWith { sessionRepo.workingSetsOf(it) }
+            Loaded(sets, exerciseRepo.all().associateBy { it.id }, hist, ProgressStats.recordsIn(summary.sessionId, hist))
+        }
+        exercises = loaded.exercises
+        history = loaded.history
+        records = loaded.records
+        blocks = StrengthAnalysis.blocks(loaded.sets, loaded.exercises.mapValues { it.value.name }, samples)
+        setTimes = loaded.sets.map { it.doneAt }
     }
 
     /** Zmiana w seriach: zapis, przeładowanie i sygnał dla listy historii. */
@@ -194,7 +205,7 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         scope.launch {
             withContext(Dispatchers.IO) { action() }
             reloadSets(hr)
-            // Lista w zakładce Trening pokazuje liczbę serii i objętość.
+            // Karta w Historii pokazuje liczbę serii i objętość.
             Refresh.bump()
         }
     }
@@ -207,9 +218,8 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         }
         // Tętno z okna treningu zegarka, a bez niego - z okna samego zapisu.
         //
-        // Dotąd tylko to pierwsze, więc trening prowadzony pilotem nie miał
-        // tętna nigdy: pilot nie uruchamia natywnego treningu i zegarek nie
-        // ma czego skleić. Pomiar całodobowy leży jednak w Health Connect
+        // Trening prowadzony pilotem nie uruchamia natywnego treningu i zegarek
+        // nie ma czego skleić. Pomiar całodobowy leży jednak w Health Connect
         // i obejmuje także te godziny.
         val w = summary.watch
         val samples = if (w != null) reader.load(w.startedAt, w.endedAt).heartRate
@@ -220,403 +230,271 @@ fun SessionDetailScreen(summary: SessionSummary, onBack: () -> Unit) {
         loading = false
     }
 
-    // Liczby w nagłówku z serii, nie z podsumowania, z którym tu weszliśmy:
-    // tamto powstało przed poprawką i po zmianie ciężaru pokazywałoby
-    // objętość treningu, którego już nie ma. Póki serie się wczytują,
-    // zostaje podsumowanie - inaczej nagłówek mignąłby zerem.
+    // Liczby z serii, nie z podsumowania, z którym tu weszliśmy: tamto
+    // powstało przed poprawką i po zmianie ciężaru pokazywałoby objętość
+    // treningu, którego już nie ma. Póki serie się wczytują, zostaje
+    // podsumowanie - inaczej kafelki mignęłyby zerem.
     val workingSets = if (loading) summary.workingSets else blocks.sumOf { it.sets.size }
     val tonnage = if (loading) summary.tonnage else blocks.sumOf { it.tonnage }
 
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(top = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                SimpleDateFormat("EEEE, d MMMM, HH:mm", Locale.getDefault())
-                    .format(Date(summary.startedAt)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Text(
-            summary.planName ?: "Trening",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                "${tonnage.toInt()}",
-                fontSize = 54.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                " kg objętości",
-                fontSize = 19.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
-
-        Spacer(Modifier.height(16.dp))
-        val w = summary.watch
-        StatCard(
-            listOfNotNull(
-                "Czas" to if (summary.durationMin < 1) "<1 min" else "${summary.durationMin} min",
-                "Serie" to "$workingSets",
-                "Powtórzenia" to "${blocks.sumOf { it.totalReps }}",
-                // Bez treningu z zegarka - średnia i szczyt z samych próbek.
-                (w?.hrAvg ?: hr.takeIf { it.isNotEmpty() }?.map { it.value }?.average())
-                    ?.let { "Tętno śr." to "${it.toInt()}" },
-                (w?.hrMax ?: hr.maxOfOrNull { it.value })?.let { "Tętno maks." to "${it.toInt()}" },
-                w?.energyKcal?.takeIf { it > 0 }?.let { "Energia" to "${it.toInt()} kcal" }
-            )
-        )
-
-        if (loading) {
-            Spacer(Modifier.height(26.dp))
-            Text("Wczytuję…", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(60.dp))
-            return@Column
-        }
-
-        // Propozycje zaraz pod liczbami, nie na końcu ekranu: to jedyna rzecz
-        // tutaj, która czeka na decyzję. Każda prowadzi do swojego ćwiczenia
-        // w jednostce - dotąd cała karta prowadziła do pierwszego.
-        if (fromHere.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            ProposalsCard(
-                unitName = summary.planName,
-                items = fromHere,
-                onOpen = { item ->
-                    PlanJump.to(item.planId, item.id)
-                    goToTab(PLAN_TAB)
-                }
-            )
-        }
-
-        if (hr.size >= 4) {
-            Spacer(Modifier.height(26.dp))
-            Text("Tętno i serie", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Pionowe kreski to momenty zapisania serii. Im płytsze spadki " +
-                    "między nimi, tym mniej zdążyłeś odpocząć.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(10.dp))
-            HrWithSets(RunAnalysis.downsample(hr, 180), setTimes, maxHr)
-            // Pomiar całodobowy chodzi co kilka minut, nie co sekundę. Wykres
-            // jest wtedy prawdziwy, ale gładki - pojedyncza seria się na nim
-            // nie odbije i lepiej to powiedzieć, niż kazać szukać pików.
-            val gapMs = (hr.last().at - hr.first().at) / (hr.size - 1).coerceAtLeast(1)
-            if (summary.watch == null && gapMs > 60_000) {
-                Text(
-                    "Z pomiaru całodobowego - zegarek mierzył średnio co " +
-                        "${(gapMs / 60_000).coerceAtLeast(1)} min, więc pojedynczych " +
-                        "serii na wykresie nie widać. Gęsty pomiar daje trening siłowy " +
-                        "włączony na zegarku obok pilota.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-        }
-
-
-        if (byMuscle.isNotEmpty()) {
-            Spacer(Modifier.height(26.dp))
-            Text("Co obrobiłeś", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Z wykonanych ćwiczeń. Pełny kolor to partia najmocniej " +
-                    "obrobiona w tym treningu.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            // Skala względem tej sesji, nie progów tygodniowych: pojedynczy
-            // trening rzadko dobija do dwudziestu serii na partię, więc przy
-            // tamtej skali wszystko byłoby blade i nic by z tego nie wynikało.
-            MuscleBody(MuscleMap.intensities(byMuscle, byMuscle.values.max()))
-            Spacer(Modifier.height(10.dp))
-            MuscleLegend("nietknięte", "${byMuscle.values.max()} serii")
-        }
-        Spacer(Modifier.height(26.dp))
-        Text("Ćwiczenia", style = MaterialTheme.typography.titleMedium)
-        if (hr.isNotEmpty()) {
-            Text(
-                "Tętno przy każdym ćwiczeniu - widać, co naprawdę męczy, " +
-                    "a co tylko wygląda ciężko.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (blocks.isNotEmpty()) {
-            Text(
-                "Dotknij ćwiczenia, żeby poprawić jego serie.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-
-        if (blocks.isEmpty()) {
-            Text(
-                "Ten trening nie ma zapisanych serii.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            val hardest = blocks.mapNotNull { it.hrAvg }.maxOrNull()
-            blocks.forEach { b ->
-                ExerciseBlockRow(
-                    block = b,
-                    maxHr = maxHr,
-                    hardest = b.hrAvg != null && b.hrAvg == hardest,
-                    record = records[b.exerciseId],
-                    onClick = { editingExercise = b.exerciseId }
-                )
-            }
-        }
-
-
-        if (hr.isEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            // Najpierw zgoda: bez niej żadne z poniższych wyjaśnień nie jest
-            // prawdą, a to ona była przyczyną przez cały miesiąc po zmianie nazwy.
-            HealthAccessBanner()
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Brak tętna z czasu tego treningu. Przy dostępie do Health Connect " +
-                    "bierze się ono z pomiaru całodobowego zegarka - włącz go w Zepp, " +
-                    "w ustawieniach monitorowania tętna, najlepiej co minutę.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-
-        // Kasowanie treningu siedzi w jego szczegółach, a nie na liście.
-        // Tutaj widać, co dokładnie znika - na liście łatwo trafić w sąsiedni
-        // wiersz, a pomyłkowo rozpoczęty trening i tak trzeba najpierw otworzyć.
-        Spacer(Modifier.height(28.dp))
-        TextButton(
-            onClick = { confirmDelete = true },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Usuń ten trening", color = MaterialTheme.colorScheme.error)
-        }
-        Spacer(Modifier.height(36.dp))
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmDelete = false },
-            title = { Text("Usunąć trening?") },
-            text = {
-                Text(
-                    if (workingSets == 0)
-                        "Ten trening nie ma zapisanych serii - zniknie bez śladu."
-                    else "Zniknie razem z " +
-                        plural(workingSets, "serią", "seriami", "seriami") +
-                        ". Tego nie da się cofnąć."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    scope.launch {
-                        withContext(Dispatchers.IO) {
-                            sessionRepo.deleteSession(summary.sessionId)
-                        }
-                        confirmDelete = false
-                        // Historia w zakładce Trening kluczuje na tym sygnale.
-                        Refresh.bump()
-                        onBack()
-                    }
-                }) { Text("Usuń", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("Anuluj") }
-            }
-        )
-    }
-
-    // ---- Poprawianie serii ----
-    //
-    // Blok szukany przy każdym składaniu, po numerze ćwiczenia. Gdy usunięto
-    // jego ostatnią serię, bloku już nie ma i okno zamyka się samo.
-    val openBlock = blocks.firstOrNull { it.exerciseId == editingExercise }
+    // ---- Ćwiczenie otwarte na całym ekranie ----
+    val openBlock = blocks.firstOrNull { it.exerciseId == openExercise }
     val inv = inventory
     if (openBlock != null && inv != null) {
-        val exercise = exercises[openBlock.exerciseId]
-        SetsDialog(
-            block = openBlock,
-            unit = exercise?.equipment?.weightUnitLabel ?: "kg",
-            onDismiss = { editingExercise = null },
-            onEdit = { editingSet = it },
-            onAdd = {
-                // Dopisana seria dziedziczy ciężar i powtórzenia po ostatniej -
-                // zapomniana seria to prawie zawsze powtórka poprzedniej,
-                // a poprawić ją można od razu. Godzina sekundę po ostatniej:
-                // prawdziwej nikt nie zna, a ta trzyma kolejność i nie
-                // dostawia kreski w przypadkowym miejscu wykresu tętna.
-                val last = openBlock.sets.last()
-                change {
-                    sessionRepo.addSet(
-                        last.copy(
-                            id = 0,
-                            setIndex = openBlock.sets.maxOf { it.setIndex } + 1,
-                            rir = null,
-                            doneAt = last.doneAt + 1_000
+        ScreenBackHandler { openExercise = null }
+        Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+            ExerciseReview(
+                model = reviewModel(openBlock, exercises[openBlock.exerciseId], summary, history, records),
+                inventory = inv,
+                onBack = { openExercise = null },
+                onAddSet = { w, r ->
+                    // Godzina sekundę po ostatniej serii: prawdziwej nikt nie
+                    // zna, a ta trzyma kolejność i nie dostawia kreski
+                    // w przypadkowym miejscu wykresu tętna.
+                    val last = openBlock.sets.last()
+                    change {
+                        sessionRepo.addSet(
+                            last.copy(
+                                id = 0,
+                                setIndex = openBlock.sets.maxOf { it.setIndex } + 1,
+                                weightKg = w,
+                                reps = r,
+                                rir = null,
+                                doneAt = last.doneAt + 1_000
+                            )
                         )
+                    }
+                },
+                onDeleteSet = { id -> change { sessionRepo.deleteSet(id) } },
+                onUpdateSet = { id, w, r, rir -> change { sessionRepo.updateSet(id, w, r, rir) } }
+            )
+        }
+        return
+    }
+    // Usunięta ostatnia seria zabiera blok - wtedy wracamy na listę.
+    // W efekcie, nie wprost w składaniu: zapis stanu w trakcie rysowania
+    // wymusza drugie składanie i potrafi się zapętlić.
+    val zniknal = openBlock == null && openExercise != null && !loading
+    LaunchedEffect(zniknal) { if (zniknal) openExercise = null }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        SubScreenHeader(
+            title = summary.planName ?: "Trening",
+            subtitle = SimpleDateFormat("EEEE, d MMMM, HH:mm", Locale.getDefault()).format(Date(summary.startedAt)),
+            onBack = onBack,
+            trailing = {
+                // Kasowanie w menu, nie przyciskiem na dole ekranu: to rzadka
+                // decyzja i nie ma stać na drodze przewijania.
+                Box {
+                    IconButton(onClick = { menu = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = "Więcej")
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Usuń trening", color = MaterialTheme.colorScheme.error) },
+                            onClick = { menu = false; deleting = true }
+                        )
+                    }
+                }
+            }
+        )
+
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+            Spacer(Modifier.height(8.dp))
+            val w = summary.watch
+            // Bez treningu z zegarka - średnia i szczyt z samych próbek.
+            val hrAvg = w?.hrAvg ?: hr.takeIf { it.isNotEmpty() }?.map { it.value }?.average()
+            val hrMax = w?.hrMax ?: hr.maxOfOrNull { it.value }
+            val tiles = buildList {
+                add(sessionLength(summary.durationMin) to "czas")
+                add("$workingSets" to "serie")
+                // Same ćwiczenia z masą ciała mają zero kilogramów - wtedy
+                // więcej mówią powtórzenia.
+                if (tonnage > 0.0 || loading) add(tonnageLabel(tonnage) to "objętość")
+                else add("${blocks.sumOf { it.totalReps }}" to "powtórzenia")
+                hrAvg?.let { add("${it.toInt()}" to "tętno śr.") }
+                hrMax?.let { add("${it.toInt()}" to "tętno maks.") }
+                w?.energyKcal?.takeIf { it > 0 }?.let { add("${it.toInt()}" to "kcal") }
+            }
+            tiles.chunked(3).forEach { row ->
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { (value, label) -> StatTile(value, label, null, Modifier.weight(1f)) }
+                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+
+            if (loading) {
+                Spacer(Modifier.height(18.dp))
+                Text("Wczytuję…", style = MaterialTheme.typography.bodyMedium)
+                return@Column
+            }
+
+            // Propozycje zaraz pod liczbami: to jedyna rzecz tutaj, która
+            // czeka na decyzję. Każda prowadzi do swojego ćwiczenia w jednostce.
+            if (fromHere.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                ProposalsCard(
+                    unitName = summary.planName,
+                    items = fromHere,
+                    onOpen = { item ->
+                        PlanJump.to(item.planId, item.id)
+                        goToTab(PLAN_TAB)
+                    }
+                )
+            }
+
+            GroupLabel("Ćwiczenia")
+            if (blocks.isEmpty()) {
+                Text(
+                    "Ten trening nie ma zapisanych serii.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                blocks.forEach { b ->
+                    ExerciseCard(
+                        block = b,
+                        maxHr = maxHr,
+                        record = records[b.exerciseId],
+                        onClick = { openExercise = b.exerciseId }
                     )
                 }
             }
-        )
 
-        editingSet?.let { s ->
-            val equipment = exercise?.equipment ?: Equipment.MACHINE
-            EditSetDialog(
-                entry = s,
-                exerciseName = openBlock.name,
-                equipment = equipment,
-                step = stepOrDefault(exercise?.stepKg),
-                // Zero przy masie ciała to „bez obciążenia", nie pomyłka do
-                // poprawienia. Gdy ciężar jednak zapisano, da się go zmienić.
-                showWeight = equipment != Equipment.BODYWEIGHT || s.weightKg > 0.0,
-                inventory = inv,
-                onDismiss = { editingSet = null },
-                onSave = { w, r, rir ->
-                    editingSet = null
-                    change { sessionRepo.updateSet(s.id, w, r, rir) }
-                },
-                onDelete = {
-                    editingSet = null
-                    change { sessionRepo.deleteSet(s.id) }
+            if (hr.size >= 4) {
+                GroupLabel("Tętno w czasie treningu")
+                AppCard {
+                    Box(Modifier.padding(12.dp)) {
+                        HrWithSets(RunAnalysis.downsample(hr, 180), setTimes, maxHr)
+                    }
                 }
-            )
+                // Pomiar całodobowy chodzi co kilka minut, nie co sekundę.
+                // Wykres jest wtedy prawdziwy, ale gładki - pojedyncza seria
+                // się na nim nie odbije i lepiej to powiedzieć, niż kazać
+                // szukać pików.
+                val gapMs = (hr.last().at - hr.first().at) / (hr.size - 1).coerceAtLeast(1)
+                if (summary.watch == null && gapMs > 60_000) {
+                    Text(
+                        "Zegarek mierzył tętno co ok. ${(gapMs / 60_000).coerceAtLeast(1)} min, " +
+                            "więc pojedynczych serii nie widać - dokładniej będzie, gdy obok " +
+                            "pilota włączysz na zegarku trening siłowy.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 2.dp, top = 6.dp)
+                    )
+                }
+            }
+
+            if (hr.isEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                // Najpierw zgoda: bez niej żadne z poniższych wyjaśnień nie jest
+                // prawdą, a to ona była przyczyną przez cały miesiąc po zmianie nazwy.
+                HealthAccessBanner()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Brak tętna z czasu tego treningu. Tętno pochodzi z pomiaru " +
+                        "całodobowego zegarka - włącz go w Zepp, " +
+                        "w ustawieniach monitorowania tętna, najlepiej co minutę.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(36.dp))
         }
     }
-    // W efekcie, nie wprost w składaniu: zapis stanu w trakcie rysowania
-    // wymusza drugie składanie i potrafi się zapętlić.
-    val zniknal = openBlock == null && editingExercise != null && !loading
-    LaunchedEffect(zniknal) {
-        if (zniknal) {
-            editingExercise = null
-            editingSet = null
-        }
+
+    if (deleting) {
+        ActionSheet(
+            onDismiss = { deleting = false },
+            icon = Icons.Filled.DeleteOutline,
+            tone = MaterialTheme.colorScheme.error,
+            title = "Usunąć trening?",
+            text = if (workingSets == 0) "Ten trening nie ma zapisanych serii - zniknie bez śladu."
+            else "Zniknie razem z " + plural(workingSets, "serią", "seriami", "seriami") +
+                ". Tego nie da się cofnąć.",
+            primary = SheetAction("Usuń", danger = true) {
+                deleting = false
+                scope.launch {
+                    withContext(Dispatchers.IO) { sessionRepo.deleteSession(summary.sessionId) }
+                    // Historia w zakładce Trening kluczuje na tym sygnale.
+                    Refresh.bump()
+                    onBack()
+                }
+            },
+            secondary = SheetAction("Wróć") { deleting = false }
+        )
     }
 }
 
 /**
- * Serie jednego ćwiczenia z zakończonego treningu - do poprawienia.
+ * Ekran ćwiczenia z zapisanego treningu.
  *
- * Historia była dotąd tylko do czytania: pomyłkę zauważoną po naciśnięciu
- * „Zakończ" dało się naprawić wyłącznie kasując cały trening. A to z niej
- * liczy się następny ciężar, więc seria wpisana z 80 zamiast 60 kg psuła
- * propozycję na kolejny raz.
- *
- * Lista, a nie od razu jedno okno poprawiania: ćwiczenie ma kilka serii
- * i najpierw trzeba wskazać, o którą chodzi.
+ * Poprzedni raz po ćwiczeniu, nie po jednostce ([ProgressStats.previousTime]).
+ * Ciężar liczy się, gdy sprzęt go ma albo gdy któraś seria go zapisała -
+ * zero przy masie ciała to „bez obciążenia", nie pomyłka do poprawienia.
  */
-@Composable
-private fun SetsDialog(
+private fun reviewModel(
     block: StrengthAnalysis.Block,
-    unit: String,
-    onDismiss: () -> Unit,
-    onEdit: (SetEntry) -> Unit,
-    onAdd: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(block.name) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(
-                    "Dotknij serii, żeby zmienić ciężar, powtórzenia albo zapas - " +
-                        "albo ją usunąć.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                block.sets.forEachIndexed { i, s ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .tap { onEdit(s) }
-                            .padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "${i + 1}.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(end = 12.dp)
-                        )
-                        Text(
-                            // Przy zerowym ciężarze same powtórzenia: „0 kg × 12"
-                            // przy podciąganiu czyta się jak błąd zapisu.
-                            if (s.weightKg > 0.0) "${Loading.fmt(s.weightKg)} $unit × ${s.reps}"
-                            else "${s.reps} powt.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            s.rir?.let { "zapas " + if (it >= 3) "3+" else "$it" } ?: "",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth()) {
-                    Text("Dodaj serię")
-                }
-            }
+    exercise: Exercise?,
+    summary: SessionSummary,
+    history: Map<Long, List<SetEntry>>,
+    records: Map<Long, ProgressStats.Point>
+): ReviewModel {
+    val equipment = exercise?.equipment ?: Equipment.MACHINE
+    val before = ProgressStats.previousTime(
+        history[block.exerciseId].orEmpty(), summary.sessionId, summary.startedAt
+    )
+    val last = block.sets.last()
+    return ReviewModel(
+        name = block.name,
+        subtitle = plural(block.sets.size, "seria", "serie", "serii") +
+            (summary.planName?.let { " · $it" } ?: ""),
+        working = block.sets,
+        before = before,
+        beforeAt = before.firstOrNull()?.doneAt,
+        withWeight = equipment != Equipment.BODYWEIGHT || block.sets.any { it.weightKg > 0.0 },
+        // Sam szacowany maks. stoi już w kafelku - napis dokłada tylko to,
+        // czego tam nie ma: ile było wcześniej.
+        recordNote = records[block.exerciseId]?.let {
+            "rekord - wcześniej najwyżej ${wholeKg(it.previousBest)} kg szac. maks."
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Gotowe") } }
+        equipment = equipment,
+        step = stepOrDefault(exercise?.stepKg),
+        nextWeight = last.weightKg,
+        nextReps = last.reps
     )
 }
 
 // ---- Elementy ------------------------------------------------------------
 
-@Composable
-private fun StatCard(items: List<Pair<String, String>>) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(Modifier.padding(vertical = 6.dp, horizontal = 14.dp)) {
-            items.chunked(3).forEach { row ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    row.forEach { (label, value) ->
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                value,
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Medium,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
-                }
-            }
-        }
-    }
+/**
+ * Szacowany maks. w całych kilogramach, jak w kafelku 1RM: z wzoru Epleya
+ * wychodziło „59,22 (było 57,33)" - dokładność, której szacunek nie ma.
+ */
+private fun wholeKg(v: Double): String = Math.round(v).toString()
+
+/** „1:12 h" zamiast „1 h 12 min" - musi się zmieścić w kafelku. */
+private fun sessionLength(min: Long): String = when {
+    min < 1 -> "<1 min"
+    min < 60 -> "$min min"
+    else -> "%d:%02d h".format(min / 60, min % 60)
 }
+
+/**
+ * Serie w jednej linii: „100×8 · 100×8 · 100×7".
+ *
+ * Każda osobno, bo średnia gubiła to, co najciekawsze - gdzie seria siadła.
+ * Przy samej masie ciała same powtórzenia, z jednym „powt." na końcu.
+ */
+private fun setsLine(sets: List<SetEntry>): String =
+    if (sets.any { it.weightKg > 0.0 }) {
+        sets.joinToString(" · ") { s ->
+            if (s.weightKg > 0.0) "${Loading.fmt(s.weightKg)}×${s.reps}" else "${s.reps}"
+        }
+    } else sets.joinToString(" · ") { "${it.reps}" } + " powt."
 
 /**
  * Przebieg tętna z zaznaczonymi momentami serii.
@@ -635,17 +513,16 @@ private fun HrWithSets(
     val span = (hi - lo).coerceAtLeast(1.0)
     val t0 = samples.first().at
     val tSpan = (samples.last().at - t0).coerceAtLeast(1L).toDouble()
+    // Kolor kresek z motywu: biel z przezroczystością znikała na jasnym tle.
+    val tick = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.16f)
 
-    Canvas(Modifier.fillMaxWidth().height(170.dp)) {
+    Canvas(Modifier.fillMaxWidth().height(150.dp)) {
         fun x(at: Long) = ((at - t0) / tSpan * size.width).toFloat()
         fun y(v: Double) = (size.height - ((v - lo) / span * size.height * 0.84) - 12).toFloat()
 
         // Serie najpierw, pod krzywą - mają być tłem, nie bohaterem.
         setTimes.filter { it in t0..samples.last().at }.forEach {
-            drawLine(
-                Color.White.copy(alpha = 0.16f),
-                Offset(x(it), 0f), Offset(x(it), size.height), 2f
-            )
+            drawLine(tick, Offset(x(it), 0f), Offset(x(it), size.height), 2f)
         }
 
         for (i in 0 until samples.size - 1) {
@@ -659,88 +536,77 @@ private fun HrWithSets(
     }
 }
 
+/**
+ * Karta ćwiczenia: nazwa, każda seria, objętość i tętno.
+ *
+ * Tętno w kolorze strefy zamiast osobnego podpisu „najwyższe tętno" -
+ * najcięższe ćwiczenie i tak widać od razu po kolorze.
+ */
 @Composable
-private fun ExerciseBlockRow(
+private fun ExerciseCard(
     block: StrengthAnalysis.Block,
     maxHr: Double,
-    hardest: Boolean,
     record: ProgressStats.Point?,
     onClick: () -> Unit
 ) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+    AppCard(Modifier.padding(bottom = 8.dp), onClick = onClick) {
+        Column(Modifier.padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    block.name,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                // Ta sama złota plakietka co na karcie w Historii - tam widać,
+                // ile rekordów padło, tu przy którym ćwiczeniu.
+                if (record != null) {
+                    TagPill("rekord", MaterialTheme.colorScheme.tertiary, Modifier.padding(start = 8.dp))
+                }
+                Icon(
+                    Icons.Filled.ChevronRight, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            // Cyfry równej szerokości, ale zwykła czcionka: krój o stałej
+            // szerokości rozstrzeliwał „76,8×8 · 76,8×8" spacjami jak w terminalu.
+            Text(
+                setsLine(block.sets),
+                style = MaterialTheme.typography.bodyLarge.copy(fontFeatureSettings = "tnum"),
+                modifier = Modifier.padding(top = 4.dp, end = 6.dp)
+            )
+            // Która seria i o ile: rekord to szacowany maks. z najlepszej
+            // serii (jak na wykresie w Progresie), więc samo „rekord" bez
+            // serii kazało zgadywać, czy chodzi o ciężar, czy o powtórzenia.
+            if (record != null) {
+                Text(
+                    "${Loading.fmt(record.bestSet.weightKg)} kg × ${record.bestSet.reps} - " +
+                        "szac. maks. ${wholeKg(record.e1rm)} kg (było ${wholeKg(record.previousBest)})",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+            if (block.tonnage > 0.0 || block.hrAvg != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 4.dp, end = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        block.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.weight(1f, fill = false)
+                        if (block.tonnage > 0.0) tonnageLabel(block.tonnage) + " objętości" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
                     )
-                    // Ta sama złota plakietka co na karcie w Historii - tam
-                    // widać, ile rekordów padło, tu przy którym ćwiczeniu.
-                    if (record != null) {
+                    block.hrAvg?.let { avg ->
                         Text(
-                            "rekord",
-                            style = MaterialTheme.typography.labelMedium,
+                            "${avg.toInt()} bpm",
+                            style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier
-                                .padding(start = 8.dp)
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
-                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.15f))
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                            color = zoneTint(RunAnalysis.zoneOf(avg, maxHr))
                         )
                     }
-                }
-                Text(
-                    "${block.sets.size} × ${block.totalReps / block.sets.size} powt. · " +
-                        "${Loading.fmt(block.topWeight)} kg · " +
-                        "${block.tonnage.toInt()} kg objętości",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                // Która seria i o ile: rekord to szacowany maks. z najlepszej
-                // serii (jak na wykresie w Progresie), więc samo „rekord" bez
-                // serii kazało zgadywać, czy chodzi o ciężar, czy o powtórzenia.
-                if (record != null) {
-                    Text(
-                        "${Loading.fmt(record.bestSet.weightKg)} kg × ${record.bestSet.reps} - " +
-                            "szac. maks. ${Loading.fmt(record.e1rm)} kg " +
-                            "(było ${Loading.fmt(record.previousBest)})",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-                if (hardest) {
-                    Text(
-                        "najwyższe tętno w tej sesji",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = zoneTint(RunAnalysis.zoneOf(block.hrAvg ?: 0.0, maxHr))
-                    )
-                }
-            }
-            block.hrAvg?.let { avg ->
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        "${avg.toInt()}",
-                        fontSize = 22.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = zoneTint(RunAnalysis.zoneOf(avg, maxHr))
-                    )
-                    Text(
-                        "tętno",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
         }
@@ -756,7 +622,7 @@ private fun zoneTint(zone: Int): Color = when (zone) {
 }
 
 /**
- * Propozycje po tym treningu - każda osobno, z „było → będzie".
+ * Propozycje progresji po tym treningu - każda osobno, z „było → będzie".
  *
  * Dotąd jeden niebieski prostokąt z trzema zdaniami drobnym drukiem i całość
  * prowadziła do pierwszego ćwiczenia. Teraz wiersz to ćwiczenie i dotknięcie
@@ -764,17 +630,12 @@ private fun zoneTint(zone: Int): Color = when (zone) {
  */
 @Composable
 private fun ProposalsCard(unitName: String?, items: List<PlanItem>, onOpen: (PlanItem) -> Unit) {
-    Card(
-        Modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f))
-    ) {
+    AppCard(accent = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)) {
         Column(Modifier.padding(14.dp)) {
             Text(
-                plural(items.size, "propozycja", "propozycje", "propozycji") + " do planu",
+                plural(items.size, "propozycja", "propozycje", "propozycji") + " progresji",
                 style = MaterialTheme.typography.titleMedium,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                fontWeight = FontWeight.Bold
             )
             Text(
                 "Wyliczone z tego treningu. Dotknij ćwiczenia, żeby zdecydować w jednostce" +
@@ -785,13 +646,13 @@ private fun ProposalsCard(unitName: String?, items: List<PlanItem>, onOpen: (Pla
             items.forEach { item ->
                 val a = item.advice ?: return@forEach
                 val change = adviceChange(item, a)
+                val shape = RoundedCornerShape(10.dp)
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .padding(top = 10.dp)
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .clickable { onOpen(item) }
+                        .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+                        .tap(shape) { onOpen(item) }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -805,8 +666,8 @@ private fun ProposalsCard(unitName: String?, items: List<PlanItem>, onOpen: (Pla
                             else MaterialTheme.colorScheme.secondary
                         )
                     }
-                    androidx.compose.material3.Icon(
-                        androidx.compose.material.icons.Icons.Filled.ChevronRight,
+                    Icon(
+                        Icons.Filled.ChevronRight,
                         contentDescription = "Otwórz w planie",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )

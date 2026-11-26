@@ -575,7 +575,7 @@ internal fun QuickAddDialog(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                 )
                 Text(
-                    "Makro nieobowiązkowe - bez niego wpis policzy się tylko do kalorii.",
+                    "Makroskładniki są nieobowiązkowe - bez nich wpis liczy się tylko do kalorii.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp)

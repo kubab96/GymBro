@@ -1089,13 +1089,13 @@ private fun suggestionLine(state: ExerciseState): String {
     val from = last?.let { " · ostatnio ${Loading.fmt(it)}" } ?: ""
     return when (state.suggestion.reason) {
         ProgressionEngine.Reason.FIRST_TIME -> "pierwszy raz - ciężar z planu"
-        ProgressionEngine.Reason.HOLD -> "utrzymaj ciężar, dołóż powtórzeń$from"
-        ProgressionEngine.Reason.INCREASE -> "↑ podbicie - komplet powtórzeń$from"
-        ProgressionEngine.Reason.INCREASE_EASY -> "↑ podbicie - było za lekko$from"
-        ProgressionEngine.Reason.AWAITING -> "podbicie czeka w planie - ten sam ciężar$from"
-        ProgressionEngine.Reason.DELOAD -> "↓ cofnięcie - spadek poniżej zakresu$from"
-        ProgressionEngine.Reason.STALLED -> "↓ cofnięcie - zastój$from"
-        ProgressionEngine.Reason.KEEP -> "bez progresji - to samo, co poprzednio$from"
+        ProgressionEngine.Reason.HOLD -> "ten sam ciężar, więcej powtórzeń$from"
+        ProgressionEngine.Reason.INCREASE -> "↑ więcej - komplet powtórzeń$from"
+        ProgressionEngine.Reason.INCREASE_EASY -> "↑ więcej - było za lekko$from"
+        ProgressionEngine.Reason.AWAITING -> "zmiana czeka na decyzję w planie - ten sam ciężar$from"
+        ProgressionEngine.Reason.DELOAD -> "↓ mniej - poniżej zakresu powtórzeń$from"
+        ProgressionEngine.Reason.STALLED -> "↓ mniej - zastój$from"
+        ProgressionEngine.Reason.KEEP -> "progresja wyłączona - jak poprzednio$from"
     }
 }
 
@@ -1177,7 +1177,7 @@ private fun ColumnScope.SessionDone(
         }
         Spacer(Modifier.height(8.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatTile(kg(tonnage), "kg tonażu", null, Modifier.weight(1f))
+            StatTile(kg(tonnage), "kg objętości", null, Modifier.weight(1f))
             StatTile("$reps", "powtórzeń", null, Modifier.weight(1f))
         }
 

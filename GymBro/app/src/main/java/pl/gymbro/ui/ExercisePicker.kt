@@ -377,8 +377,8 @@ internal fun ExerciseFormScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    "O tyle skacze plus i minus - tu i na zegarku. Przepisz z tabliczki " +
-                        "przy maszynie. Puste znaczy ${Loading.fmt(DEFAULT_STEP_KG)} kg.",
+                    "O tyle zmieniają ciężar plus i minus - tu i na zegarku. Przepisz z tabliczki " +
+                        "przy maszynie. Puste pole to ${Loading.fmt(DEFAULT_STEP_KG)} kg.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

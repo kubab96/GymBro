@@ -167,8 +167,8 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
                 Spacer(Modifier.height(18.dp))
                 Text("Główne boje", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Szacowany ciężar maksymalny z najlepszej serii każdej sesji - pozwala " +
-                        "porównać treningi o różnej liczbie powtórzeń. Zmiana względem " +
+                    "Szacowany ciężar maksymalny (1RM) z najlepszej serii każdego treningu - " +
+                        "tak da się porównać serie o różnej liczbie powtórzeń. Zmiana względem " +
                         "poprzedniego okresu tej samej długości.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -201,9 +201,9 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
                 Spacer(Modifier.height(22.dp))
                 Text("Partie w ostatnich 7 dniach", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Serie robocze na grupę mięśniową - serie, nie tonaż, bo to one bliżej " +
-                        "odpowiadają bodźcowi. Pełny kolor to ${VolumeLandmarks.PRODUCTIVE_TO} " +
-                        "serii, górna granica zakresu produktywnego.",
+                    "Serie robocze na partię - liczą się serie, nie kilogramy, bo to one " +
+                        "lepiej oddają bodziec do wzrostu. Pełny kolor to ${VolumeLandmarks.PRODUCTIVE_TO} " +
+                        "serii w tygodniu, górna granica zalecanego zakresu.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -213,7 +213,7 @@ internal fun ProgresPage(activities: List<Activity>, onExercise: (Long, String) 
                 MuscleLegend("nietknięte", "${VolumeLandmarks.PRODUCTIVE_TO}+ serii")
                 Spacer(Modifier.height(8.dp))
                 if (d.thisWeek.isEmpty()) {
-                    EmptyBox("Brak serii w ostatnich 7 dniach. Zaloguj trening, a objętość policzy się sama.")
+                    EmptyBox("Brak serii w ostatnich 7 dniach. Po treningu policzą się tu same.")
                 }
             }
             items(d.thisWeek.entries.sortedByDescending { it.value }.toList(), key = { "m" + it.key }) { (muscle, sets) ->
@@ -251,7 +251,7 @@ private fun Tile(modifier: Modifier, label: String, value: String, change: Pair<
 
 /** Zmiana i to, czy jest w dobrą stronę. Zero to brak zmiany, nie porażka. */
 private fun diffText(d: Int): Pair<String, Boolean>? =
-    if (d == 0) "bez zmian" to true else (if (d > 0) "+$d" else "$d") + " vs poprz." to (d > 0)
+    if (d == 0) "bez zmian" to true else (if (d > 0) "+$d" else "$d") + " wobec poprz." to (d > 0)
 
 private fun hoursDiff(min: Long): Pair<String, Boolean>? =
     if (min == 0L) null else (if (min > 0) "+" else "-") + hoursShort(kotlin.math.abs(min)) to (min > 0)

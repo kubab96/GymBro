@@ -1162,24 +1162,6 @@ class SessionRepository(context: Context) {
             db2.endTransaction()
         }
     }
-
-    /**
-     * Serie robocze na partię w obrębie jednej sesji.
-     *
-     * Osobno od wersji z zakresem czasu, bo sesja to nie przedział dat:
-     * dwa treningi tego samego dnia mają się nie zlewać.
-     */
-    fun setsByMuscleInSession(sessionId: Long): Map<String, Int> =
-        db.readableDatabase.rawQuery(
-            """
-            SELECT e.muscle_group AS mg, COUNT(*) AS n
-            FROM set_entry s
-            JOIN exercise e ON e.id = s.exercise_id
-            WHERE s.session_id = ? AND s.is_warmup = 0
-            GROUP BY e.muscle_group
-            """.trimIndent(),
-            arrayOf(sessionId.toString())
-        ).mapAll { it.str("mg") to it.int("n") }.toMap()
 }
 
 // ---- Masa ciała ----------------------------------------------------------

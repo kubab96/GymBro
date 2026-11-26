@@ -168,6 +168,27 @@ object ProgressStats {
             points(sets).firstOrNull { it.record && it.bestSet.sessionId == sessionId }?.let { id to it }
         }.toMap()
 
+    /**
+     * Serie z ostatniego treningu przed [sessionId], w którym było to ćwiczenie.
+     *
+     * Po ćwiczeniu, nie po jednostce: przysiad w A i ten sam przysiad w C to
+     * jeden bój, a porównanie tylko z poprzednim A pokazywałoby zmianę sprzed
+     * dwóch tygodni zamiast tej sprzed trzech dni. „Przed" po godzinie startu,
+     * nie po numerze sesji - trening dopisany po fakcie z zegarka ma wyższy
+     * numer, choć odbył się wcześniej.
+     *
+     * @param sets serie robocze ćwiczenia z całej historii
+     * @param startedAt kiedy zaczął się oglądany trening
+     * @return serie od najwcześniejszej; pusta lista, gdy to pierwszy raz
+     */
+    fun previousTime(sets: List<SetEntry>, sessionId: Long, startedAt: Long): List<SetEntry> =
+        sets.filter { it.sessionId != sessionId && it.doneAt < startedAt }
+            .groupBy { it.sessionId }
+            .values
+            .maxByOrNull { group -> group.maxOf { it.doneAt } }
+            ?.sortedBy { it.doneAt }
+            .orEmpty()
+
     /** Najcięższy ciężar podniesiony na co najmniej [reps] powtórzeń. */
     data class RepRecord(val reps: Int, val kg: Double, val at: Long)
 

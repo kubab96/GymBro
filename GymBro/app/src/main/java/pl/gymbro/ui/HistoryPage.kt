@@ -211,7 +211,7 @@ internal fun HistoryPage(activities: List<Activity>, onOpen: (Activity) -> Unit)
 
         if (shown.isEmpty()) {
             Text(
-                if (activities.isEmpty()) "Pusto. Po pierwszym zapisanym treningu pojawi się tu historia."
+                if (activities.isEmpty()) "Historia jest pusta. Pierwszy trening pojawi się tu zaraz po zapisaniu."
                 else "Nic nie pasuje do wybranych filtrów.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

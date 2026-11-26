@@ -203,13 +203,13 @@ object ProgressionEngine {
             tooEasy && progress.weight -> increase(
                 equipment, workingWeight, repsFrom, inventory, mode, workingSets,
                 Reason.INCREASE_EASY,
-                "RIR 3 i więcej w każdej serii - ciężar jest za lekki."
+                "Zapas 3+ powtórzeń w każdej serii - ciężar jest za lekki."
             )
 
             belowBottom && streak >= 2 -> deload(
                 equipment, workingWeight, repsFrom, inventory, mode,
                 Reason.DELOAD,
-                "Drugi raz poniżej $repsFrom powtórzeń - cofnięcie pozwoli ruszyć dalej."
+                "Drugi raz poniżej $repsFrom powtórzeń - lżejszy ciężar pozwoli ruszyć dalej."
             )
 
             // Zastój to brak ruchu ciężaru - przy ciężarze, który ma stać,
@@ -217,7 +217,7 @@ object ProgressionEngine {
             streak >= STALL_SESSIONS && progress.weight -> deload(
                 equipment, workingWeight, repsFrom, inventory, mode,
                 Reason.STALLED,
-                "$streak sesje na tym samym ciężarze bez wyrobienia zakresu."
+                "Od $streak treningów ten sam ciężar i wciąż poniżej górnej granicy zakresu."
             )
 
             // Powtórzeń nie dokładamy: zostaje to, co wyszło ostatnio, a ciężar

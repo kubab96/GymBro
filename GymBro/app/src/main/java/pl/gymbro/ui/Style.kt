@@ -86,7 +86,12 @@ internal fun AppCard(
  * samo jak w Planie i w szczegółach treningu.
  */
 @Composable
-internal fun SubScreenHeader(title: String, subtitle: String? = null, onBack: () -> Unit) {
+internal fun SubScreenHeader(
+    title: String,
+    subtitle: String? = null,
+    onBack: () -> Unit,
+    trailing: (@Composable RowScope.() -> Unit)? = null
+) {
     Row(
         Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -104,6 +109,7 @@ internal fun SubScreenHeader(title: String, subtitle: String? = null, onBack: ()
                 )
             }
         }
+        trailing?.invoke(this)
     }
 }
 

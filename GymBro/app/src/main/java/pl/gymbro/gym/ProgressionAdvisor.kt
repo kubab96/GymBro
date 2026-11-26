@@ -162,7 +162,7 @@ object ProgressionAdvisor {
             val next = ladder.first { it > now.topWeight + 0.001 }
             val pct = ((next - now.topWeight) / now.topWeight * 100.0).roundToInt()
             val naWyzszym = repsAt(now.topSets, now.topWeight, next, rir)
-            val przepasc = "przepaść ${fmt(now.topWeight)} → ${fmt(next)} kg (+$pct%), " +
+            val przepasc = "duży skok ${fmt(now.topWeight)} → ${fmt(next)} kg (+$pct%), " +
                 "na ${fmt(next)} kg wyszłoby około $naWyzszym powt."
             return exhaustedAdvice(
                 item, phase, goal,
@@ -378,7 +378,7 @@ object ProgressionAdvisor {
             item = item,
             kind = Kind.WEIGHT_UP,
             weightKg = roundKg(now.topWeight),
-            reason = "trenujesz ciezej, niz masz w planie",
+            reason = "trenujesz ciężej, niż masz w planie",
             preselected = true
         )
     }
@@ -491,7 +491,7 @@ object ProgressionAdvisor {
             weightKg = roundKg(next),
             repsTo = zakres,
             reason = "${now.totalReps} powt. w ${now.topSets.size} seriach; skok $pct%, " +
-                "z równoważności wychodzi około $reps powt. na ${fmt(next)} kg",
+                "z przeliczenia wychodzi około $reps powt. na ${fmt(next)} kg",
             preselected = true
         )
     }
@@ -513,7 +513,7 @@ object ProgressionAdvisor {
         // i zapas go nie zmniejsza - „najmniejszy skok" przy +7% był nieprawdą.
         if (bigJump) {
             return "${now.totalReps} powt. w ${now.topSets.size} seriach, " +
-                "średnio ${fmt(now.avgReps)} - ciężar z równoważności powtórzeń"
+                "średnio ${fmt(now.avgReps)} - ciężar przeliczony z powtórzeń"
         }
         val base = when {
             rir != null && rir >= RIR_TOO_LIGHT -> "zapas ${rirLabel(rir)} w każdej serii"
@@ -665,9 +665,9 @@ object ProgressionAdvisor {
             kind = Kind.WEIGHT_DOWN,
             weightKg = (target * 10).roundToInt() / 10.0,
             reason = if (below) {
-                "$stuck sesje poniżej dolnej granicy zakresu"
+                "od $stuck treningów poniżej dolnej granicy zakresu"
             } else {
-                "$stuck sesje na granicy bez poprawy"
+                "od $stuck treningów na granicy bez poprawy"
             },
             preselected = false
         )

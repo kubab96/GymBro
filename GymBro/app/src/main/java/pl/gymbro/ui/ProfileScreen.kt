@@ -597,9 +597,9 @@ fun ProfileScreen() {
                     // tylko o tej chwili.
                     SettingsRow(
                         title = "Praca w tle",
-                        subtitle = if (batteryFree) "Bez ograniczeń - pilot przeżyje wygaszony ekran"
-                        else "System może ubić pilota w szatni. Serie poczekają w kolejce zegarka, " +
-                            "ale dojadą dopiero po ponownym starcie pilota.",
+                        subtitle = if (batteryFree) "Bez ograniczeń - pilot działa przy wygaszonym ekranie"
+                        else "System może wyłączyć pilota, gdy telefon leży w szatni. Serie poczekają w zegarku, " +
+                            "ale dotrą dopiero po ponownym uruchomieniu pilota.",
                         icon = Icons.Filled.BatteryChargingFull,
                         iconTint = if (batteryFree) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary
                     ) {
@@ -864,7 +864,7 @@ fun ProfileScreen() {
         SettingsGroup {
             SettingsRow(
                 title = "Zegarek",
-                subtitle = if (pilotOk && !batteryFree) "Pilot działa, ale system może go ubić w tle"
+                subtitle = if (pilotOk && !batteryFree) "Pilot działa, ale system może go wyłączyć w tle"
                 else pilotStatus,
                 icon = Icons.Filled.Watch,
                 first = true,
@@ -1165,14 +1165,14 @@ private fun usableFor(p: Plate, hasBarbell: Boolean, hasDumbbells: Boolean): Str
         if (hasDumbbells && p.count >= 2) add("jeden hantel")
         if (hasDumbbells && p.count >= 4) add("para hantli")
     }
-    return if (uses.isEmpty()) "za mało sztuk, żeby użyć symetrycznie"
-    else "działa przy: " + uses.joinToString(", ")
+    return if (uses.isEmpty()) "za mało sztuk, żeby założyć po równo na obie strony"
+    else "pasuje do: " + uses.joinToString(", ")
 }
 
 /** Ile sztuk brakuje do kolejnego zastosowania. */
 private fun shortageHint(p: Plate, hasDumbbells: Boolean): String? = when {
-    p.count < 2 -> "dokup ${2 - p.count} szt., żeby dało się załadować symetrycznie"
-    hasDumbbells && p.count < 4 -> "dokup ${4 - p.count} szt., żeby działał też przy parze hantli"
+    p.count < 2 -> "dokup ${2 - p.count} szt., żeby założyć po równo na obie strony"
+    hasDumbbells && p.count < 4 -> "dokup ${4 - p.count} szt., żeby pasował też do pary hantli"
     else -> null
 }
 

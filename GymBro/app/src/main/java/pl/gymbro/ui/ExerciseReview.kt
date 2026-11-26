@@ -35,9 +35,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import pl.gymbro.data.Equipment
 import pl.gymbro.data.Inventory
 import pl.gymbro.data.SetEntry
 import pl.gymbro.gym.Loading
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Szczegóły jednego ćwiczenia z trwającego treningu - wejście z podsumowania.
@@ -60,9 +64,65 @@ internal fun ColumnScope.ExerciseReview(
     onUpdateSet: (Long, Double, Int, Int?) -> Unit
 ) {
     val item = state.item
-    val working = state.doneSets.filter { !it.isWarmup }
-    val before = state.lastTime.filter { !it.isWarmup }
-    val withWeight = item.hasTargetWeight
+    ExerciseReview(
+        ReviewModel(
+            name = item.exerciseName,
+            subtitle = "${state.doneSets.count { !it.isWarmup }} z ${item.sets} serii" +
+                (if (item.hasRepRange) " · zakres ${item.repRange}" else ""),
+            working = state.doneSets.filter { !it.isWarmup },
+            before = state.lastTime.filter { !it.isWarmup },
+            beforeAt = null,
+            withWeight = item.hasTargetWeight,
+            recordNote = if (isRecord(state)) "rekord - najcięższa seria w historii tego ćwiczenia" else null,
+            equipment = item.equipment,
+            step = item.step,
+            nextWeight = state.nextWeight,
+            nextReps = state.nextReps
+        ),
+        inventory, onBack, onAddSet, onDeleteSet, onUpdateSet
+    )
+}
+
+/**
+ * Wszystko, czego ekran ćwiczenia potrzebuje - bez pozycji planu.
+ *
+ * Ten sam ekran otwiera się z podsumowania trwającego treningu i ze
+ * szczegółów treningu w historii. Tam pozycji planu może już nie być
+ * (ćwiczenie spoza planu, plan zmieniony po treningu), więc każde wejście
+ * składa ten model ze swojego źródła. Dwa osobne ekrany rozjechały się
+ * już raz: historia miała gołą listę serii w okienku, podsumowanie tabelę
+ * z godziną i porównaniem.
+ *
+ * @param beforeAt kiedy był poprzedni raz; null - bez daty w nagłówku porównania
+ * @param recordNote napis pod kafelkami, gdy padł rekord; null - bez rekordu
+ */
+internal class ReviewModel(
+    val name: String,
+    val subtitle: String,
+    val working: List<SetEntry>,
+    val before: List<SetEntry>,
+    val beforeAt: Long?,
+    val withWeight: Boolean,
+    val recordNote: String?,
+    val equipment: Equipment,
+    val step: Double,
+    val nextWeight: Double,
+    val nextReps: Int
+)
+
+@Composable
+internal fun ColumnScope.ExerciseReview(
+    model: ReviewModel,
+    inventory: Inventory,
+    onBack: () -> Unit,
+    onAddSet: (Double, Int) -> Unit,
+    onDeleteSet: (Long) -> Unit,
+    onUpdateSet: (Long, Double, Int, Int?) -> Unit
+) {
+    val working = model.working
+    val before = model.before
+    val withWeight = model.withWeight
+    val record = model.recordNote != null
     var editing by remember { mutableStateOf(false) }
     var editingSet by remember { mutableStateOf<SetEntry?>(null) }
 
@@ -76,15 +136,14 @@ internal fun ColumnScope.ExerciseReview(
         }
         Column(Modifier.weight(1f)) {
             Text(
-                item.exerciseName,
+                model.name,
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                "${working.size} z ${item.sets} serii" +
-                    (if (item.hasRepRange) " · zakres ${item.repRange}" else ""),
+                model.subtitle,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -109,29 +168,26 @@ internal fun ColumnScope.ExerciseReview(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatTile(
                 if (withWeight) kg(working.sumOf { it.tonnage }) else "${working.sumOf { it.reps }}",
-                if (withWeight) "kg tonażu" else "powtórzeń",
+                if (withWeight) "kg objętości" else "powtórzeń",
                 null, Modifier.weight(1f)
             )
             StatTile(
                 best?.let { setText(it, withWeight) } ?: "-",
                 "najlepsza seria",
-                if (isRecord(state)) MaterialTheme.colorScheme.tertiary else null,
+                if (record) MaterialTheme.colorScheme.tertiary else null,
                 Modifier.weight(1f)
             )
         }
         if (withWeight) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatTile(e1rm?.let { Loading.fmt(Math.round(it).toDouble()) } ?: "-", "szac. max (1RM)", null, Modifier.weight(1f))
+                StatTile(e1rm?.let { Loading.fmt(Math.round(it).toDouble()) } ?: "-", "szac. maks. (1RM)", null, Modifier.weight(1f))
                 StatTile("${working.sumOf { it.reps }}", "powtórzeń", null, Modifier.weight(1f))
             }
         }
-        if (isRecord(state)) {
+        model.recordNote?.let {
             Spacer(Modifier.height(8.dp))
-            TagPill(
-                "rekord - najcięższa seria w historii tego ćwiczenia",
-                MaterialTheme.colorScheme.tertiary
-            )
+            TagPill(it, MaterialTheme.colorScheme.tertiary)
         }
 
         // ---- Serie ----
@@ -162,7 +218,7 @@ internal fun ColumnScope.ExerciseReview(
                     // Dokładka powtarza ostatnią serię - najczęściej brakuje
                     // takiej samej, a poprawić ją można od razu w arkuszu.
                     val last = working.lastOrNull()
-                    onAddSet(last?.weightKg ?: state.nextWeight, last?.reps ?: state.nextReps)
+                    onAddSet(last?.weightKg ?: model.nextWeight, last?.reps ?: model.nextReps)
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
                 shape = RoundedCornerShape(12.dp)
@@ -181,11 +237,14 @@ internal fun ColumnScope.ExerciseReview(
 
         // ---- Porównanie z poprzednim razem ----
         if (before.isNotEmpty() && working.isNotEmpty()) {
-            GroupLabel("Względem poprzedniego razu")
+            GroupLabel(
+                "Względem poprzedniego razu" +
+                    (model.beforeAt?.let { " · " + SimpleDateFormat("d.MM", Locale.getDefault()).format(Date(it)) } ?: "")
+            )
             AppCard {
                 if (withWeight) {
                     CompareRow(
-                        "tonaż",
+                        "objętość",
                         kg(before.sumOf { it.tonnage }) + " kg",
                         kg(working.sumOf { it.tonnage }) + " kg",
                         working.sumOf { it.tonnage } - before.sumOf { it.tonnage },
@@ -227,9 +286,9 @@ internal fun ColumnScope.ExerciseReview(
     editingSet?.let { s ->
         EditSetDialog(
             entry = s,
-            exerciseName = item.exerciseName,
-            equipment = item.equipment,
-            step = item.step,
+            exerciseName = model.name,
+            equipment = model.equipment,
+            step = model.step,
             showWeight = withWeight,
             inventory = inventory,
             onDismiss = { editingSet = null },

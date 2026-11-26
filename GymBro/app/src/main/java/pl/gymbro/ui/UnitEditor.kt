@@ -449,7 +449,7 @@ private fun ExerciseCard(
                 // obietnica większego ciężaru kłóciła się z wyborem niżej.
                 if (item.progress.weight) {
                     Text(
-                        "Gdy wyrobisz górną granicę, aplikacja zaproponuje większy ciężar.",
+                        "Gdy dojdziesz do górnej granicy, aplikacja zaproponuje większy ciężar.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
@@ -528,13 +528,13 @@ private fun ExerciseCard(
             ProgressPicker(item.progress) { onChange(item.copy(progress = it)) }
             Text(
                 when (item.progress) {
-                    ProgressMode.ALL -> "Aplikacja dokłada powtórzeń, a po wyrobieniu zakresu " +
-                        "proponuje większy ciężar."
-                    ProgressMode.NO_WEIGHT -> "Ciężar stoi. Rosną powtórzenia, a po dobiciu " +
-                        "zakresu - sam zakres."
-                    ProgressMode.NO_REPS -> "Powtórzenia stoją. Ciężar rośnie, gdy dobijesz " +
-                        "górną granicę zakresu."
-                    ProgressMode.OFF -> "Nic nie rośnie - dla rozgrzewkowych " +
+                    ProgressMode.ALL -> "Najpierw rosną powtórzenia, a po dojściu do górnej " +
+                        "granicy - ciężar."
+                    ProgressMode.NO_WEIGHT -> "Ciężar bez zmian. Rosną powtórzenia, a po dojściu do " +
+                        "górnej granicy - sam zakres."
+                    ProgressMode.NO_REPS -> "Zakres powtórzeń bez zmian. Ciężar rośnie, gdy dojdziesz " +
+                        "do górnej granicy."
+                    ProgressMode.OFF -> "Nic nie rośnie - dla ćwiczeń rozgrzewkowych " +
                         "i rehabilitacyjnych."
                 },
                 style = MaterialTheme.typography.bodySmall,

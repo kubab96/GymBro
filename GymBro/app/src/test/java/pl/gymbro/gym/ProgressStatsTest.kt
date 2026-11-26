@@ -203,4 +203,38 @@ class ProgressStatsTest {
             ProgressStats.Period.ALL, now
         ).isEmpty())
     }
+
+    @Test
+    fun `poprzedni raz to ostatni wczesniejszy trening z tym cwiczeniem, z dowolnej jednostki`() {
+        val start = MONDAY + 7 * DAY
+        val sets = listOf(
+            seria(10, 90.0, 8, MONDAY),
+            seria(10, 90.0, 7, MONDAY + 60_000),
+            // Trening C trzy dni wczesniej - to on jest poprzednim razem, nie A.
+            seria(12, 95.0, 6, start - 3 * DAY + 60_000),
+            seria(12, 95.0, 5, start - 3 * DAY),
+            // Ogladany trening i pozniejszy nie wchodza.
+            seria(20, 100.0, 5, start + 60_000),
+            seria(30, 100.0, 6, start + 2 * DAY)
+        )
+        val poprzednio = ProgressStats.previousTime(sets, 20, start)
+        assertEquals(listOf(5, 6), poprzednio.map { it.reps })
+        assertTrue(poprzednio.all { it.sessionId == 12L })
+    }
+
+    @Test
+    fun `dopisany pozniej trening z wyzszym numerem liczy sie po godzinie`() {
+        val start = MONDAY + 7 * DAY
+        val sets = listOf(
+            // Trening sprzed czterech dni dopisany z zegarka dopiero teraz - wyzszy numer.
+            seria(40, 80.0, 8, start - 4 * DAY),
+            seria(35, 85.0, 8, start - DAY)
+        )
+        assertEquals(35L, ProgressStats.previousTime(sets, 50, start).single().sessionId)
+    }
+
+    @Test
+    fun `pierwszy raz nie ma poprzedniego`() {
+        assertTrue(ProgressStats.previousTime(listOf(seria(5, 60.0, 8, MONDAY)), 5, MONDAY).isEmpty())
+    }
 }

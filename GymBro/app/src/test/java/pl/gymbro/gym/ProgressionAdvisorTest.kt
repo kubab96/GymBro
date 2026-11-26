@@ -219,7 +219,7 @@ class ProgressionAdvisorTest {
         )
         assertEquals(ProgressionAdvisor.Kind.REPS_UP, a?.kind)
         assertEquals(14, a?.repsTo)
-        assertTrue(a!!.reason, a.reason.contains("przepaść"))
+        assertTrue(a!!.reason, a.reason.contains("duży skok"))
     }
 
     @Test

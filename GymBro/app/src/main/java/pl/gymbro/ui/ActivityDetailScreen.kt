@@ -295,8 +295,8 @@ fun ActivityDetailScreen(
             Spacer(Modifier.height(24.dp))
             Text(
                 if (session.fromPhone)
-                    "Bez tętna - zegarek nie zapisał go w czasie tej aktywności, " +
-                        "albo nie było go na ręce."
+                    "Brak tętna - zegarek go nie zapisał " +
+                        "albo nie był na ręce."
                 else "Zegarek nie przysłał dla tego treningu ani okrążeń, ani przebiegu " +
                     "tętna - zostają same podsumowania powyżej.",
                 style = MaterialTheme.typography.bodySmall,
